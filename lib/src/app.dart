@@ -938,6 +938,7 @@ class _AppShellState extends State<AppShell> {
       setState(() {
         _scanProgress = null;
         _section = AppSection.indexes;
+        _recoverableIndexJobs = repository.listRecoverableIndexJobs();
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1109,8 +1110,21 @@ class _AppShellState extends State<AppShell> {
       return;
     }
     final nodeId = _selectedNodeIds.single;
+    final descendants = <({IndexNode node, String path})>[];
+    void collectDescendants(List<IndexTreeNode> nodes, String prefix) {
+      for (final treeNode in nodes) {
+        final path = prefix.isEmpty
+            ? treeNode.item.name
+            : '$prefix / ${treeNode.item.name}';
+        descendants.add((node: treeNode.item, path: path));
+        collectDescendants(treeNode.children, path);
+      }
+    }
+
+    collectDescendants(repository.listIndexTree(nodeId), '');
+    final entities = repository.listEntitiesUnderNode(nodeId);
     final candidates = <Map<String, Object?>>[
-      for (final entity in _entities)
+      for (final entity in entities)
         {
           'kind': entity.thumbnailPath != null
               ? IndexNodePreviewTileKind.visual.name
@@ -1124,11 +1138,11 @@ class _AppShellState extends State<AppShell> {
               ? entity.thumbnailWidth! / entity.thumbnailHeight!
               : 1.0,
         },
-      for (final child in _childNodes)
+      for (final descendant in descendants)
         {
           'kind': IndexNodePreviewTileKind.node.name,
-          'title': child.name,
-          'nodeId': child.id,
+          'title': descendant.path,
+          'nodeId': descendant.node.id,
           'aspectRatio': 1.0
         },
     ];
@@ -1239,9 +1253,17 @@ class _AppShellState extends State<AppShell> {
     _scan();
   }
 
+  void _retryFailedIndexJob(IndexBuildJob job) {
+    final repository = _repository;
+    if (repository == null || _scanning) return;
+    if (!repository.prepareFailedIndexJobCandidatesForRetry(job.id)) return;
+    _resumeIndexJob(repository.getIndexJob(job.id) ?? job);
+  }
+
   void _discardRecoverableIndexJob(IndexBuildJob job) {
     final repository = _repository;
     if (repository == null) return;
+    repository.rollbackIndexJobStagingRoot(job.id);
     repository.discardIndexJob(job.id);
     setState(() {
       _recoverableIndexJobs = repository.listRecoverableIndexJobs();
@@ -2487,8 +2509,7 @@ class _AppShellState extends State<AppShell> {
           canManageCurrentCustomIndex: _isInsideCustomIndex,
           onRebuildSelectedNodePreview: _rebuildSelectedNodePreview,
           onCustomizeSelectedNodePreview: _customizeSelectedNodePreview,
-          onClearSelectedNodePreviewOverride:
-              _clearSelectedNodePreviewOverride,
+          onClearSelectedNodePreviewOverride: _clearSelectedNodePreviewOverride,
         ),
       AppSection.video => MediaShelfPage(
           kind: MediaShelfKind.video,
@@ -2544,6 +2565,7 @@ class _AppShellState extends State<AppShell> {
           onPause: _pauseScan,
           onCancel: _cancelScan,
           onResume: _resumeIndexJob,
+          onRetryFailed: _retryFailedIndexJob,
           onShowRecoveryFailures: _showRecoveryFailures,
           onDiscardRecovery: _discardRecoverableIndexJob,
           onImport: _importIndexPackage,

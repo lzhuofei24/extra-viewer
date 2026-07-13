@@ -22,6 +22,7 @@ class IndexManagementPage extends StatelessWidget {
     required this.onPause,
     required this.onCancel,
     required this.onResume,
+    required this.onRetryFailed,
     required this.onShowRecoveryFailures,
     required this.onDiscardRecovery,
     required this.onImport,
@@ -47,6 +48,7 @@ class IndexManagementPage extends StatelessWidget {
   final VoidCallback onPause;
   final VoidCallback onCancel;
   final ValueChanged<IndexBuildJob> onResume;
+  final ValueChanged<IndexBuildJob> onRetryFailed;
   final ValueChanged<IndexBuildJob> onShowRecoveryFailures;
   final ValueChanged<IndexBuildJob> onDiscardRecovery;
   final VoidCallback onImport;
@@ -188,12 +190,13 @@ class IndexManagementPage extends StatelessWidget {
                 for (final job in recoverableJobs)
                   _RecoverableJobTile(
                     job: job,
-                    taskPath: recoverableJobPaths[job.id] ??
-                        _rootNameForJob(job),
+                    taskPath:
+                        recoverableJobPaths[job.id] ?? _rootNameForJob(job),
                     summary: recoverableJobSummaries[job.id],
                     disabled: scanning,
                     onDiscard: () => onDiscardRecovery(job),
                     onResume: () => onResume(job),
+                    onRetryFailed: () => onRetryFailed(job),
                     onShowFailures: () => onShowRecoveryFailures(job),
                   ),
               ],
@@ -261,7 +264,8 @@ class IndexManagementPage extends StatelessWidget {
                           value: 'rebuildPreviews',
                           child: Text('重新生成节点预览'),
                         ),
-                        const PopupMenuItem(value: 'rename', child: Text('重命名')),
+                        const PopupMenuItem(
+                            value: 'rename', child: Text('重命名')),
                         const PopupMenuItem(value: 'delete', child: Text('删除')),
                       ],
                     ),
@@ -292,6 +296,7 @@ class _RecoverableJobTile extends StatelessWidget {
     required this.disabled,
     required this.onDiscard,
     required this.onResume,
+    required this.onRetryFailed,
     required this.onShowFailures,
   });
 
@@ -301,6 +306,7 @@ class _RecoverableJobTile extends StatelessWidget {
   final bool disabled;
   final VoidCallback onDiscard;
   final VoidCallback onResume;
+  final VoidCallback onRetryFailed;
   final VoidCallback onShowFailures;
 
   @override
@@ -327,16 +333,19 @@ class _RecoverableJobTile extends StatelessWidget {
             icon: const Icon(Icons.close_rounded, size: 18),
             label: const Text('取消'),
           ),
-          if ((summary?.failed ?? 0) > 0)
+          if ((summary?.failed ?? 0) > 0) ...[
             TextButton(
               onPressed: disabled ? null : onShowFailures,
               child: const Text('失败详情'),
             ),
+            FilledButton.tonal(
+              onPressed: disabled ? null : onRetryFailed,
+              child: const Text('仅重试失败项'),
+            ),
+          ],
           FilledButton.tonal(
             onPressed: disabled ? null : onResume,
-            child: Text(
-              (summary?.failed ?? 0) > 0 ? '继续并重试' : '继续并检查',
-            ),
+            child: const Text('继续任务'),
           ),
         ],
       ),

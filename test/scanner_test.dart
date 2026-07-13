@@ -941,7 +941,7 @@ CREATE TABLE index_node_edges (
     final db = AppDatabase.openForTesting(raw);
     final repository = LibraryRepository(db);
 
-    expect(db.db.userVersion, 30);
+    expect(db.db.userVersion, 31);
     expect(repository.listIndexTree('root'), hasLength(1));
     final merged = repository.listIndexTree('root').single;
     expect(merged.item.id, 'a');
@@ -1038,7 +1038,7 @@ CREATE TABLE index_node_edges (
     final db = AppDatabase.openForTesting(raw);
     final repository = LibraryRepository(db);
 
-    expect(db.db.userVersion, 30);
+    expect(db.db.userVersion, 31);
     expect(
       db.db.select("SELECT id FROM index_nodes WHERE node_type = 'root'"),
       hasLength(1),
@@ -1241,6 +1241,14 @@ CREATE TABLE index_node_edges (
     final failedJob = repository.listRecoverableIndexJobs().single;
     expect(failedJob.status, IndexJobStatus.failed);
     expect(failedJob.phase, IndexJobPhase.writing);
+    final afterFailure = repository.listEntitiesUnderNode(rootBefore.id);
+    expect(afterFailure, hasLength(2));
+    expect(
+      {for (final entity in afterFailure) entity.title: entity.hash},
+      {
+        for (final entity in entitiesBefore) entity.title: entity.hash,
+      },
+    );
 
     final resumed = await LibraryScanner(repository).scanPath(temp.path);
     expect(resumed.scanned, 2);

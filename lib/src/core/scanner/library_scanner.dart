@@ -173,14 +173,24 @@ class LibraryScanner {
         keepRootId: summary.indexRootId,
         sourcePath: rootPath,
       );
-      repository.updateIndexJob(
-        job.id,
-        status: IndexJobStatus.completed,
-        phase: IndexJobPhase.completed,
-        processed: summary.scanned,
-        clearError: true,
-      );
-      repository.discardIndexJob(job.id);
+      final candidateSummary = repository.summarizeIndexJobCandidates(job.id);
+      if (candidateSummary.failed > 0) {
+        repository.updateIndexJob(
+          job.id,
+          status: IndexJobStatus.failed,
+          phase: IndexJobPhase.previews,
+          error: '${candidateSummary.failed} 个预览任务失败，可单独重试。',
+        );
+      } else {
+        repository.updateIndexJob(
+          job.id,
+          status: IndexJobStatus.completed,
+          phase: IndexJobPhase.completed,
+          processed: summary.scanned,
+          clearError: true,
+        );
+        repository.discardIndexJob(job.id);
+      }
       return summary;
     } on IndexScanPausedException {
       repository.updateIndexJob(job.id, status: IndexJobStatus.paused);
@@ -264,14 +274,24 @@ class LibraryScanner {
               indexRootOverride: indexRoot,
               targetNode: targetNode,
             );
-      repository.updateIndexJob(
-        job.id,
-        status: IndexJobStatus.completed,
-        phase: IndexJobPhase.completed,
-        processed: summary.scanned,
-        clearError: true,
-      );
-      repository.discardIndexJob(job.id);
+      final candidateSummary = repository.summarizeIndexJobCandidates(job.id);
+      if (candidateSummary.failed > 0) {
+        repository.updateIndexJob(
+          job.id,
+          status: IndexJobStatus.failed,
+          phase: IndexJobPhase.previews,
+          error: '${candidateSummary.failed} 个预览任务失败，可单独重试。',
+        );
+      } else {
+        repository.updateIndexJob(
+          job.id,
+          status: IndexJobStatus.completed,
+          phase: IndexJobPhase.completed,
+          processed: summary.scanned,
+          clearError: true,
+        );
+        repository.discardIndexJob(job.id);
+      }
       return summary;
     } on IndexScanPausedException {
       repository.updateIndexJob(job.id, status: IndexJobStatus.paused);
@@ -532,8 +552,13 @@ class LibraryScanner {
         cache: nodeCache,
       );
       if (canReuse) {
-        repository.linkEntityToIndexNode(
+        repository.snapshotIndexJobLink(
+          jobId: job.id,
+          indexNodeId: node.id,
           entityId: knownExisting!.id,
+        );
+        repository.linkEntityToIndexNode(
+          entityId: knownExisting.id,
           indexNodeId: node.id,
         );
         skipped++;
@@ -557,8 +582,13 @@ class LibraryScanner {
             fingerprint: fingerprint,
             indexRootId: indexRoot.id,
           )) {
-        repository.linkEntityToIndexNode(
+        repository.snapshotIndexJobLink(
+          jobId: job.id,
+          indexNodeId: node.id,
           entityId: knownExisting!.id,
+        );
+        repository.linkEntityToIndexNode(
+          entityId: knownExisting.id,
           indexNodeId: node.id,
         );
         skipped++;
@@ -581,6 +611,9 @@ class LibraryScanner {
       }
       String? entityId;
       try {
+        if (knownExisting != null) {
+          repository.snapshotEntityForIndexJob(job.id, knownExisting);
+        }
         if (preservedOwnerRootIds.contains(knownExisting?.directoryRootId)) {
           repository.snapshotEntityForIndexJob(job.id, knownExisting!);
         }
@@ -612,6 +645,9 @@ class LibraryScanner {
                   : indexRoot.id,
         );
         entityId = result.entity.id;
+        if (result.status == EntityUpsertStatus.inserted) {
+          repository.recordCreatedEntityForIndexJob(job.id, result.entity.id);
+        }
         switch (result.status) {
           case EntityUpsertStatus.inserted:
             imported++;
@@ -620,6 +656,11 @@ class LibraryScanner {
           case EntityUpsertStatus.skipped:
             skipped++;
         }
+        repository.snapshotIndexJobLink(
+          jobId: job.id,
+          indexNodeId: node.id,
+          entityId: result.entity.id,
+        );
         repository.linkEntityToIndexNode(
           entityId: result.entity.id,
           indexNodeId: node.id,
@@ -1151,6 +1192,9 @@ class LibraryScanner {
             final handler = candidate.handler;
             final normalizedPath = p.normalize(file.path);
             final existing = writableExistingByPath[normalizedPath];
+            if (existing != null) {
+              repository.snapshotEntityForIndexJob(job.id, existing);
+            }
             if (preservedOwnerRootIds.contains(existing?.directoryRootId)) {
               repository.snapshotEntityForIndexJob(job.id, existing!);
             }
@@ -1173,6 +1217,10 @@ class LibraryScanner {
               existingLookupCompleted: true,
             );
             writableExistingByPath[normalizedPath] = result.entity;
+            if (result.status == EntityUpsertStatus.inserted) {
+              repository.recordCreatedEntityForIndexJob(
+                  job.id, result.entity.id);
+            }
             switch (result.status) {
               case EntityUpsertStatus.inserted:
                 imported++;
@@ -1191,6 +1239,11 @@ class LibraryScanner {
               entityId: result.entity.id,
               indexNodeId: directoryNode.id,
             ));
+            repository.snapshotIndexJobLink(
+              jobId: job.id,
+              indexNodeId: directoryNode.id,
+              entityId: result.entity.id,
+            );
             writtenPaths.add(normalizedPath);
             if (handler.supportsGeneratedThumbnail) {
               mediaEntities.add(result.entity);
@@ -1295,7 +1348,17 @@ class LibraryScanner {
           .map((entity) => p.normalize(entity.path)),
       IndexJobCandidateState.previewed,
     );
-    final previewTotal = pendingMediaEntities.length + audioEntities.length;
+    final candidateStates = {
+      for (final candidate in repository.listIndexJobCandidates(job.id))
+        p.normalize(candidate.sourcePath): candidate.state,
+    };
+    final audioNeedingPreview = audioEntities
+        .where((entity) =>
+            candidateStates[p.normalize(entity.path)] !=
+            IndexJobCandidateState.previewed)
+        .toList(growable: false);
+    final previewTotal =
+        pendingMediaEntities.length + audioNeedingPreview.length;
     repository.updateIndexJob(
       job.id,
       phase: IndexJobPhase.previews,
@@ -1449,7 +1512,7 @@ class LibraryScanner {
           }
         })),
         _mapConcurrently(
-          audioEntities,
+          audioNeedingPreview,
           maxConcurrent: performance.audioConcurrency,
           mapper: (entity) async {
             try {

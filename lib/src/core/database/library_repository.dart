@@ -125,6 +125,32 @@ class LibraryRepository {
     );
   }
 
+  void recordCreatedEntityForIndexJob(String jobId, String entityId) {
+    database.db.execute(
+      'INSERT OR IGNORE INTO index_job_created_entities(job_id, entity_id) VALUES (?, ?)',
+      [jobId, entityId],
+    );
+  }
+
+  void snapshotIndexJobLink({
+    required String jobId,
+    required String indexNodeId,
+    required String entityId,
+  }) {
+    final existed = database.db.select(
+      'SELECT 1 FROM index_node_entities WHERE index_node_id = ? AND entity_id = ? LIMIT 1',
+      [indexNodeId, entityId],
+    ).isNotEmpty;
+    database.db.execute(
+      '''
+      INSERT OR IGNORE INTO index_job_link_changes
+      (job_id, index_node_id, entity_id, existed_before)
+      VALUES (?, ?, ?, ?)
+      ''',
+      [jobId, indexNodeId, entityId, boolToInt(existed)],
+    );
+  }
+
   void rollbackIndexJobStagingRoot(String jobId) {
     final job = getIndexJob(jobId);
     if (job == null) return;
@@ -132,12 +158,41 @@ class LibraryRepository {
       'SELECT entity_id, entity_json FROM index_job_entity_snapshots WHERE job_id = ?',
       [jobId],
     );
+    final transientThumbnailKeys = snapshots.isEmpty
+        ? const <String>{}
+        : _thumbnailKeysForEntities(
+            snapshots.map((row) => row['entity_id'] as String),
+          );
+    final addedLinks = database.db.select('''
+      SELECT index_node_id, entity_id FROM index_job_link_changes
+      WHERE job_id = ? AND existed_before = 0
+    ''', [jobId]);
+    final createdEntities = database.db.select(
+      'SELECT entity_id FROM index_job_created_entities WHERE job_id = ?',
+      [jobId],
+    );
     writeTransaction(() {
+      for (final link in addedLinks) {
+        database.db.execute(
+          'DELETE FROM index_node_entities WHERE index_node_id = ? AND entity_id = ?',
+          [link['index_node_id'], link['entity_id']],
+        );
+      }
       for (final row in snapshots) {
         _restoreEntitySnapshot(
           row['entity_id'] as String,
           row['entity_json'] as String,
         );
+      }
+      for (final row in createdEntities) {
+        final entityId = row['entity_id'] as String;
+        final stillReferenced = database.db.select(
+          'SELECT 1 FROM index_node_entities WHERE entity_id = ? LIMIT 1',
+          [entityId],
+        ).isNotEmpty;
+        if (!stillReferenced) {
+          database.db.execute('DELETE FROM entities WHERE id = ?', [entityId]);
+        }
       }
     });
     final rootId = job.stagingRootId;
@@ -145,6 +200,12 @@ class LibraryRepository {
       final thumbnails = _thumbnailKeysUnderNodes({rootId});
       deleteIndexNode(rootId);
       _deleteUnreferencedThumbnailFiles(thumbnails);
+    }
+    _deleteUnreferencedThumbnailFiles(transientThumbnailKeys);
+    final indexedRootId = job.indexRootId;
+    if (rootId == null && indexedRootId != null) {
+      pruneEmptyDirectoryNodes(indexedRootId);
+      rebuildIndexNodeStats();
     }
     database.db.execute(
       'UPDATE index_jobs SET index_root_id = NULL, staging_root_id = NULL, updated_at = ? WHERE id = ?',
@@ -318,6 +379,29 @@ class LibraryRepository {
         jobId,
         states: {IndexJobCandidateState.failed},
       );
+
+  bool prepareFailedIndexJobCandidatesForRetry(String jobId) {
+    final failed = summarizeIndexJobCandidates(jobId).failed;
+    if (failed == 0) return false;
+    database.db.execute('''
+      UPDATE index_job_candidates
+      SET state = ?, error = NULL, updated_at = ?
+      WHERE job_id = ? AND state = ?
+    ''', [
+      IndexJobCandidateState.written.name,
+      nowMillis(),
+      jobId,
+      IndexJobCandidateState.failed.name,
+    ]);
+    updateIndexJob(
+      jobId,
+      status: IndexJobStatus.running,
+      phase: IndexJobPhase.previews,
+      previewProcessed: 0,
+      clearError: true,
+    );
+    return true;
+  }
 
   void updateIndexJobCandidateState(
     String jobId,
@@ -2750,6 +2834,21 @@ LEFT JOIN child_counts ON child_counts.id = node.id
       WHERE link.index_node_id IN (SELECT id FROM subtree)
         AND entity.thumbnail_key IS NOT NULL
     ''', nodeIds.toList(growable: false));
+    return rows
+        .map((row) => row['thumbnail_key'] as String?)
+        .whereType<String>()
+        .where((key) => key.isNotEmpty)
+        .toSet();
+  }
+
+  Set<String> _thumbnailKeysForEntities(Iterable<String> entityIds) {
+    final ids = entityIds.toSet().toList(growable: false);
+    if (ids.isEmpty) return const <String>{};
+    final placeholders = List.filled(ids.length, '?').join(', ');
+    final rows = database.db.select(
+      'SELECT thumbnail_key FROM entities WHERE id IN ($placeholders) AND thumbnail_key IS NOT NULL',
+      ids,
+    );
     return rows
         .map((row) => row['thumbnail_key'] as String?)
         .whereType<String>()

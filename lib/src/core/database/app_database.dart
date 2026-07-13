@@ -168,6 +168,10 @@ class AppDatabase {
       _migrateV30();
       db.userVersion = 30;
     }
+    if (version < 31) {
+      _migrateV31();
+      db.userVersion = 31;
+    }
     // Hot restart and older development builds can leave a version marker
     // ahead of the physical schema. These checks are idempotent self-healing.
     _addColumnIfMissing('entities', 'directory_root_id', 'TEXT');
@@ -193,6 +197,7 @@ class AppDatabase {
     );
     db.execute(_schema);
     db.execute(_indexJobEntitySnapshotSchema);
+    db.execute(_indexJobRollbackSchema);
     db.execute("""
       UPDATE index_jobs
       SET status = 'paused', updated_at =
@@ -212,6 +217,7 @@ class AppDatabase {
       db.execute(_schema);
       db.execute(_indexJobCandidateSchema);
       db.execute(_indexJobEntitySnapshotSchema);
+      db.execute(_indexJobRollbackSchema);
       db.execute('COMMIT;');
     } catch (_) {
       db.execute('ROLLBACK;');
@@ -760,6 +766,8 @@ LEFT JOIN child_counts ON child_counts.id = node.id;
     );
     db.execute(_indexJobEntitySnapshotSchema);
   }
+
+  void _migrateV31() => db.execute(_indexJobRollbackSchema);
 }
 
 const _legacyTables = [
@@ -980,6 +988,27 @@ CREATE TABLE IF NOT EXISTS index_job_entity_snapshots (
   PRIMARY KEY(job_id, entity_id),
   FOREIGN KEY(job_id) REFERENCES index_jobs(id) ON DELETE CASCADE
 );
+''';
+
+const _indexJobRollbackSchema = '''
+CREATE TABLE IF NOT EXISTS index_job_created_entities (
+  job_id TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  PRIMARY KEY(job_id, entity_id),
+  FOREIGN KEY(job_id) REFERENCES index_jobs(id) ON DELETE CASCADE,
+  FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS index_job_link_changes (
+  job_id TEXT NOT NULL,
+  index_node_id TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  existed_before INTEGER NOT NULL,
+  PRIMARY KEY(job_id, index_node_id, entity_id),
+  FOREIGN KEY(job_id) REFERENCES index_jobs(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_index_job_link_changes_job
+ON index_job_link_changes(job_id);
 ''';
 
 const _audioPlaybackSessionSchema = '''
