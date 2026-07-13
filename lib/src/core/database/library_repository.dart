@@ -177,44 +177,6 @@ class LibraryRepository {
     }
   }
 
-  void commitDirectoryGeneration(DirectoryBuildGeneration generation) {
-    writeTransaction(() {
-      database.db.execute('''
-        UPDATE directory_build_generations
-        SET state = ?
-        WHERE directory_root_id = ? AND state = ?
-      ''', [
-        DirectoryBuildGenerationState.abandoned.name,
-        generation.rootId,
-        DirectoryBuildGenerationState.committed.name,
-      ]);
-      database.db.execute('''
-        UPDATE directory_build_generations
-        SET state = ?, committed_at = ?
-        WHERE directory_root_id = ? AND generation = ? AND state = ?
-      ''', [
-        DirectoryBuildGenerationState.committed.name,
-        nowMillis(),
-        generation.rootId,
-        generation.generation,
-        DirectoryBuildGenerationState.building.name,
-      ]);
-    });
-  }
-
-  void abandonDirectoryGeneration(DirectoryBuildGeneration generation) {
-    database.db.execute('''
-      UPDATE directory_build_generations
-      SET state = ?
-      WHERE directory_root_id = ? AND generation = ? AND state = ?
-    ''', [
-      DirectoryBuildGenerationState.abandoned.name,
-      generation.rootId,
-      generation.generation,
-      DirectoryBuildGenerationState.building.name,
-    ]);
-  }
-
   void snapshotEntityForIndexJob(String jobId, Entity entity) {
     _appendIndexJobChange(
       jobId: jobId,

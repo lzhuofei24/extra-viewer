@@ -180,10 +180,6 @@ class AppDatabase {
       _migrateV33();
       db.userVersion = 33;
     }
-    if (version < 34) {
-      _migrateV34();
-      db.userVersion = 34;
-    }
     // Hot restart and older development builds can leave a version marker
     // ahead of the physical schema. These checks are idempotent self-healing.
     _addColumnIfMissing('entities', 'directory_root_id', 'TEXT');
@@ -783,8 +779,6 @@ LEFT JOIN child_counts ON child_counts.id = node.id;
   void _migrateV32() => db.execute(_indexJobChangeSchema);
 
   void _migrateV33() => db.execute(_directoryGenerationSchema);
-
-  void _migrateV34() => db.execute(_directoryGenerationSchema);
 }
 
 const _legacyTables = [
@@ -1052,24 +1046,6 @@ CREATE INDEX IF NOT EXISTS idx_directory_memberships_node
 ON directory_memberships(index_node_id, directory_root_id, generation);
 CREATE INDEX IF NOT EXISTS idx_directory_memberships_entity
 ON directory_memberships(entity_id);
-
-CREATE VIEW IF NOT EXISTS active_node_entity_links AS
-SELECT index_node_id, entity_id, sort_name, created_at
-FROM index_node_entities
-UNION
-SELECT membership.index_node_id,
-       membership.entity_id,
-       lower(entity.name) AS sort_name,
-       membership.created_at
-FROM directory_memberships membership
-JOIN entities entity ON entity.id = membership.entity_id
-WHERE EXISTS (
-  SELECT 1
-  FROM directory_build_generations generation
-  WHERE generation.directory_root_id = membership.directory_root_id
-    AND generation.generation = membership.generation
-    AND generation.state = 'committed'
-);
 ''';
 
 const _audioPlaybackSessionSchema = '''
