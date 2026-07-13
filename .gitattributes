@@ -1,0 +1,1 @@
+tools/ffmpeg/windows/ffmpeg-8.1.2-essentials_build/bin/*.exe filter=lfs diff=lfs merge=lfs -text
