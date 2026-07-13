@@ -1,6 +1,8 @@
 import '../database/library_repository.dart';
 import '../domain/models.dart';
 
+typedef CandidateLink = ({String entityId, String indexNodeId});
+
 class CandidateWriteRequest {
   const CandidateWriteRequest({
     required this.jobId,
@@ -74,5 +76,27 @@ class CandidateProcessor {
           request.jobId, result.entity.id);
     }
     return result;
+  }
+
+  /// Records only links introduced by this task, then writes the full batch
+  /// in one transaction. Both source adapters use this same rollback-aware
+  /// association path.
+  void writeLinks(
+    String jobId,
+    Iterable<CandidateLink> links, {
+    bool transactional = true,
+  }) {
+    final batch = links.toList(growable: false);
+    if (batch.isEmpty) return;
+    void write() {
+      repository.snapshotIndexJobLinks(jobId, batch);
+      repository.linkEntitiesToIndexNodes(batch, rebuildStats: false);
+    }
+
+    if (transactional) {
+      repository.writeTransaction(write);
+    } else {
+      write();
+    }
   }
 }

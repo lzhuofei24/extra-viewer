@@ -529,6 +529,7 @@ class LibraryScanner {
     Future<void> processDocument(
       SourceDocument document, {
       Entity? knownExisting,
+      required List<({String entityId, String indexNodeId})> pendingLinks,
     }) async {
       _checkControl(job.id, control);
       final handler = FileFormatRegistry.resolvePath(document.name);
@@ -554,15 +555,7 @@ class LibraryScanner {
         cache: nodeCache,
       );
       if (canReuse) {
-        repository.snapshotIndexJobLink(
-          jobId: job.id,
-          indexNodeId: node.id,
-          entityId: knownExisting!.id,
-        );
-        repository.linkEntityToIndexNode(
-          entityId: knownExisting.id,
-          indexNodeId: node.id,
-        );
+        pendingLinks.add((entityId: knownExisting!.id, indexNodeId: node.id));
         skipped++;
         reportProcessed();
         return;
@@ -584,15 +577,7 @@ class LibraryScanner {
             fingerprint: fingerprint,
             indexRootId: indexRoot.id,
           )) {
-        repository.snapshotIndexJobLink(
-          jobId: job.id,
-          indexNodeId: node.id,
-          entityId: knownExisting!.id,
-        );
-        repository.linkEntityToIndexNode(
-          entityId: knownExisting.id,
-          indexNodeId: node.id,
-        );
+        pendingLinks.add((entityId: knownExisting!.id, indexNodeId: node.id));
         skipped++;
         reportProcessed();
         return;
@@ -653,15 +638,7 @@ class LibraryScanner {
           case EntityUpsertStatus.skipped:
             skipped++;
         }
-        repository.snapshotIndexJobLink(
-          jobId: job.id,
-          indexNodeId: node.id,
-          entityId: result.entity.id,
-        );
-        repository.linkEntityToIndexNode(
-          entityId: result.entity.id,
-          indexNodeId: node.id,
-        );
+        pendingLinks.add((entityId: result.entity.id, indexNodeId: node.id));
         var candidateState = IndexJobCandidateState.written;
         String? candidateError;
         if (handler.supportsGeneratedThumbnail) {
@@ -725,6 +702,7 @@ class LibraryScanner {
       final existingByPath = repository.getEntitiesByPaths(
         batch.map((document) => document.source),
       );
+      final pendingLinks = <({String entityId, String indexNodeId})>[];
       final imageDocuments = <SourceDocument>[];
       final videoDocuments = <SourceDocument>[];
       final documentDocuments = <SourceDocument>[];
@@ -751,6 +729,7 @@ class LibraryScanner {
         mapper: (document) => processDocument(
           document,
           knownExisting: existingByPath[document.source],
+          pendingLinks: pendingLinks,
         ),
       );
       await _mapConcurrently(
@@ -759,6 +738,7 @@ class LibraryScanner {
         mapper: (document) => processDocument(
           document,
           knownExisting: existingByPath[document.source],
+          pendingLinks: pendingLinks,
         ),
       );
       flushCheckpoint();
@@ -768,6 +748,7 @@ class LibraryScanner {
         mapper: (document) => processDocument(
           document,
           knownExisting: existingByPath[document.source],
+          pendingLinks: pendingLinks,
         ),
       );
       await _mapConcurrently(
@@ -776,8 +757,10 @@ class LibraryScanner {
         mapper: (document) => processDocument(
           document,
           knownExisting: existingByPath[document.source],
+          pendingLinks: pendingLinks,
         ),
       );
+      candidateProcessor.writeLinks(job.id, pendingLinks);
     }
 
     try {
@@ -1235,8 +1218,7 @@ class LibraryScanner {
               audioEntities.add(result.entity);
             }
           }
-          repository.snapshotIndexJobLinks(job.id, links);
-          repository.linkEntitiesToIndexNodes(links, rebuildStats: false);
+          candidateProcessor.writeLinks(job.id, links, transactional: false);
           repository.updateIndexJobCandidateStates(
             job.id,
             writtenPaths,
