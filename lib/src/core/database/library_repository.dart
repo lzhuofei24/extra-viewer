@@ -19,6 +19,7 @@ class LibraryRepository {
   final AppDatabase database;
   final ThumbnailStore thumbnailStore;
   int _transactionSequence = 0;
+  final Map<String, int> _jobChangeSequences = <String, int>{};
 
   IndexBuildJob beginIndexJob(
     String sourcePath, {
@@ -105,6 +106,7 @@ class LibraryRepository {
   /// or any source files.
   void discardIndexJob(String jobId) {
     database.db.execute('DELETE FROM index_jobs WHERE id = ?', [jobId]);
+    _jobChangeSequences.remove(jobId);
   }
 
   void setIndexJobRoots({
@@ -119,16 +121,19 @@ class LibraryRepository {
   }
 
   void snapshotEntityForIndexJob(String jobId, Entity entity) {
-    database.db.execute(
-      'INSERT OR IGNORE INTO index_job_entity_snapshots(job_id, entity_id, entity_json) VALUES (?, ?, ?)',
-      [jobId, entity.id, jsonEncode(_entitySnapshotJson(entity))],
+    _appendIndexJobChange(
+      jobId: jobId,
+      changeType: 'entity_snapshot',
+      entityId: entity.id,
+      payloadJson: jsonEncode(_entitySnapshotJson(entity)),
     );
   }
 
   void recordCreatedEntityForIndexJob(String jobId, String entityId) {
-    database.db.execute(
-      'INSERT OR IGNORE INTO index_job_created_entities(job_id, entity_id) VALUES (?, ?)',
-      [jobId, entityId],
+    _appendIndexJobChange(
+      jobId: jobId,
+      changeType: 'entity_created',
+      entityId: entityId,
     );
   }
 
@@ -141,47 +146,50 @@ class LibraryRepository {
       'SELECT 1 FROM index_node_entities WHERE index_node_id = ? AND entity_id = ? LIMIT 1',
       [indexNodeId, entityId],
     ).isNotEmpty;
-    database.db.execute(
-      '''
-      INSERT OR IGNORE INTO index_job_link_changes
-      (job_id, index_node_id, entity_id, existed_before)
-      VALUES (?, ?, ?, ?)
-      ''',
-      [jobId, indexNodeId, entityId, boolToInt(existed)],
-    );
+    if (!existed) {
+      _appendIndexJobChange(
+        jobId: jobId,
+        changeType: 'link_added',
+        entityId: entityId,
+        nodeId: indexNodeId,
+      );
+    }
   }
 
   void rollbackIndexJobStagingRoot(String jobId) {
     final job = getIndexJob(jobId);
     if (job == null) return;
-    final snapshots = database.db.select(
-      'SELECT entity_id, entity_json FROM index_job_entity_snapshots WHERE job_id = ?',
-      [jobId],
-    );
+    final changes = database.db.select('''
+      SELECT change_type, entity_id, node_id, payload_json
+      FROM index_job_changes
+      WHERE job_id = ?
+      ORDER BY sequence DESC
+    ''', [jobId]);
+    final snapshots = changes
+        .where((row) => row['change_type'] == 'entity_snapshot')
+        .toList(growable: false);
     final transientThumbnailKeys = snapshots.isEmpty
         ? const <String>{}
         : _thumbnailKeysForEntities(
             snapshots.map((row) => row['entity_id'] as String),
           );
-    final addedLinks = database.db.select('''
-      SELECT index_node_id, entity_id FROM index_job_link_changes
-      WHERE job_id = ? AND existed_before = 0
-    ''', [jobId]);
-    final createdEntities = database.db.select(
-      'SELECT entity_id FROM index_job_created_entities WHERE job_id = ?',
-      [jobId],
-    );
+    final addedLinks = changes
+        .where((row) => row['change_type'] == 'link_added')
+        .toList(growable: false);
+    final createdEntities = changes
+        .where((row) => row['change_type'] == 'entity_created')
+        .toList(growable: false);
     writeTransaction(() {
       for (final link in addedLinks) {
         database.db.execute(
           'DELETE FROM index_node_entities WHERE index_node_id = ? AND entity_id = ?',
-          [link['index_node_id'], link['entity_id']],
+          [link['node_id'], link['entity_id']],
         );
       }
       for (final row in snapshots) {
         _restoreEntitySnapshot(
           row['entity_id'] as String,
-          row['entity_json'] as String,
+          row['payload_json'] as String,
         );
       }
       for (final row in createdEntities) {
@@ -211,6 +219,29 @@ class LibraryRepository {
       'UPDATE index_jobs SET index_root_id = NULL, staging_root_id = NULL, updated_at = ? WHERE id = ?',
       [nowMillis(), jobId],
     );
+    _jobChangeSequences.remove(jobId);
+  }
+
+  void _appendIndexJobChange({
+    required String jobId,
+    required String changeType,
+    String? entityId,
+    String? nodeId,
+    String? payloadJson,
+  }) {
+    final sequence = _jobChangeSequences.putIfAbsent(jobId, () {
+      final row = database.db.select(
+        'SELECT COALESCE(MAX(sequence), 0) AS value FROM index_job_changes WHERE job_id = ?',
+        [jobId],
+      ).single;
+      return (row['value'] as int) + 1;
+    });
+    _jobChangeSequences[jobId] = sequence + 1;
+    database.db.execute('''
+      INSERT OR IGNORE INTO index_job_changes
+      (job_id, sequence, change_type, entity_id, node_id, payload_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+    ''', [jobId, sequence, changeType, entityId, nodeId, payloadJson]);
   }
 
   void updateIndexJob(

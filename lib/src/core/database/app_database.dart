@@ -172,6 +172,10 @@ class AppDatabase {
       _migrateV31();
       db.userVersion = 31;
     }
+    if (version < 32) {
+      _migrateV32();
+      db.userVersion = 32;
+    }
     // Hot restart and older development builds can leave a version marker
     // ahead of the physical schema. These checks are idempotent self-healing.
     _addColumnIfMissing('entities', 'directory_root_id', 'TEXT');
@@ -196,8 +200,7 @@ class AppDatabase {
       "TEXT NOT NULL DEFAULT ''",
     );
     db.execute(_schema);
-    db.execute(_indexJobEntitySnapshotSchema);
-    db.execute(_indexJobRollbackSchema);
+    db.execute(_indexJobChangeSchema);
     db.execute("""
       UPDATE index_jobs
       SET status = 'paused', updated_at =
@@ -216,8 +219,7 @@ class AppDatabase {
       }
       db.execute(_schema);
       db.execute(_indexJobCandidateSchema);
-      db.execute(_indexJobEntitySnapshotSchema);
-      db.execute(_indexJobRollbackSchema);
+      db.execute(_indexJobChangeSchema);
       db.execute('COMMIT;');
     } catch (_) {
       db.execute('ROLLBACK;');
@@ -764,10 +766,11 @@ LEFT JOIN child_counts ON child_counts.id = node.id;
       'is_staging',
       'INTEGER NOT NULL DEFAULT 0',
     );
-    db.execute(_indexJobEntitySnapshotSchema);
   }
 
-  void _migrateV31() => db.execute(_indexJobRollbackSchema);
+  void _migrateV31() {}
+
+  void _migrateV32() => db.execute(_indexJobChangeSchema);
 }
 
 const _legacyTables = [
@@ -980,35 +983,28 @@ CREATE TABLE IF NOT EXISTS node_preview_overrides (
 );
 ''';
 
-const _indexJobEntitySnapshotSchema = '''
-CREATE TABLE IF NOT EXISTS index_job_entity_snapshots (
+const _indexJobChangeSchema = '''
+CREATE TABLE IF NOT EXISTS index_job_changes (
   job_id TEXT NOT NULL,
-  entity_id TEXT NOT NULL,
-  entity_json TEXT NOT NULL,
-  PRIMARY KEY(job_id, entity_id),
+  sequence INTEGER NOT NULL,
+  change_type TEXT NOT NULL,
+  entity_id TEXT,
+  node_id TEXT,
+  payload_json TEXT,
+  PRIMARY KEY(job_id, sequence),
   FOREIGN KEY(job_id) REFERENCES index_jobs(id) ON DELETE CASCADE
 );
-''';
-
-const _indexJobRollbackSchema = '''
-CREATE TABLE IF NOT EXISTS index_job_created_entities (
-  job_id TEXT NOT NULL,
-  entity_id TEXT NOT NULL,
-  PRIMARY KEY(job_id, entity_id),
-  FOREIGN KEY(job_id) REFERENCES index_jobs(id) ON DELETE CASCADE,
-  FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS index_job_link_changes (
-  job_id TEXT NOT NULL,
-  index_node_id TEXT NOT NULL,
-  entity_id TEXT NOT NULL,
-  existed_before INTEGER NOT NULL,
-  PRIMARY KEY(job_id, index_node_id, entity_id),
-  FOREIGN KEY(job_id) REFERENCES index_jobs(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_index_job_link_changes_job
-ON index_job_link_changes(job_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_index_job_changes_entity_snapshot
+ON index_job_changes(job_id, entity_id)
+WHERE change_type = 'entity_snapshot';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_index_job_changes_created_entity
+ON index_job_changes(job_id, entity_id)
+WHERE change_type = 'entity_created';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_index_job_changes_link_added
+ON index_job_changes(job_id, node_id, entity_id)
+WHERE change_type = 'link_added';
+CREATE INDEX IF NOT EXISTS idx_index_job_changes_job
+ON index_job_changes(job_id, sequence DESC);
 ''';
 
 const _audioPlaybackSessionSchema = '''
