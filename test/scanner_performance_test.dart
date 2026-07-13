@@ -35,6 +35,17 @@ void main() {
       expect(summary.imported, 2000);
       expect(repository.listRecoverableIndexJobs(), isEmpty);
       expect(stopwatch.elapsed, lessThan(const Duration(seconds: 45)));
+
+      final rescanWatch = Stopwatch()..start();
+      final rescan = await LibraryScanner(repository).scanPath(temp.path);
+      rescanWatch.stop();
+
+      expect(rescan.scanned, 2000);
+      expect(rescan.imported, 0);
+      expect(rescan.updated, 0);
+      expect(rescan.skipped, 2000);
+      expect(repository.listRecoverableIndexJobs(), isEmpty);
+      expect(rescanWatch.elapsed, lessThan(const Duration(seconds: 30)));
     },
     timeout: const Timeout(Duration(minutes: 2)),
   );
