@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import '../database/library_repository.dart';
 import '../domain/models.dart';
 import 'candidate_processor.dart';
+import 'candidate_source.dart';
 import '../formats/file_format_handlers.dart';
 import '../formats/text_decoder.dart';
 import '../readers/docx_decoder.dart';
@@ -20,7 +21,6 @@ import '../thumbnails/native_image_thumbnail_backend.dart';
 import '../thumbnails/windows_wic_webp_thumbnail_backend.dart';
 import '../sources/platform_directory_picker.dart';
 import '../sources/source_handle.dart';
-import '../utils/file_fingerprint.dart';
 
 typedef ScanProgressCallback = void Function(ScanProgress progress);
 
@@ -532,6 +532,7 @@ class LibraryScanner {
       Entity? knownExisting,
       required List<({String entityId, String indexNodeId})> pendingLinks,
     }) async {
+      final source = SafCandidateSource(document);
       _checkControl(job.id, control);
       final handler = FileFormatRegistry.resolvePath(document.name);
       if (handler == null) return;
@@ -566,7 +567,7 @@ class LibraryScanner {
               persisted.format == format &&
               persisted.size == document.size
           ? persisted.fingerprint!
-          : await _documentFingerprint(document);
+          : (await source.inspect()).fingerprint;
       // Media metadata is already fully represented by the SAF fingerprint.
       // Avoid a write, local materialization and thumbnail service call on a
       // repeat scan when the persistent WebP is still present.
@@ -1011,8 +1012,9 @@ class LibraryScanner {
           maxConcurrent: 6,
           mapper: (candidate) async {
             final file = candidate.file;
-            final stat = await file.stat();
-            final fingerprint = await _fileFingerprint(file, stat);
+            final source = FileCandidateSource(file: file, rootPath: rootPath);
+            final sourceSnapshot = await source.inspect();
+            final fingerprint = sourceSnapshot.fingerprint;
             final existing = existingByPath[p.normalize(file.path)];
             final format = candidate.handler.formatFor(file.path);
             final unchanged = existing != null &&
@@ -1049,9 +1051,9 @@ class LibraryScanner {
               file: file,
               handler: candidate.handler,
               hash: fingerprint,
-              size: stat.size,
-              sourceCreatedAtMs: stat.changed.toUtc().millisecondsSinceEpoch,
-              sourceModifiedAtMs: stat.modified.toUtc().millisecondsSinceEpoch,
+              size: sourceSnapshot.size,
+              sourceCreatedAtMs: sourceSnapshot.sourceCreatedAtMs,
+              sourceModifiedAtMs: sourceSnapshot.sourceModifiedAtMs,
               metadataPreview: metadataPreview,
               durationMs: durationMs,
             );
@@ -1799,17 +1801,6 @@ class _ScanWriteResult {
   final ScanSummary summary;
   final List<Entity> mediaEntities;
   final List<Entity> audioEntities;
-}
-
-Future<String> _fileFingerprint(File file, FileStat stat) =>
-    fingerprintFile(file, size: stat.size);
-
-Future<String> _documentFingerprint(SourceDocument document) async {
-  final prefix = await PlatformDirectoryPicker.readDocumentPrefix(
-    document.source,
-    maxBytes: fileFingerprintPrefixBytes,
-  );
-  return fingerprintFromPrefix(size: document.size, prefix: prefix);
 }
 
 Future<String?> _buildMetadataPreview({
