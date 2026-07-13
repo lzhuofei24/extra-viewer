@@ -16,7 +16,6 @@ import 'core/domain/models.dart';
 import 'core/formats/file_format_handlers.dart';
 import 'core/media/audio_waveform_service.dart';
 import 'core/media/app_audio_controller.dart';
-import 'core/portability/index_package_service.dart';
 import 'core/scanner/library_scanner.dart';
 import 'core/sources/platform_directory_picker.dart';
 import 'core/tasks/task_scheduler.dart';
@@ -118,6 +117,7 @@ class _AppShellState extends State<AppShell> {
   bool _loading = true;
   bool _scanning = false;
   String? _indexError;
+  String? _lastIndexTaskSummary;
   ScanProgress? _scanProgress;
   IndexScanControl? _scanControl;
   List<IndexBuildJob> _recoverableIndexJobs = const [];
@@ -939,6 +939,8 @@ class _AppShellState extends State<AppShell> {
         _scanProgress = null;
         _section = AppSection.indexes;
         _recoverableIndexJobs = repository.listRecoverableIndexJobs();
+        _lastIndexTaskSummary =
+            '目录构建完成 · ${summary.imported} 新增，${summary.updated} 更新，${summary.skipped} 未变化 · ${summary.timings.compactReport}';
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1000,6 +1002,10 @@ class _AppShellState extends State<AppShell> {
       );
       _reload(indexNodeId: node.id, invalidateBrowserCache: true);
       if (mounted) {
+        setState(() {
+          _lastIndexTaskSummary =
+              '节点更新完成 · ${summary.imported} 新增，${summary.updated} 更新，${summary.skipped} 未变化';
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -1260,6 +1266,25 @@ class _AppShellState extends State<AppShell> {
     _resumeIndexJob(repository.getIndexJob(job.id) ?? job);
   }
 
+  void _recheckIndexJob(IndexBuildJob job) {
+    final repository = _repository;
+    if (repository == null || _scanning) return;
+    repository.rollbackIndexJobStagingRoot(job.id);
+    repository.discardIndexJob(job.id);
+    final targetNodeId = job.targetNodeId ??
+        LibraryScanner.directoryNodeIdFromJobSource(job.sourcePath);
+    if (targetNodeId != null) {
+      final target = repository.getIndexNode(targetNodeId);
+      if (target != null) {
+        _openIndexNode(target);
+        unawaited(_updateCurrentDirectoryNode());
+        return;
+      }
+    }
+    _indexPathController.text = job.sourcePath;
+    _scan();
+  }
+
   void _discardRecoverableIndexJob(IndexBuildJob job) {
     final repository = _repository;
     if (repository == null) return;
@@ -1268,122 +1293,6 @@ class _AppShellState extends State<AppShell> {
     setState(() {
       _recoverableIndexJobs = repository.listRecoverableIndexJobs();
     });
-  }
-
-  Future<void> _showRecoveryFailures(IndexBuildJob job) async {
-    final repository = _repository;
-    if (repository == null) return;
-    final failed = repository.listFailedIndexJobCandidates(job.id);
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('失败项'),
-        content: SizedBox(
-          width: 520,
-          height: 420,
-          child: failed.isEmpty
-              ? const Center(child: Text('当前没有文件级失败项。'))
-              : ListView.separated(
-                  itemCount: failed.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    final candidate = failed[index];
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(
-                        candidate.relativePath.isEmpty
-                            ? candidate.sourcePath
-                            : candidate.relativePath,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(candidate.error ?? '预览生成失败'),
-                    );
-                  },
-                ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('关闭'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _importIndexPackage() async {
-    final repository = _repository;
-    if (repository == null) return;
-    final packageController = TextEditingController();
-    final oldRootController = TextEditingController();
-    final newRootController = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('导入索引包'),
-        content: SizedBox(
-          width: 560,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: packageController,
-                autofocus: true,
-                decoration: const InputDecoration(labelText: '.bvi 文件路径'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: oldRootController,
-                decoration: const InputDecoration(
-                  labelText: '原资源根路径（可选）',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: newRootController,
-                decoration: const InputDecoration(
-                  labelText: '新资源根路径（可选）',
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('导入'),
-          ),
-        ],
-      ),
-    );
-    final packagePath = packageController.text.trim();
-    final oldRoot = oldRootController.text.trim();
-    final newRoot = newRootController.text.trim();
-    packageController.dispose();
-    oldRootController.dispose();
-    newRootController.dispose();
-    if (confirmed != true || packagePath.isEmpty) return;
-    try {
-      final report = await IndexPackageService(repository).importPackage(
-        packagePath,
-        sourcePathMappings:
-            oldRoot.isNotEmpty && newRoot.isNotEmpty ? {oldRoot: newRoot} : {},
-      );
-      _reload(invalidateBrowserCache: true);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(
-          '导入完成：${report.rootCount} 个索引 · ${report.entityCount} 个实体',
-        ),
-      ));
-    } catch (error) {
-      if (mounted) setState(() => _indexError = '导入失败：$error');
-    }
   }
 
   Future<String?> _askText({
@@ -1857,11 +1766,18 @@ class _AppShellState extends State<AppShell> {
     await _showCreateCollection(entityIds: _selectedEntityIds);
   }
 
-  Future<void> _showCreateCustomNode(
-      {Iterable<String> entityIds = const []}) async {
+  Future<void> _showCreateCustomNode({
+    Iterable<String> entityIds = const [],
+    IndexNode? parentOverride,
+  }) async {
     final repository = _repository;
-    final parent = _currentIndexNode;
-    if (repository == null || parent == null || !_isInsideCustomIndex) return;
+    final parent = parentOverride ?? _currentIndexNode;
+    if (repository == null ||
+        parent == null ||
+        (parent.nodeType != NodeType.categoryIndexRoot &&
+            parent.nodeType != NodeType.category)) {
+      return;
+    }
     final name = await showDialog<String>(
       context: context,
       builder: (_) => _TextPromptDialog(
@@ -1879,8 +1795,10 @@ class _AppShellState extends State<AppShell> {
         repository.linkEntitiesToIndexNode(
             entityIds: entityIds, indexNodeId: node.id);
       }
-      await IndexNodeThumbnailService(repository)
-          .rebuildForRoot(_selectedIndexRoot!);
+      final root = parentOverride ?? _selectedIndexRoot;
+      if (root != null) {
+        await IndexNodeThumbnailService(repository).rebuildForRoot(root);
+      }
       setState(() {
         _selectionMode = false;
         _selectedEntityIds.clear();
@@ -2558,6 +2476,7 @@ class _AppShellState extends State<AppShell> {
               job.id: _recoveryJobPath(job),
           },
           errorMessage: _indexError,
+          taskHistory: _lastIndexTaskSummary,
           onScan: _scan,
           onPickDirectory: PlatformDirectoryPicker.isSupported
               ? _pickAndroidDirectoryAndScan
@@ -2565,16 +2484,18 @@ class _AppShellState extends State<AppShell> {
           onPause: _pauseScan,
           onCancel: _cancelScan,
           onResume: _resumeIndexJob,
+          onRecheck: _recheckIndexJob,
           onRetryFailed: _retryFailedIndexJob,
-          onShowRecoveryFailures: _showRecoveryFailures,
           onDiscardRecovery: _discardRecoverableIndexJob,
-          onImport: _importIndexPackage,
           onRename: _renameIndexNode,
           onDelete: _deleteIndexNode,
           onUpdateDirectoryIndex: _chooseDirectoryUpdateNode,
           onRebuildNodePreviews: _showRebuildNodePreviews,
           onCreateCollection: () => _showCreateCollection(),
           onCreateGraph: _showCreateGraphIndex,
+          onCreateNodeAtRoot: (root) =>
+              _showCreateCustomNode(parentOverride: root),
+          onOpenRoot: _openIndexRoot,
         ),
       AppSection.settings => SettingsPage(
           themeChoice: widget.themeChoice,
