@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 
 import '../database/library_repository.dart';
 import '../domain/models.dart';
+import 'candidate_processor.dart';
 import '../formats/file_format_handlers.dart';
 import '../formats/text_decoder.dart';
 import '../readers/docx_decoder.dart';
@@ -407,6 +408,7 @@ class LibraryScanner {
           )
         : const <String>{};
     final nodeCache = <String, IndexNode>{'': attachNode};
+    final candidateProcessor = CandidateProcessor(repository);
     final existingCandidates = repository.listIndexJobCandidates(job.id);
     final hasCompleteManifest =
         job.scanCompleted && existingCandidates.length == job.total;
@@ -613,43 +615,38 @@ class LibraryScanner {
       }
       String? entityId;
       try {
-        if (knownExisting != null) {
-          repository.snapshotEntityForIndexJob(job.id, knownExisting);
-        }
-        if (preservedOwnerRootIds.contains(knownExisting?.directoryRootId)) {
-          repository.snapshotEntityForIndexJob(job.id, knownExisting!);
-        }
-        final result = repository.upsertEntity(
+        final metadataPreview = temporaryFile == null
+            ? null
+            : await _tryBuildMetadataPreview(
+                file: temporaryFile,
+                handler: handler,
+              );
+        final durationMs = temporaryFile == null
+            ? null
+            : await _tryBuildDurationMs(
+                file: temporaryFile,
+                handler: handler,
+              );
+        final result = candidateProcessor.write(CandidateWriteRequest(
+          jobId: job.id,
           path: document.source,
           localPath: temporaryFile?.path,
           name: document.name,
-          format: handler.formatFor(document.name),
+          format: format,
           entityType: handler.entityType,
           hash: fingerprint,
           size: document.size,
           sourceCreatedAtMs: document.modifiedAtMs,
           sourceModifiedAtMs: document.modifiedAtMs,
-          metadataPreview: temporaryFile == null
-              ? null
-              : await _tryBuildMetadataPreview(
-                  file: temporaryFile,
-                  handler: handler,
-                ),
-          durationMs: temporaryFile == null
-              ? null
-              : await _tryBuildDurationMs(
-                  file: temporaryFile,
-                  handler: handler,
-                ),
+          metadataPreview: metadataPreview,
+          durationMs: durationMs,
           directoryRootId:
               preservedOwnerRootIds.contains(knownExisting?.directoryRootId)
-                  ? knownExisting!.directoryRootId
+                  ? knownExisting!.directoryRootId!
                   : indexRoot.id,
-        );
+          existing: knownExisting,
+        ));
         entityId = result.entity.id;
-        if (result.status == EntityUpsertStatus.inserted) {
-          repository.recordCreatedEntityForIndexJob(job.id, result.entity.id);
-        }
         switch (result.status) {
           case EntityUpsertStatus.inserted:
             imported++;
@@ -1176,6 +1173,7 @@ class LibraryScanner {
     var skipped = 0;
     final mediaEntities = <Entity>[];
     final audioEntities = <Entity>[];
+    final candidateProcessor = CandidateProcessor(repository);
     const writeBatchSize = 500;
     indexWriteWatch.start();
     try {
@@ -1194,19 +1192,8 @@ class LibraryScanner {
             final handler = candidate.handler;
             final normalizedPath = p.normalize(file.path);
             final existing = writableExistingByPath[normalizedPath];
-            if (existing != null &&
-                (existing.hash != candidate.hash ||
-                    existing.format != handler.formatFor(file.path) ||
-                    existing.size != candidate.size ||
-                    existing.metadataPreview != candidate.metadataPreview ||
-                    existing.durationMs != candidate.durationMs ||
-                    existing.directoryRootId != indexRoot.id)) {
-              repository.snapshotEntityForIndexJob(job.id, existing);
-            }
-            if (preservedOwnerRootIds.contains(existing?.directoryRootId)) {
-              repository.snapshotEntityForIndexJob(job.id, existing!);
-            }
-            final result = repository.upsertEntity(
+            final result = candidateProcessor.write(CandidateWriteRequest(
+              jobId: job.id,
               path: normalizedPath,
               name: p.basename(file.path),
               format: handler.formatFor(file.path),
@@ -1219,16 +1206,11 @@ class LibraryScanner {
               durationMs: candidate.durationMs,
               directoryRootId:
                   preservedOwnerRootIds.contains(existing?.directoryRootId)
-                      ? existing!.directoryRootId
+                      ? existing!.directoryRootId!
                       : indexRoot.id,
-              knownExisting: existing,
-              existingLookupCompleted: true,
-            );
+              existing: existing,
+            ));
             writableExistingByPath[normalizedPath] = result.entity;
-            if (result.status == EntityUpsertStatus.inserted) {
-              repository.recordCreatedEntityForIndexJob(
-                  job.id, result.entity.id);
-            }
             switch (result.status) {
               case EntityUpsertStatus.inserted:
                 imported++;
