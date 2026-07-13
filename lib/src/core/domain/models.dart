@@ -535,6 +535,32 @@ enum IndexJobPhase {
 
 enum IndexJobCandidateState { pending, prepared, written, previewed, failed }
 
+/// Identifies the source and attachment point of one directory build.
+/// Platform scanners only need this value object; lifecycle handling stays
+/// independent from Windows paths and Android SAF URIs.
+class ScanScope {
+  const ScanScope.root({required this.sourcePath})
+      : indexRootId = null,
+        targetNodeId = null,
+        relativePath = null;
+
+  const ScanScope.subtree({
+    required this.sourcePath,
+    required this.indexRootId,
+    required this.targetNodeId,
+    this.relativePath,
+  });
+
+  final String sourcePath;
+  final String? indexRootId;
+  final String? targetNodeId;
+  final String? relativePath;
+
+  bool get isRoot => targetNodeId == null;
+
+  String get jobSource => isRoot ? sourcePath : '__node_refresh__$targetNodeId';
+}
+
 class IndexJobCandidate {
   const IndexJobCandidate({
     required this.jobId,

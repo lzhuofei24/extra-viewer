@@ -154,7 +154,8 @@ class LibraryScanner {
     IndexScanControl? control,
   }) async {
     final rootPath = _normalizeScanRootPath(path);
-    final job = repository.beginIndexJob(rootPath);
+    final scope = ScanScope.root(sourcePath: rootPath);
+    final job = repository.beginIndexJob(scope.jobSource);
     try {
       final summary = SourceHandle.parse(rootPath).isAndroidContentUri
           ? await _runAndroidSafScan(
@@ -169,28 +170,7 @@ class LibraryScanner {
               onProgress: onProgress,
               control: control,
             );
-      repository.replaceOverlappingDirectoryIndexRoots(
-        keepRootId: summary.indexRootId,
-        sourcePath: rootPath,
-      );
-      final candidateSummary = repository.summarizeIndexJobCandidates(job.id);
-      if (candidateSummary.failed > 0) {
-        repository.updateIndexJob(
-          job.id,
-          status: IndexJobStatus.failed,
-          phase: IndexJobPhase.previews,
-          error: '${candidateSummary.failed} 个预览任务失败，可单独重试。',
-        );
-      } else {
-        repository.updateIndexJob(
-          job.id,
-          status: IndexJobStatus.completed,
-          phase: IndexJobPhase.completed,
-          processed: summary.scanned,
-          clearError: true,
-        );
-        repository.discardIndexJob(job.id);
-      }
+      _completeScopeJob(job: job, scope: scope, summary: summary);
       return summary;
     } on IndexScanPausedException {
       repository.updateIndexJob(job.id, status: IndexJobStatus.paused);
@@ -251,9 +231,17 @@ class LibraryScanner {
     // A node refresh must never share a resumable manifest with a full-root
     // scan. The stable node id makes the resume route unambiguous on both
     // local paths and Android SAF URIs.
-    final job = repository.beginIndexJob(
-      '$_nodeRefreshJobPrefix$nodeId',
+    final scopeDescriptor = ScanScope.subtree(
+      sourcePath: indexRoot.sourcePath!,
+      indexRootId: indexRoot.id,
       targetNodeId: nodeId,
+      relativePath: isAndroidSource
+          ? relativeScope
+          : p.relative(scope, from: indexRoot.sourcePath!),
+    );
+    final job = repository.beginIndexJob(
+      scopeDescriptor.jobSource,
+      targetNodeId: scopeDescriptor.targetNodeId,
     );
     try {
       final summary = isAndroidSource
@@ -274,24 +262,7 @@ class LibraryScanner {
               indexRootOverride: indexRoot,
               targetNode: targetNode,
             );
-      final candidateSummary = repository.summarizeIndexJobCandidates(job.id);
-      if (candidateSummary.failed > 0) {
-        repository.updateIndexJob(
-          job.id,
-          status: IndexJobStatus.failed,
-          phase: IndexJobPhase.previews,
-          error: '${candidateSummary.failed} 个预览任务失败，可单独重试。',
-        );
-      } else {
-        repository.updateIndexJob(
-          job.id,
-          status: IndexJobStatus.completed,
-          phase: IndexJobPhase.completed,
-          processed: summary.scanned,
-          clearError: true,
-        );
-        repository.discardIndexJob(job.id);
-      }
+      _completeScopeJob(job: job, scope: scopeDescriptor, summary: summary);
       return summary;
     } on IndexScanPausedException {
       repository.updateIndexJob(job.id, status: IndexJobStatus.paused);
@@ -306,6 +277,37 @@ class LibraryScanner {
           status: IndexJobStatus.failed, error: '$error');
       rethrow;
     }
+  }
+
+  void _completeScopeJob({
+    required IndexBuildJob job,
+    required ScanScope scope,
+    required ScanSummary summary,
+  }) {
+    if (scope.isRoot) {
+      repository.replaceOverlappingDirectoryIndexRoots(
+        keepRootId: summary.indexRootId,
+        sourcePath: scope.sourcePath,
+      );
+    }
+    final candidateSummary = repository.summarizeIndexJobCandidates(job.id);
+    if (candidateSummary.failed > 0) {
+      repository.updateIndexJob(
+        job.id,
+        status: IndexJobStatus.failed,
+        phase: IndexJobPhase.previews,
+        error: '${candidateSummary.failed} 个预览任务失败，可单独重试。',
+      );
+      return;
+    }
+    repository.updateIndexJob(
+      job.id,
+      status: IndexJobStatus.completed,
+      phase: IndexJobPhase.completed,
+      processed: summary.scanned,
+      clearError: true,
+    );
+    repository.discardIndexJob(job.id);
   }
 
   Future<ScanSummary> _runAndroidSafScan(
