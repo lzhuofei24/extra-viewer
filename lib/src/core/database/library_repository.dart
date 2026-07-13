@@ -1935,7 +1935,7 @@ class LibraryRepository {
     final entityRows = database.db.select(
       '''
       SELECT link.index_node_id AS preview_node_id, entity.*
-      FROM index_node_entities link
+      FROM active_node_entity_links link
       JOIN entities entity ON entity.id = link.entity_id
       WHERE link.index_node_id IN ($entityPlaceholders)
         AND entity.archived = 0
@@ -2061,7 +2061,7 @@ class LibraryRepository {
     final entityRows = database.db.select(
       '''
       SELECT link.index_node_id AS preview_node_id, entity.*
-      FROM index_node_entities link
+      FROM active_node_entity_links link
       JOIN entities entity ON entity.id = link.entity_id
       WHERE link.index_node_id IN ($placeholders) AND entity.archived = 0
       ORDER BY link.index_node_id, entity.name COLLATE NOCASE, entity.id
@@ -2145,7 +2145,7 @@ class LibraryRepository {
         .toList(growable: false);
     final entityRows = database.db.select('''
       SELECT entity.*
-      FROM index_node_entities link
+      FROM active_node_entity_links link
       JOIN entities entity ON entity.id = link.entity_id
       WHERE link.index_node_id = ? AND entity.archived = 0
       ORDER BY entity.name COLLATE NOCASE, entity.id
@@ -2188,7 +2188,7 @@ class LibraryRepository {
         JOIN subtree ON child.parent_id = subtree.id
       )
       SELECT link.index_node_id, entity.thumbnail_key, entity.thumbnail_format
-      FROM index_node_entities link
+      FROM active_node_entity_links link
       JOIN entities entity ON entity.id = link.entity_id
       WHERE link.index_node_id IN (SELECT id FROM subtree)
         AND entity.archived = 0
@@ -2320,7 +2320,7 @@ class LibraryRepository {
       counts AS (
         SELECT closure.ancestor_id AS id, COUNT(DISTINCT entity.id) AS entity_count
         FROM closure
-        LEFT JOIN index_node_entities link ON link.index_node_id = closure.id
+        LEFT JOIN active_node_entity_links link ON link.index_node_id = closure.id
         LEFT JOIN entities entity
           ON entity.id = link.entity_id AND entity.archived = 0
         GROUP BY closure.ancestor_id
@@ -2409,14 +2409,14 @@ WITH RECURSIVE closure(ancestor_id, id) AS (
 ),
 direct_counts AS (
   SELECT link.index_node_id AS id, COUNT(DISTINCT entity.id) AS count
-  FROM index_node_entities link
+  FROM active_node_entity_links link
   JOIN entities entity ON entity.id = link.entity_id AND entity.archived = 0
   GROUP BY link.index_node_id
 ),
 descendant_counts AS (
   SELECT closure.ancestor_id AS id, COUNT(DISTINCT entity.id) AS count
   FROM closure
-  LEFT JOIN index_node_entities link ON link.index_node_id = closure.id
+  LEFT JOIN active_node_entity_links link ON link.index_node_id = closure.id
   LEFT JOIN entities entity
     ON entity.id = link.entity_id AND entity.archived = 0
   GROUP BY closure.ancestor_id
@@ -2457,7 +2457,7 @@ LEFT JOIN child_counts ON child_counts.id = node.id
               UNION ALL
               SELECT n.id FROM index_nodes n JOIN subtree s ON n.parent_id = s.id
             )
-            SELECT DISTINCT e.* FROM index_node_entities l
+            SELECT DISTINCT e.* FROM active_node_entity_links l
             JOIN entities e ON e.id = l.entity_id
             WHERE l.index_node_id IN (SELECT id FROM subtree)
             AND e.archived = 0
@@ -2563,7 +2563,7 @@ LEFT JOIN child_counts ON child_counts.id = node.id
     if (limit != null) parameters.add(limit + 1);
     final rows = database.db.select(
       '''
-      SELECT e.* FROM index_node_entities l
+      SELECT e.* FROM active_node_entity_links l
       JOIN entities e ON e.id = l.entity_id
       WHERE l.index_node_id = ?
       AND e.archived = 0
@@ -2625,7 +2625,7 @@ LEFT JOIN child_counts ON child_counts.id = node.id
         JOIN subtree parent ON node.parent_id = parent.id
       ), entity_nodes AS (
         SELECT link.entity_id, MIN(subtree.hierarchy_path) AS hierarchy_path
-        FROM index_node_entities link
+        FROM active_node_entity_links link
         JOIN subtree ON subtree.id = link.index_node_id
         GROUP BY link.entity_id
       )
