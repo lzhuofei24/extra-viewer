@@ -109,6 +109,15 @@ class LibraryRepository {
     _jobChangeSequences.remove(jobId);
   }
 
+  /// Abandons a partially applied task. Rollback always precedes deletion so
+  /// no candidate entity, link, thumbnail cache or staging root survives the
+  /// disappearance of its recovery manifest.
+  void abandonIndexJob(String jobId) {
+    updateIndexJob(jobId, status: IndexJobStatus.abandoned);
+    rollbackIndexJobStagingRoot(jobId);
+    discardIndexJob(jobId);
+  }
+
   void setIndexJobRoots({
     required String jobId,
     required String indexRootId,
@@ -2377,6 +2386,108 @@ LEFT JOIN child_counts ON child_counts.id = node.id
       [indexNodeId],
     );
     return rows.map((row) => _listItemFromRow(row, thumbnailStore)).toList();
+  }
+
+  /// Paged recursive candidates for the node-preview picker. The query keeps
+  /// the current node out of the node results while retaining entities linked
+  /// anywhere in its subtree.
+  NodePreviewCandidatePage listNodePreviewCandidates(
+    String nodeId, {
+    String query = '',
+    int offset = 0,
+    int limit = 80,
+  }) {
+    final normalizedQuery = query.trim().toLowerCase();
+    final safeOffset = offset < 0 ? 0 : offset;
+    final safeLimit = limit.clamp(1, 160).toInt();
+    final rows = database.db.select(
+      '''
+      WITH RECURSIVE subtree(id, path) AS (
+        SELECT id, '' FROM index_nodes WHERE id = ?
+        UNION ALL
+        SELECT child.id,
+               CASE WHEN subtree.path = '' THEN child.name
+                    ELSE subtree.path || ' / ' || child.name END
+        FROM index_nodes child
+        JOIN subtree ON child.parent_id = subtree.id
+      ), candidates AS (
+        SELECT DISTINCT
+          'entity' AS candidate_type,
+          e.id AS candidate_id,
+          e.name AS title,
+          e.media_type AS media_type,
+          e.thumbnail_key AS thumbnail_key,
+          e.thumbnail_format AS thumbnail_format,
+          e.thumbnail_width AS thumbnail_width,
+          e.thumbnail_height AS thumbnail_height
+        FROM index_node_entities link
+        JOIN subtree ON subtree.id = link.index_node_id
+        JOIN entities e ON e.id = link.entity_id
+        WHERE e.archived = 0
+        UNION ALL
+        SELECT
+          'node' AS candidate_type,
+          subtree.id AS candidate_id,
+          subtree.path AS title,
+          NULL AS media_type,
+          NULL AS thumbnail_key,
+          NULL AS thumbnail_format,
+          NULL AS thumbnail_width,
+          NULL AS thumbnail_height
+        FROM subtree
+        WHERE subtree.id != ?
+      )
+      SELECT * FROM candidates
+      WHERE lower(title) LIKE ?
+      ORDER BY CASE WHEN thumbnail_key IS NOT NULL THEN 0 ELSE 1 END,
+               candidate_type ASC,
+               title COLLATE NOCASE ASC,
+               candidate_id ASC
+      LIMIT ? OFFSET ?
+      ''',
+      [nodeId, nodeId, '%$normalizedQuery%', safeLimit + 1, safeOffset],
+    );
+    final hasMore = rows.length > safeLimit;
+    final visible = hasMore ? rows.sublist(0, safeLimit) : rows;
+    return NodePreviewCandidatePage(
+      items: visible.map((row) {
+        final candidateType = row['candidate_type'] as String;
+        final key = row['thumbnail_key'] as String?;
+        final format = row['thumbnail_format'] as String?;
+        final width = row['thumbnail_width'] as int?;
+        final height = row['thumbnail_height'] as int?;
+        final entityType = candidateType == 'entity'
+            ? EntityType.fromValue(row['media_type'] as String)
+            : null;
+        final kind = switch (entityType) {
+          EntityType.image ||
+          EntityType.video when key != null && format != null =>
+            IndexNodePreviewTileKind.visual,
+          EntityType.audio => IndexNodePreviewTileKind.audio,
+          EntityType.text ||
+          EntityType.externalLink =>
+            IndexNodePreviewTileKind.document,
+          _ => IndexNodePreviewTileKind.node,
+        };
+        return NodePreviewCandidate(
+          kind: kind,
+          title: row['title'] as String,
+          entityId:
+              candidateType == 'entity' ? row['candidate_id'] as String : null,
+          nodeId:
+              candidateType == 'node' ? row['candidate_id'] as String : null,
+          thumbnailKey: key,
+          thumbnailFormat: format,
+          thumbnailPath: key != null && format != null
+              ? thumbnailStore.pathFor(key, format)
+              : null,
+          aspectRatio: width != null && height != null && height > 0
+              ? width / height
+              : 1,
+        );
+      }).toList(growable: false),
+      hasMore: hasMore,
+    );
   }
 
   List<EntityListItem> listEntitiesDirectlyUnderNode(

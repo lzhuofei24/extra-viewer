@@ -282,6 +282,52 @@ class IndexNodePreview {
   final List<String> documentNames;
 }
 
+/// One selectable source for a manually composed index-node preview.
+/// The candidate remains lightweight so large node trees can be queried in
+/// pages instead of materializing every descendant for the picker dialog.
+class NodePreviewCandidate {
+  const NodePreviewCandidate({
+    required this.kind,
+    required this.title,
+    this.thumbnailPath,
+    this.thumbnailKey,
+    this.thumbnailFormat,
+    this.entityId,
+    this.nodeId,
+    this.aspectRatio = 1,
+  });
+
+  final IndexNodePreviewTileKind kind;
+  final String title;
+  final String? thumbnailPath;
+  final String? thumbnailKey;
+  final String? thumbnailFormat;
+  final String? entityId;
+  final String? nodeId;
+  final double aspectRatio;
+
+  IndexNodePreviewTile toPreviewTile() => IndexNodePreviewTile(
+        kind: kind,
+        title: title,
+        thumbnailPath: thumbnailPath,
+        thumbnailKey: thumbnailKey,
+        thumbnailFormat: thumbnailFormat,
+        entityId: entityId,
+        nodeId: nodeId,
+        aspectRatio: aspectRatio,
+      );
+}
+
+class NodePreviewCandidatePage {
+  const NodePreviewCandidatePage({
+    required this.items,
+    required this.hasMore,
+  });
+
+  final List<NodePreviewCandidate> items;
+  final bool hasMore;
+}
+
 class IndexNodeSummary {
   const IndexNodeSummary({
     required this.directEntityCount,

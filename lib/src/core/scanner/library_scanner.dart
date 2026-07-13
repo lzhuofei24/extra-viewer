@@ -180,8 +180,7 @@ class LibraryScanner {
       // A cancelled task is deliberately not recoverable. Its partial
       // manifest has no user-visible continuation route and must not keep
       // accumulating in the database.
-      repository.rollbackIndexJobStagingRoot(job.id);
-      repository.discardIndexJob(job.id);
+      repository.abandonIndexJob(job.id);
       rethrow;
     } catch (error) {
       repository.rollbackIndexJobStagingRoot(job.id);
@@ -269,8 +268,7 @@ class LibraryScanner {
       repository.updateIndexJob(job.id, status: IndexJobStatus.paused);
       rethrow;
     } on IndexScanCanceledException {
-      repository.rollbackIndexJobStagingRoot(job.id);
-      repository.discardIndexJob(job.id);
+      repository.abandonIndexJob(job.id);
       rethrow;
     } catch (error) {
       repository.rollbackIndexJobStagingRoot(job.id);

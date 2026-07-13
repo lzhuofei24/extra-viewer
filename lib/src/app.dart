@@ -39,6 +39,7 @@ import 'ui/library_dashboard_page.dart';
 import 'ui/music_page.dart';
 import 'ui/media_shelf_page.dart';
 import 'ui/now_playing_page.dart';
+import 'ui/node_preview_picker.dart';
 import 'ui/settings_page.dart';
 
 class BestViewerApp extends StatefulWidget {
@@ -1116,85 +1117,24 @@ class _AppShellState extends State<AppShell> {
       return;
     }
     final nodeId = _selectedNodeIds.single;
-    final descendants = <({IndexNode node, String path})>[];
-    void collectDescendants(List<IndexTreeNode> nodes, String prefix) {
-      for (final treeNode in nodes) {
-        final path = prefix.isEmpty
-            ? treeNode.item.name
-            : '$prefix / ${treeNode.item.name}';
-        descendants.add((node: treeNode.item, path: path));
-        collectDescendants(treeNode.children, path);
-      }
-    }
-
-    collectDescendants(repository.listIndexTree(nodeId), '');
-    final entities = repository.listEntitiesUnderNode(nodeId);
-    final candidates = <Map<String, Object?>>[
-      for (final entity in entities)
-        {
-          'kind': entity.thumbnailPath != null
-              ? IndexNodePreviewTileKind.visual.name
-              : IndexNodePreviewTileKind.node.name,
-          'title': entity.title,
-          'entityId': entity.id,
-          'thumbnailPath': entity.thumbnailPath,
-          'aspectRatio': entity.thumbnailWidth != null &&
-                  entity.thumbnailHeight != null &&
-                  entity.thumbnailHeight! > 0
-              ? entity.thumbnailWidth! / entity.thumbnailHeight!
-              : 1.0,
-        },
-      for (final descendant in descendants)
-        {
-          'kind': IndexNodePreviewTileKind.node.name,
-          'title': descendant.path,
-          'nodeId': descendant.node.id,
-          'aspectRatio': 1.0
-        },
-    ];
-    final selected = <int>{};
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('自定义节点预览'),
-          content: SizedBox(
-            width: 440,
-            height: 460,
-            child: ListView.builder(
-              itemCount: candidates.length,
-              itemBuilder: (context, index) => CheckboxListTile(
-                value: selected.contains(index),
-                title: Text(candidates[index]['title'] as String),
-                onChanged: (checked) => setDialogState(() {
-                  if (checked == true && selected.length < 4) {
-                    selected.add(index);
-                  }
-                  if (checked != true) {
-                    selected.remove(index);
-                  }
-                }),
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('取消')),
-            FilledButton(
-              onPressed: selected.isEmpty
-                  ? null
-                  : () => Navigator.of(context).pop(true),
-              child: const Text('保存'),
-            ),
-          ],
-        ),
-      ),
+    final selected = await NodePreviewPicker.show(
+      context,
+      repository: repository,
+      nodeId: nodeId,
     );
-    if (confirmed != true) return;
+    if (selected == null || selected.isEmpty) return;
     repository.setNodePreviewOverride(
       nodeId,
-      jsonEncode(selected.map((index) => candidates[index]).toList()),
+      jsonEncode(selected
+          .map((tile) => {
+                'kind': tile.kind.name,
+                'title': tile.title,
+                'thumbnailPath': tile.thumbnailPath,
+                'entityId': tile.entityId,
+                'nodeId': tile.nodeId,
+                'aspectRatio': tile.aspectRatio,
+              })
+          .toList()),
     );
     _reload(indexNodeId: _currentIndexNode?.id, invalidateBrowserCache: true);
   }
@@ -1248,8 +1188,7 @@ class _AppShellState extends State<AppShell> {
         unawaited(_updateCurrentDirectoryNode());
         return;
       }
-      _repository?.rollbackIndexJobStagingRoot(job.id);
-      _repository?.discardIndexJob(job.id);
+      _repository?.abandonIndexJob(job.id);
       setState(() {
         _indexError = '无法继续：原目录节点已不存在。';
         _recoverableIndexJobs = _repository!.listRecoverableIndexJobs();
@@ -1270,8 +1209,7 @@ class _AppShellState extends State<AppShell> {
   void _recheckIndexJob(IndexBuildJob job) {
     final repository = _repository;
     if (repository == null || _scanning) return;
-    repository.rollbackIndexJobStagingRoot(job.id);
-    repository.discardIndexJob(job.id);
+    repository.abandonIndexJob(job.id);
     final targetNodeId = job.targetNodeId ??
         LibraryScanner.directoryNodeIdFromJobSource(job.sourcePath);
     if (targetNodeId != null) {
@@ -1294,8 +1232,7 @@ class _AppShellState extends State<AppShell> {
   void _discardRecoverableIndexJob(IndexBuildJob job) {
     final repository = _repository;
     if (repository == null) return;
-    repository.rollbackIndexJobStagingRoot(job.id);
-    repository.discardIndexJob(job.id);
+    repository.abandonIndexJob(job.id);
     setState(() {
       _recoverableIndexJobs = repository.listRecoverableIndexJobs();
     });

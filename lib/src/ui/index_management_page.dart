@@ -127,7 +127,7 @@ class IndexManagementPage extends StatelessWidget {
         ),
         if (progress != null) ...[
           const SizedBox(height: 16),
-          _ActiveIndexTaskCard(
+          _IndexTaskCard.active(
             progress: progress!,
             running: scanning,
             onPause: onPause,
@@ -143,25 +143,21 @@ class IndexManagementPage extends StatelessWidget {
         ],
         if (recoverableJobs.isNotEmpty) ...[
           const SizedBox(height: 16),
-          _IndexCard(
-            title: '可恢复任务',
-            child: Column(
-              children: [
-                for (final job in recoverableJobs)
-                  _RecoverableJobTile(
-                    job: job,
-                    taskPath:
-                        recoverableJobPaths[job.id] ?? _rootNameForJob(job),
-                    summary: recoverableJobSummaries[job.id],
-                    disabled: scanning,
-                    onDiscard: () => onDiscardRecovery(job),
-                    onResume: () => onResume(job),
-                    onRecheck: () => onRecheck(job),
-                    onRetryFailed: () => onRetryFailed(job),
-                  ),
-              ],
+          Text('可恢复任务', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 8),
+          for (final job in recoverableJobs) ...[
+            _IndexTaskCard.recoverable(
+              job: job,
+              taskPath: recoverableJobPaths[job.id] ?? _rootNameForJob(job),
+              summary: recoverableJobSummaries[job.id],
+              disabled: scanning,
+              onDiscard: () => onDiscardRecovery(job),
+              onResume: () => onResume(job),
+              onRecheck: () => onRecheck(job),
+              onRetryFailed: () => onRetryFailed(job),
             ),
-          ),
+            const SizedBox(height: 8),
+          ],
         ],
         if (errorMessage != null) ...[
           const SizedBox(height: 16),
@@ -186,40 +182,37 @@ class IndexManagementPage extends StatelessWidget {
           )
         else ...[
           _IndexRootSection(
-            title: '目录索引',
-            icon: Icons.folder_copy_outlined,
+            presentation: IndexRootPresentation.directory,
             roots: roots
                 .where((node) => node.nodeType == NodeType.directoryIndexRoot)
                 .toList(growable: false),
             rootCounts: rootCounts,
             scanning: scanning,
-            onUpdate: onUpdateDirectoryIndex,
+            onPrimaryAction: onUpdateDirectoryIndex,
             onRename: onRename,
             onDelete: onDelete,
             onRebuildPreviews: onRebuildNodePreviews,
           ),
           _IndexRootSection(
-            title: '自定义索引',
-            icon: Icons.collections_bookmark_outlined,
+            presentation: IndexRootPresentation.collection,
             roots: roots
                 .where((node) => node.nodeType == NodeType.categoryIndexRoot)
                 .toList(growable: false),
             rootCounts: rootCounts,
             scanning: scanning,
-            onCreateNode: onCreateNodeAtRoot,
+            onPrimaryAction: onCreateNodeAtRoot,
             onRename: onRename,
             onDelete: onDelete,
             onRebuildPreviews: onRebuildNodePreviews,
           ),
           _IndexRootSection(
-            title: '图索引',
-            icon: Icons.hub_outlined,
+            presentation: IndexRootPresentation.graph,
             roots: roots
                 .where((node) => node.nodeType == NodeType.graphIndexRoot)
                 .toList(growable: false),
             rootCounts: rootCounts,
             scanning: scanning,
-            onOpen: onOpenRoot,
+            onPrimaryAction: onOpenRoot,
             onRename: onRename,
             onDelete: onDelete,
             onRebuildPreviews: onRebuildNodePreviews,
@@ -240,30 +233,24 @@ class IndexManagementPage extends StatelessWidget {
 
 class _IndexRootSection extends StatelessWidget {
   const _IndexRootSection({
-    required this.title,
-    required this.icon,
+    required this.presentation,
     required this.roots,
     required this.rootCounts,
     required this.scanning,
     required this.onRename,
     required this.onDelete,
     required this.onRebuildPreviews,
-    this.onUpdate,
-    this.onCreateNode,
-    this.onOpen,
+    required this.onPrimaryAction,
   });
 
-  final String title;
-  final IconData icon;
+  final IndexRootPresentation presentation;
   final List<IndexNode> roots;
   final Map<String, int> rootCounts;
   final bool scanning;
   final ValueChanged<IndexNode> onRename;
   final ValueChanged<IndexNode> onDelete;
   final ValueChanged<IndexNode> onRebuildPreviews;
-  final ValueChanged<IndexNode>? onUpdate;
-  final ValueChanged<IndexNode>? onCreateNode;
-  final ValueChanged<IndexNode>? onOpen;
+  final ValueChanged<IndexNode> onPrimaryAction;
 
   @override
   Widget build(BuildContext context) {
@@ -275,9 +262,10 @@ class _IndexRootSection extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 18),
+              Icon(presentation.icon, size: 18),
               const SizedBox(width: 8),
-              Text(title, style: Theme.of(context).textTheme.titleMedium),
+              Text(presentation.title,
+                  style: Theme.of(context).textTheme.titleMedium),
             ],
           ),
           const SizedBox(height: 8),
@@ -290,21 +278,10 @@ class _IndexRootSection extends StatelessWidget {
                 trailing: Wrap(
                   spacing: 4,
                   children: [
-                    if (onUpdate != null)
-                      TextButton(
-                        onPressed: scanning ? null : () => onUpdate!(node),
-                        child: const Text('更新'),
-                      ),
-                    if (onCreateNode != null)
-                      TextButton(
-                        onPressed: scanning ? null : () => onCreateNode!(node),
-                        child: const Text('新建节点'),
-                      ),
-                    if (onOpen != null)
-                      TextButton(
-                        onPressed: () => onOpen!(node),
-                        child: const Text('打开画布'),
-                      ),
+                    TextButton(
+                      onPressed: scanning ? null : () => onPrimaryAction(node),
+                      child: Text(presentation.primaryActionLabel),
+                    ),
                     PopupMenuButton<String>(
                       enabled: !scanning,
                       onSelected: (action) {
@@ -337,38 +314,100 @@ class _IndexRootSection extends StatelessWidget {
   }
 }
 
-class _ActiveIndexTaskCard extends StatelessWidget {
-  const _ActiveIndexTaskCard({
+class IndexRootPresentation {
+  const IndexRootPresentation._({
+    required this.title,
+    required this.icon,
+    required this.primaryActionLabel,
+  });
+
+  static const directory = IndexRootPresentation._(
+    title: '目录索引',
+    icon: Icons.folder_copy_outlined,
+    primaryActionLabel: '更新',
+  );
+  static const collection = IndexRootPresentation._(
+    title: '自定义索引',
+    icon: Icons.collections_bookmark_outlined,
+    primaryActionLabel: '新建节点',
+  );
+  static const graph = IndexRootPresentation._(
+    title: '图索引',
+    icon: Icons.hub_outlined,
+    primaryActionLabel: '打开画布',
+  );
+
+  final String title;
+  final IconData icon;
+  final String primaryActionLabel;
+}
+
+class _IndexTaskCard extends StatelessWidget {
+  const _IndexTaskCard.active({
     required this.progress,
     required this.running,
     required this.onPause,
     required this.onAbandon,
-  });
+  })  : job = null,
+        taskPath = null,
+        summary = null,
+        disabled = false,
+        onDiscard = null,
+        onResume = null,
+        onRecheck = null,
+        onRetryFailed = null;
 
-  final ScanProgress progress;
+  const _IndexTaskCard.recoverable({
+    required this.job,
+    required this.taskPath,
+    required this.summary,
+    required this.disabled,
+    required this.onDiscard,
+    required this.onResume,
+    required this.onRecheck,
+    required this.onRetryFailed,
+  })  : progress = null,
+        running = false,
+        onPause = null,
+        onAbandon = null;
+
+  final ScanProgress? progress;
   final bool running;
-  final VoidCallback onPause;
-  final VoidCallback onAbandon;
+  final VoidCallback? onPause;
+  final VoidCallback? onAbandon;
+  final IndexBuildJob? job;
+  final String? taskPath;
+  final IndexJobCandidateSummary? summary;
+  final bool disabled;
+  final VoidCallback? onDiscard;
+  final VoidCallback? onResume;
+  final VoidCallback? onRecheck;
+  final VoidCallback? onRetryFailed;
 
   @override
   Widget build(BuildContext context) {
+    if (progress != null) return _buildActive();
+    return _buildRecoverable(context);
+  }
+
+  Widget _buildActive() {
+    final value = progress!;
     return _IndexCard(
-      title: '任务 · ${_scanPhaseLabel(progress.phase)}',
+      title: '任务 · ${_scanPhaseLabel(value.phase)}',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(progress.message),
+          Text(value.message),
           const SizedBox(height: 12),
-          LinearProgressIndicator(value: progress.entityProgress),
+          LinearProgressIndicator(value: value.entityProgress),
           const SizedBox(height: 10),
           Text(
-              '主进度 · 已发现 ${progress.discovered} · 已处理 ${progress.processed}/${progress.total}'),
-          if (progress.thumbnailTotal > 0) ...[
+              '主进度 · 已发现 ${value.discovered} · 已处理 ${value.processed}/${value.total}'),
+          if (value.thumbnailTotal > 0) ...[
             const SizedBox(height: 14),
-            LinearProgressIndicator(value: progress.thumbnailProgress),
+            LinearProgressIndicator(value: value.thumbnailProgress),
             const SizedBox(height: 10),
-            Text(
-                '缩略图 ${progress.thumbnailProcessed}/${progress.thumbnailTotal}'),
+            Text('缩略图 ${value.thumbnailProcessed}/${value.thumbnailTotal}'),
           ],
           if (running) ...[
             const SizedBox(height: 14),
@@ -387,69 +426,75 @@ class _ActiveIndexTaskCard extends StatelessWidget {
       ),
     );
   }
-}
 
-class _RecoverableJobTile extends StatelessWidget {
-  const _RecoverableJobTile({
-    required this.job,
-    required this.taskPath,
-    this.summary,
-    required this.disabled,
-    required this.onDiscard,
-    required this.onResume,
-    required this.onRecheck,
-    required this.onRetryFailed,
-  });
-
-  final IndexBuildJob job;
-  final String taskPath;
-  final IndexJobCandidateSummary? summary;
-  final bool disabled;
-  final VoidCallback onDiscard;
-  final VoidCallback onResume;
-  final VoidCallback onRecheck;
-  final VoidCallback onRetryFailed;
-
-  @override
-  Widget build(BuildContext context) {
-    final isPartial = job.targetNodeId != null;
-    final progress = summary == null
-        ? '${job.processed}/${job.total}'
-        : '${summary!.previewed}/${summary!.total}';
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      title: Text('${isPartial ? '部分更新' : '全量构建'} · $taskPath'),
-      subtitle: Text(
-        '${_jobStatusLabel(job.status)} · ${_jobPhaseLabel(job.phase)} · '
-        '$progress${job.scanCompleted ? ' · 清单已保存' : ' · 正在建立清单'}'
-        '${summary != null && summary!.remaining > 0 ? ' · 待继续 ${summary!.remaining}' : ''}'
-        '${summary != null && summary!.failed > 0 ? ' · 失败 ${summary!.failed}' : ''}'
-        '${job.previewTotal > 0 ? ' · 预览 ${job.previewProcessed}/${job.previewTotal}' : ''}'
-        '${job.error?.isNotEmpty == true ? '\n${job.error}' : ''}',
-        maxLines: 3,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: Wrap(
-        spacing: 4,
+  Widget _buildRecoverable(BuildContext context) {
+    final value = job!;
+    final candidates = summary;
+    final isPartial = value.targetNodeId != null;
+    final progress = candidates == null
+        ? '${value.processed}/${value.total}'
+        : '${candidates.previewed}/${candidates.total}';
+    final details = <String>[
+      '${_jobStatusLabel(value.status)} · ${_jobPhaseLabel(value.phase)} · $progress',
+      value.scanCompleted ? '清单已保存' : '正在建立清单',
+      if (candidates != null && candidates.remaining > 0)
+        '待继续 ${candidates.remaining}',
+      if (candidates != null && candidates.failed > 0)
+        '失败 ${candidates.failed}',
+      if (value.previewTotal > 0)
+        '预览 ${value.previewProcessed}/${value.previewTotal}',
+    ];
+    return _IndexCard(
+      title: '${isPartial ? '部分更新' : '全量构建'} · $taskPath',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          TextButton(
-            onPressed: disabled ? null : onDiscard,
-            child: const Text('放弃任务'),
-          ),
-          TextButton(
-            onPressed: disabled ? null : onResume,
-            child: const Text('继续任务'),
-          ),
-          TextButton(
-            onPressed: disabled ? null : onRecheck,
-            child: const Text('重新检查并更新'),
-          ),
-          if ((summary?.failed ?? 0) > 0) ...[
-            FilledButton.tonal(
-              onPressed: disabled ? null : onRetryFailed,
-              child: const Text('仅重试失败项'),
+          Text(details.join(' · ')),
+          if (value.error?.isNotEmpty == true)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                title: const Text('错误详情'),
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: SelectableText(value.error!),
+                  ),
+                ],
+              ),
             ),
-          ],
+          const SizedBox(height: 12),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FilledButton(
+                onPressed: disabled ? null : onResume,
+                child: const Text('继续任务'),
+              ),
+              const SizedBox(width: 8),
+              PopupMenuButton<String>(
+                enabled: !disabled,
+                onSelected: (action) => switch (action) {
+                  'discard' => onDiscard?.call(),
+                  'recheck' => onRecheck?.call(),
+                  'retryFailed' => onRetryFailed?.call(),
+                  _ => null,
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(value: 'recheck', child: Text('重新检查并更新')),
+                  if ((candidates?.failed ?? 0) > 0)
+                    const PopupMenuItem(
+                        value: 'retryFailed', child: Text('仅重试失败项')),
+                  const PopupMenuItem(value: 'discard', child: Text('放弃任务')),
+                ],
+                child: const OutlinedButton(
+                  onPressed: null,
+                  child: Text('更多操作'),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

@@ -11,9 +11,179 @@ import 'package:best_viewer/src/core/database/app_database.dart';
 import 'package:best_viewer/src/core/database/library_repository.dart';
 import 'package:best_viewer/src/core/domain/models.dart';
 import 'package:best_viewer/src/core/formats/thumbnail_spec.dart';
+import 'package:best_viewer/src/core/scanner/candidate_processor.dart';
 import 'package:best_viewer/src/core/scanner/library_scanner.dart';
 
 void main() {
+  test('candidate processor snapshots only changed existing entities', () {
+    final db = AppDatabase.openInMemory();
+    addTearDown(db.close);
+    final repository = LibraryRepository(db);
+    final root = repository.ensureDirectoryIndexRoot(r'D:\candidate');
+    final existing = repository
+        .upsertEntity(
+          path: r'D:\candidate\a.txt',
+          name: 'a.txt',
+          format: 'txt',
+          entityType: EntityType.text,
+          hash: 'same',
+          size: 10,
+          sourceCreatedAtMs: 1,
+          sourceModifiedAtMs: 1,
+          directoryRootId: root.id,
+        )
+        .entity;
+    final job = repository.beginIndexJob(root.sourcePath!);
+    final processor = CandidateProcessor(repository);
+
+    processor.write(CandidateWriteRequest(
+      jobId: job.id,
+      path: existing.path,
+      name: existing.name,
+      format: existing.format,
+      entityType: existing.entityType,
+      hash: existing.hash,
+      size: existing.size,
+      sourceCreatedAtMs: existing.sourceCreatedAtMs,
+      sourceModifiedAtMs: existing.sourceModifiedAtMs,
+      directoryRootId: root.id,
+      existing: existing,
+    ));
+    expect(
+      db.db.select(
+        'SELECT COUNT(*) AS count FROM index_job_changes WHERE job_id = ?',
+        [job.id],
+      ).single['count'],
+      0,
+    );
+
+    processor.write(CandidateWriteRequest(
+      jobId: job.id,
+      path: existing.path,
+      name: existing.name,
+      format: existing.format,
+      entityType: existing.entityType,
+      hash: 'changed',
+      size: existing.size,
+      sourceCreatedAtMs: existing.sourceCreatedAtMs,
+      sourceModifiedAtMs: existing.sourceModifiedAtMs,
+      directoryRootId: root.id,
+      existing: existing,
+    ));
+    expect(
+      db.db.select(
+        'SELECT COUNT(*) AS count FROM index_job_changes WHERE job_id = ?',
+        [job.id],
+      ).single['count'],
+      1,
+    );
+  });
+
+  test('node preview candidates page recursive entities and descendants', () {
+    final db = AppDatabase.openInMemory();
+    addTearDown(db.close);
+    final repository = LibraryRepository(db);
+    final root = repository.ensureCategoryIndexRoot('预览根');
+    final child = repository.ensureIndexNode(
+      parentId: root.id,
+      name: '子节点',
+      nodeType: NodeType.category,
+      viewType: ViewType.tree,
+    );
+    final entity = repository
+        .upsertEntity(
+          path: r'D:\preview\image.jpg',
+          name: 'image.jpg',
+          format: 'jpg',
+          entityType: EntityType.image,
+          hash: 'preview-hash',
+          size: 10,
+          sourceCreatedAtMs: 1,
+          sourceModifiedAtMs: 1,
+        )
+        .entity;
+    repository.linkEntityToIndexNode(
+      entityId: entity.id,
+      indexNodeId: child.id,
+    );
+
+    final page = repository.listNodePreviewCandidates(root.id, limit: 1);
+    expect(page.items, hasLength(1));
+    expect(page.hasMore, isTrue);
+    final all = repository.listNodePreviewCandidates(root.id, limit: 10);
+    expect(all.items.map((item) => item.nodeId), contains(child.id));
+    expect(all.items.map((item) => item.entityId), contains(entity.id));
+    expect(
+      repository
+          .listNodePreviewCandidates(root.id, query: '子节点')
+          .items
+          .map((item) => item.nodeId),
+      contains(child.id),
+    );
+  });
+
+  test('abandoning a task rolls back staged entities, links and thumbnails',
+      () {
+    final db = AppDatabase.openInMemory();
+    addTearDown(db.close);
+    final repository = LibraryRepository(db);
+    final root = repository.ensureDirectoryIndexRoot(
+      r'D:\staged',
+      staging: true,
+    );
+    final child = repository.ensureIndexNode(
+      parentId: root.id,
+      name: '媒体',
+      nodeType: NodeType.folder,
+      viewType: ViewType.tree,
+    );
+    final job = repository.beginIndexJob(root.sourcePath!);
+    repository.setIndexJobRoots(
+      jobId: job.id,
+      indexRootId: root.id,
+      stagingRootId: root.id,
+    );
+    final entity = repository
+        .upsertEntity(
+          path: r'D:\staged\image.jpg',
+          name: 'image.jpg',
+          format: 'jpg',
+          entityType: EntityType.image,
+          hash: 'staged-image',
+          size: 10,
+          sourceCreatedAtMs: 1,
+          sourceModifiedAtMs: 1,
+          directoryRootId: root.id,
+        )
+        .entity;
+    const thumbnailKey = 'staged-thumbnail';
+    repository.updateEntityThumbnailSuccess(
+      entityId: entity.id,
+      key: thumbnailKey,
+      format: 'webp',
+      width: 20,
+      height: 20,
+    );
+    final thumbnail = repository.thumbnailStore.fileFor(thumbnailKey, 'webp');
+    thumbnail.parent.createSync(recursive: true);
+    thumbnail.writeAsBytesSync(const [0, 1, 2]);
+    repository.recordCreatedEntityForIndexJob(job.id, entity.id);
+    repository.snapshotIndexJobLink(
+      jobId: job.id,
+      indexNodeId: child.id,
+      entityId: entity.id,
+    );
+    repository.linkEntityToIndexNode(
+        entityId: entity.id, indexNodeId: child.id);
+
+    repository.abandonIndexJob(job.id);
+
+    expect(repository.getIndexJob(job.id), isNull);
+    expect(repository.getIndexNode(root.id), isNull);
+    expect(repository.getEntity(entity.id), isNull);
+    expect(thumbnail.existsSync(), isFalse);
+  });
+
   test('entity upsert skips same path hash and updates changed hash', () {
     final db = AppDatabase.openInMemory();
     addTearDown(db.close);
