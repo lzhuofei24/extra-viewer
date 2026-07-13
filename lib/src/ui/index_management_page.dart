@@ -127,47 +127,11 @@ class IndexManagementPage extends StatelessWidget {
         ),
         if (progress != null) ...[
           const SizedBox(height: 16),
-          _IndexCard(
-            title: '任务 · ${_scanPhaseLabel(progress!.phase)}',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(progress!.message, style: theme.textTheme.bodyMedium),
-                const SizedBox(height: 12),
-                LinearProgressIndicator(
-                  value: progress!.entityProgress,
-                ),
-                const SizedBox(height: 10),
-                Text(
-                    '主进度 · 已发现 ${progress!.discovered} · 已处理 ${progress!.processed}/${progress!.total}'),
-                if (progress!.thumbnailTotal > 0) ...[
-                  const SizedBox(height: 14),
-                  LinearProgressIndicator(value: progress!.thumbnailProgress),
-                  const SizedBox(height: 10),
-                  Text(
-                    '缩略图 ${progress!.thumbnailProcessed}/${progress!.thumbnailTotal}',
-                  ),
-                ],
-                if (scanning) ...[
-                  const SizedBox(height: 14),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: onPause,
-                        icon: const Icon(Icons.pause_rounded),
-                        label: const Text('暂停'),
-                      ),
-                      TextButton.icon(
-                        onPressed: onCancel,
-                        icon: const Icon(Icons.close_rounded),
-                        label: const Text('放弃'),
-                      ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
+          _ActiveIndexTaskCard(
+            progress: progress!,
+            running: scanning,
+            onPause: onPause,
+            onAbandon: onCancel,
           ),
         ],
         if (progress == null && taskHistory != null) ...[
@@ -366,6 +330,58 @@ class _IndexRootSection extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ActiveIndexTaskCard extends StatelessWidget {
+  const _ActiveIndexTaskCard({
+    required this.progress,
+    required this.running,
+    required this.onPause,
+    required this.onAbandon,
+  });
+
+  final ScanProgress progress;
+  final bool running;
+  final VoidCallback onPause;
+  final VoidCallback onAbandon;
+
+  @override
+  Widget build(BuildContext context) {
+    return _IndexCard(
+      title: '任务 · ${_scanPhaseLabel(progress.phase)}',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(progress.message),
+          const SizedBox(height: 12),
+          LinearProgressIndicator(value: progress.entityProgress),
+          const SizedBox(height: 10),
+          Text(
+              '主进度 · 已发现 ${progress.discovered} · 已处理 ${progress.processed}/${progress.total}'),
+          if (progress.thumbnailTotal > 0) ...[
+            const SizedBox(height: 14),
+            LinearProgressIndicator(value: progress.thumbnailProgress),
+            const SizedBox(height: 10),
+            Text(
+                '缩略图 ${progress.thumbnailProcessed}/${progress.thumbnailTotal}'),
+          ],
+          if (running) ...[
+            const SizedBox(height: 14),
+            Wrap(spacing: 8, children: [
+              OutlinedButton.icon(
+                  onPressed: onPause,
+                  icon: const Icon(Icons.pause_rounded),
+                  label: const Text('暂停')),
+              TextButton.icon(
+                  onPressed: onAbandon,
+                  icon: const Icon(Icons.close_rounded),
+                  label: const Text('放弃')),
+            ]),
           ],
         ],
       ),
