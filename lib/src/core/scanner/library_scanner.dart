@@ -1217,7 +1217,7 @@ class LibraryScanner {
             }
           }
           candidateProcessor.writeLinks(job.id, links, transactional: false);
-          repository.updateIndexJobCandidateStates(
+          candidateProcessor.markStates(
             job.id,
             writtenPaths,
             IndexJobCandidateState.written,
@@ -1295,7 +1295,7 @@ class LibraryScanner {
       ...mediaEntities.map((entity) => p.normalize(entity.path)),
       ...audioEntities.map((entity) => p.normalize(entity.path)),
     };
-    repository.updateIndexJobCandidateStates(
+    candidateProcessor.markStates(
       job.id,
       preparedCandidates
           .map((candidate) => p.normalize(candidate.file.path))
@@ -1303,7 +1303,7 @@ class LibraryScanner {
       IndexJobCandidateState.previewed,
     );
     // Existing thumbnail cache entries are already durable preview results.
-    repository.updateIndexJobCandidateStates(
+    candidateProcessor.markStates(
       job.id,
       mediaEntities
           .where((entity) =>
@@ -1457,7 +1457,7 @@ class LibraryScanner {
             if (built) thumbnailsBuilt++;
           } catch (error) {
             // Failed candidates are included in the next resume manifest.
-            repository.updateIndexJobCandidateState(
+            candidateProcessor.markState(
               job.id,
               p.normalize(entity.path),
               IndexJobCandidateState.failed,
@@ -1477,13 +1477,13 @@ class LibraryScanner {
                 fingerprint: entity.hash,
                 durationMs: entity.durationMs,
               );
-              repository.updateIndexJobCandidateState(
+              candidateProcessor.markState(
                 job.id,
                 p.normalize(entity.path),
                 IndexJobCandidateState.previewed,
               );
             } catch (error) {
-              repository.updateIndexJobCandidateState(
+              candidateProcessor.markState(
                 job.id,
                 p.normalize(entity.path),
                 IndexJobCandidateState.failed,

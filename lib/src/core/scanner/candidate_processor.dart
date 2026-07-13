@@ -149,4 +149,26 @@ class CandidateProcessor {
       repository.updateIndexJob(jobId, processed: processed);
     });
   }
+
+  void markStates(
+    String jobId,
+    Iterable<String> sourcePaths,
+    IndexJobCandidateState state,
+  ) {
+    repository.updateIndexJobCandidateStates(jobId, sourcePaths, state);
+  }
+
+  void markState(
+    String jobId,
+    String sourcePath,
+    IndexJobCandidateState state, {
+    String? error,
+  }) {
+    repository.updateIndexJobCandidateState(
+      jobId,
+      sourcePath,
+      state,
+      error: error,
+    );
+  }
 }
