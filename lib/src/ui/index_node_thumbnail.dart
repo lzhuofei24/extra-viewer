@@ -245,7 +245,7 @@ class _PreviewTile extends StatelessWidget {
   Widget build(BuildContext context) {
     if (tile.kind == IndexNodePreviewTileKind.visual &&
         tile.thumbnailPath != null &&
-        File(tile.thumbnailPath!).existsSync()) {
+        tile.thumbnailPath!.isNotEmpty) {
       return Image.file(
         File(tile.thumbnailPath!),
         fit: BoxFit.cover,
@@ -257,11 +257,8 @@ class _PreviewTile extends StatelessWidget {
       );
     }
     if (tile.kind == IndexNodePreviewTileKind.visual) {
-      final path = tile.thumbnailPath;
       return _NodeThumbnailFailure(
-        message: path == null || path.isEmpty
-            ? '实体缩略图路径为空\n${tile.title}'
-            : '实体缩略图文件不存在\n$path',
+        message: '实体缩略图路径为空\n${tile.title}',
       );
     }
     return switch (tile.kind) {

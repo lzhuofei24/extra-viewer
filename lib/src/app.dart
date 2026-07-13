@@ -122,6 +122,9 @@ class _AppShellState extends State<AppShell> {
   ScanProgress? _scanProgress;
   IndexScanControl? _scanControl;
   List<IndexBuildJob> _recoverableIndexJobs = const [];
+  Map<String, IndexJobCandidateSummary> _recoverableJobSummaries = const {};
+  Map<String, List<IndexJobCandidate>> _recoverableJobFailures = const {};
+  Map<String, String> _recoverableJobPaths = const {};
   AppSection _section = AppSection.home;
   BrowserState _browserState = const BrowserState();
   IndexNode? _selectedIndexRoot;
@@ -436,11 +439,33 @@ class _AppShellState extends State<AppShell> {
     final rootCounts = repository.countEntitiesUnderIndexNodes(
       roots.map((root) => root.id),
     );
+    _refreshRecoverableIndexTasks();
     setState(() {
       _indexRoots = roots;
       _rootCounts = rootCounts;
-      _recoverableIndexJobs = repository.listRecoverableIndexJobs();
     });
+  }
+
+  void _refreshRecoverableIndexTasks() {
+    final repository = _repository;
+    if (repository == null) return;
+    final jobs = repository.listRecoverableIndexJobs();
+    _recoverableIndexJobs = jobs;
+    _recoverableJobSummaries = {
+      for (final job in jobs)
+        job.id: repository.summarizeIndexJobCandidates(job.id),
+    };
+    _recoverableJobFailures = {
+      for (final job in jobs)
+        job.id: repository.listIndexJobCandidates(
+          job.id,
+          states: {IndexJobCandidateState.failed},
+          limit: 20,
+        ),
+    };
+    _recoverableJobPaths = {
+      for (final job in jobs) job.id: _recoveryJobPath(job),
+    };
   }
 
   void _updateNavigationCacheScope({
@@ -936,10 +961,10 @@ class _AppShellState extends State<AppShell> {
         indexNodeId: createdIndex?.id,
         invalidateBrowserCache: true,
       );
+      _refreshRecoverableIndexTasks();
       setState(() {
         _scanProgress = null;
         _section = AppSection.indexes;
-        _recoverableIndexJobs = repository.listRecoverableIndexJobs();
         _lastIndexTaskSummary =
             '目录构建完成 · ${summary.imported} 新增，${summary.updated} 更新，${summary.skipped} 未变化 · ${summary.timings.compactReport}';
       });
@@ -949,22 +974,22 @@ class _AppShellState extends State<AppShell> {
         );
       }
     } on IndexScanPausedException {
+      _refreshRecoverableIndexTasks();
       setState(() {
         _indexError = null;
         _scanProgress = null;
-        _recoverableIndexJobs = repository.listRecoverableIndexJobs();
       });
     } on IndexScanCanceledException {
+      _refreshRecoverableIndexTasks();
       setState(() {
         _indexError = null;
         _scanProgress = null;
-        _recoverableIndexJobs = repository.listRecoverableIndexJobs();
       });
     } catch (error) {
+      _refreshRecoverableIndexTasks();
       setState(() {
         _indexError = '扫描失败：$error';
         _scanProgress = null;
-        _recoverableIndexJobs = repository.listRecoverableIndexJobs();
       });
     } finally {
       setState(() {
@@ -1024,11 +1049,11 @@ class _AppShellState extends State<AppShell> {
       if (mounted) setState(() => _indexError = '更新失败：$error');
     } finally {
       if (mounted) {
+        _refreshRecoverableIndexTasks();
         setState(() {
           _scanning = false;
           _scanControl = null;
           _scanProgress = null;
-          _recoverableIndexJobs = repository.listRecoverableIndexJobs();
         });
       }
     }
@@ -1189,9 +1214,9 @@ class _AppShellState extends State<AppShell> {
         return;
       }
       _repository?.abandonIndexJob(job.id);
+      _refreshRecoverableIndexTasks();
       setState(() {
         _indexError = '无法继续：原目录节点已不存在。';
-        _recoverableIndexJobs = _repository!.listRecoverableIndexJobs();
       });
       return;
     }
@@ -1219,9 +1244,9 @@ class _AppShellState extends State<AppShell> {
         unawaited(_updateCurrentDirectoryNode());
         return;
       }
+      _refreshRecoverableIndexTasks();
       setState(() {
         _indexError = '无法重新检查：原目录节点已删除。';
-        _recoverableIndexJobs = repository.listRecoverableIndexJobs();
       });
       return;
     }
@@ -1233,9 +1258,8 @@ class _AppShellState extends State<AppShell> {
     final repository = _repository;
     if (repository == null) return;
     repository.abandonIndexJob(job.id);
-    setState(() {
-      _recoverableIndexJobs = repository.listRecoverableIndexJobs();
-    });
+    _refreshRecoverableIndexTasks();
+    setState(() {});
   }
 
   Future<String?> _askText({
@@ -2419,22 +2443,9 @@ class _AppShellState extends State<AppShell> {
           scanning: _scanning,
           progress: _scanProgress,
           recoverableJobs: _recoverableIndexJobs,
-          recoverableJobSummaries: {
-            for (final job in _recoverableIndexJobs)
-              job.id: _repository!.summarizeIndexJobCandidates(job.id),
-          },
-          recoverableJobFailures: {
-            for (final job in _recoverableIndexJobs)
-              job.id: _repository!.listIndexJobCandidates(
-                job.id,
-                states: {IndexJobCandidateState.failed},
-                limit: 20,
-              ),
-          },
-          recoverableJobPaths: {
-            for (final job in _recoverableIndexJobs)
-              job.id: _recoveryJobPath(job),
-          },
+          recoverableJobSummaries: _recoverableJobSummaries,
+          recoverableJobFailures: _recoverableJobFailures,
+          recoverableJobPaths: _recoverableJobPaths,
           errorMessage: _indexError,
           taskHistory: _lastIndexTaskSummary,
           onScan: _scan,
