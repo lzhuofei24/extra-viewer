@@ -124,6 +124,8 @@ class LibraryRepository {
     required String rootId,
     required String jobId,
   }) {
+    final existing = directoryBuildGenerationForJob(jobId);
+    if (existing != null) return existing;
     final row = database.db.select(
       'SELECT COALESCE(MAX(generation), 0) AS value FROM directory_build_generations WHERE directory_root_id = ?',
       [rootId],
@@ -147,6 +149,25 @@ class LibraryRepository {
       state: DirectoryBuildGenerationState.building,
       jobId: jobId,
       createdAtMs: now,
+    );
+  }
+
+  DirectoryBuildGeneration? directoryBuildGenerationForJob(String jobId) {
+    final rows = database.db.select('''
+      SELECT * FROM directory_build_generations
+      WHERE job_id = ? AND state = ?
+      ORDER BY generation DESC LIMIT 1
+    ''', [jobId, DirectoryBuildGenerationState.building.name]);
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return DirectoryBuildGeneration(
+      rootId: row['directory_root_id'] as String,
+      generation: row['generation'] as int,
+      state:
+          DirectoryBuildGenerationState.values.byName(row['state'] as String),
+      jobId: row['job_id'] as String?,
+      createdAtMs: row['created_at'] as int,
+      committedAtMs: row['committed_at'] as int?,
     );
   }
 
@@ -215,6 +236,11 @@ class LibraryRepository {
     ]);
   }
 
+  void abandonDirectoryGenerationForJob(String jobId) {
+    final generation = directoryBuildGenerationForJob(jobId);
+    if (generation != null) abandonDirectoryGeneration(generation);
+  }
+
   void snapshotEntityForIndexJob(String jobId, Entity entity) {
     _appendIndexJobChange(
       jobId: jobId,
@@ -254,6 +280,7 @@ class LibraryRepository {
   void rollbackIndexJobStagingRoot(String jobId) {
     final job = getIndexJob(jobId);
     if (job == null) return;
+    abandonDirectoryGenerationForJob(jobId);
     final changes = database.db.select('''
       SELECT change_type, entity_id, node_id, payload_json
       FROM index_job_changes

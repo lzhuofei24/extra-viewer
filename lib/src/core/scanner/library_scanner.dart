@@ -285,6 +285,8 @@ class LibraryScanner {
     required ScanSummary summary,
   }) {
     if (scope.isRoot) {
+      final generation = repository.directoryBuildGenerationForJob(job.id);
+      if (generation != null) repository.commitDirectoryGeneration(generation);
       repository.replaceOverlappingDirectoryIndexRoots(
         keepRootId: summary.indexRootId,
         sourcePath: scope.sourcePath,
@@ -1160,6 +1162,10 @@ class LibraryScanner {
         preparedCandidates.map((candidate) => candidate.file.path),
       ),
     );
+    final directoryGeneration = targetNode == null && !resumingPreviews
+        ? repository.beginDirectoryGeneration(
+            rootId: indexRoot.id, jobId: job.id)
+        : null;
     final preservedOwnerRootIds =
         targetNode == null && existingIndexRoot == null
             ? repository.directoryIndexRootIdsOverlapping(
@@ -1188,6 +1194,8 @@ class LibraryScanner {
         final batch = preparedCandidates.sublist(offset, end);
         repository.writeTransaction(() {
           final links = <({String entityId, String indexNodeId})>[];
+          final memberships =
+              <({String nodeId, String entityId, String relativePath})>[];
           final writtenPaths = <String>[];
           for (final candidate in batch) {
             final file = candidate.file;
@@ -1241,6 +1249,12 @@ class LibraryScanner {
               entityId: result.entity.id,
               indexNodeId: directoryNode.id,
             ));
+            memberships.add((
+              nodeId: directoryNode.id,
+              entityId: result.entity.id,
+              relativePath:
+                  p.relative(file.path, from: rootPath).replaceAll('\\', '/'),
+            ));
             repository.snapshotIndexJobLink(
               jobId: job.id,
               indexNodeId: directoryNode.id,
@@ -1255,6 +1269,12 @@ class LibraryScanner {
             }
           }
           repository.linkEntitiesToIndexNodes(links, rebuildStats: false);
+          if (directoryGeneration != null) {
+            repository.stageDirectoryMemberships(
+              generation: directoryGeneration,
+              memberships: memberships,
+            );
+          }
           repository.updateIndexJobCandidateStates(
             job.id,
             writtenPaths,
