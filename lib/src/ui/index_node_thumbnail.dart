@@ -13,7 +13,8 @@ double indexNodePreviewAspectRatio(IndexNodePreview? preview) {
       _JustifiedMosaicLayout.fromTiles(preview.tiles).aspectRatio,
     // Compact list previews reserve less vertical space than visual mosaics.
     // Keep audio and book-only nodes visually aligned.
-    IndexNodePreviewKind.audioList || IndexNodePreviewKind.documentList =>
+    IndexNodePreviewKind.audioList ||
+    IndexNodePreviewKind.documentList =>
       1.875,
     IndexNodePreviewKind.splitLists => .85,
     IndexNodePreviewKind.empty => 1,
@@ -74,6 +75,7 @@ class IndexNodeThumbnail extends StatelessWidget {
                   child: _DataListTile(
                     audioNames: const [],
                     documentNames: data.documentNames,
+                    useAudioPalette: true,
                   ),
                 ),
                 Divider(
@@ -268,8 +270,11 @@ class _PreviewTile extends StatelessWidget {
         _NodeNameTile(title: tile.title),
       IndexNodePreviewTileKind.audio =>
         _DataListTile(audioNames: tile.audioNames, documentNames: const []),
-      IndexNodePreviewTileKind.document =>
-        _DataListTile(audioNames: const [], documentNames: tile.documentNames),
+      IndexNodePreviewTileKind.document => _DataListTile(
+          audioNames: const [],
+          documentNames: tile.documentNames,
+          useAudioPalette: true,
+        ),
       IndexNodePreviewTileKind.mixedData => _DataListTile(
           audioNames: tile.audioNames,
           documentNames: tile.documentNames,
@@ -345,7 +350,10 @@ class _DataListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final usesAudioPalette = audioNames.isNotEmpty || useAudioPalette;
+    // Books and other document previews share the music palette so a node
+    // never changes to the legacy yellow background merely due to its type.
+    final usesAudioPalette =
+        audioNames.isNotEmpty || documentNames.isNotEmpty || useAudioPalette;
     final names = [...audioNames, ...documentNames];
     final scheme = Theme.of(context).colorScheme;
     return DecoratedBox(
