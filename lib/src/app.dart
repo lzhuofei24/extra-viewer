@@ -1079,7 +1079,7 @@ class _AppShellState extends State<AppShell> {
 
   Future<void> _showRebuildNodePreviews(IndexNode root) async {
     final repository = _repository;
-    if (repository == null) return;
+    if (repository == null || _scanning) return;
     final confirmed = await _confirm(
       title: '重新构建节点预览图',
       message: '将重新生成“${root.name}”及全部下级节点的预览图描述。',
@@ -1280,6 +1280,11 @@ class _AppShellState extends State<AppShell> {
         unawaited(_updateCurrentDirectoryNode());
         return;
       }
+      setState(() {
+        _indexError = '无法重新检查：原目录节点已删除。';
+        _recoverableIndexJobs = repository.listRecoverableIndexJobs();
+      });
+      return;
     }
     _indexPathController.text = job.sourcePath;
     _scan();
@@ -1773,6 +1778,7 @@ class _AppShellState extends State<AppShell> {
     final repository = _repository;
     final parent = parentOverride ?? _currentIndexNode;
     if (repository == null ||
+        _scanning ||
         parent == null ||
         (parent.nodeType != NodeType.categoryIndexRoot &&
             parent.nodeType != NodeType.category)) {
@@ -1807,6 +1813,14 @@ class _AppShellState extends State<AppShell> {
       });
       _browserNodeCache.clear();
       _cacheWarmupGeneration++;
+      if (parentOverride != null) {
+        setState(() {
+          _selectedIndexRoot = parentOverride;
+          _selectedItem = null;
+          _detail = null;
+          _section = AppSection.data;
+        });
+      }
       _openIndexNode(node);
     } on ArgumentError catch (error) {
       if (mounted) setState(() => _indexError = '创建索引节点失败：${error.message}');
@@ -2153,7 +2167,7 @@ class _AppShellState extends State<AppShell> {
 
   Future<void> _renameIndexNode(IndexNode index) async {
     final repository = _repository;
-    if (repository == null) return;
+    if (repository == null || _scanning) return;
     final controller = TextEditingController(text: index.name);
     String? newName;
     try {
@@ -2200,7 +2214,7 @@ class _AppShellState extends State<AppShell> {
 
   Future<void> _deleteIndexNode(IndexNode index) async {
     final repository = _repository;
-    if (repository == null) return;
+    if (repository == null || _scanning) return;
     if (index.nodeType == NodeType.directoryIndexRoot) {
       final report = repository.inspectDirectoryIndexDeletion(index.id);
       final force = await _confirmDirectoryIndexDeletion(report);

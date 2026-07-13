@@ -342,6 +342,7 @@ class _IndexRootSection extends StatelessWidget {
                         child: const Text('打开画布'),
                       ),
                     PopupMenuButton<String>(
+                      enabled: !scanning,
                       onSelected: (action) {
                         WidgetsBinding.instance.addPostFrameCallback((_) {
                           if (action == 'rebuildPreviews') {
@@ -407,7 +408,10 @@ class _RecoverableJobTile extends StatelessWidget {
         '$progress${job.scanCompleted ? ' · 清单已保存' : ' · 正在建立清单'}'
         '${summary != null && summary!.remaining > 0 ? ' · 待继续 ${summary!.remaining}' : ''}'
         '${summary != null && summary!.failed > 0 ? ' · 失败 ${summary!.failed}' : ''}'
-        '${job.previewTotal > 0 ? ' · 预览 ${job.previewProcessed}/${job.previewTotal}' : ''}',
+        '${job.previewTotal > 0 ? ' · 预览 ${job.previewProcessed}/${job.previewTotal}' : ''}'
+        '${job.error?.isNotEmpty == true ? '\n${job.error}' : ''}',
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
       ),
       trailing: Wrap(
         spacing: 4,
