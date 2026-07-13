@@ -561,6 +561,26 @@ class ScanScope {
   String get jobSource => isRoot ? sourcePath : '__node_refresh__$targetNodeId';
 }
 
+enum DirectoryBuildGenerationState { building, committed, abandoned }
+
+class DirectoryBuildGeneration {
+  const DirectoryBuildGeneration({
+    required this.rootId,
+    required this.generation,
+    required this.state,
+    required this.createdAtMs,
+    this.jobId,
+    this.committedAtMs,
+  });
+
+  final String rootId;
+  final int generation;
+  final DirectoryBuildGenerationState state;
+  final String? jobId;
+  final int createdAtMs;
+  final int? committedAtMs;
+}
+
 class IndexJobCandidate {
   const IndexJobCandidate({
     required this.jobId,

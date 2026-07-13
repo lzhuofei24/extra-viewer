@@ -176,6 +176,10 @@ class AppDatabase {
       _migrateV32();
       db.userVersion = 32;
     }
+    if (version < 33) {
+      _migrateV33();
+      db.userVersion = 33;
+    }
     // Hot restart and older development builds can leave a version marker
     // ahead of the physical schema. These checks are idempotent self-healing.
     _addColumnIfMissing('entities', 'directory_root_id', 'TEXT');
@@ -201,6 +205,7 @@ class AppDatabase {
     );
     db.execute(_schema);
     db.execute(_indexJobChangeSchema);
+    db.execute(_directoryGenerationSchema);
     db.execute("""
       UPDATE index_jobs
       SET status = 'paused', updated_at =
@@ -220,6 +225,7 @@ class AppDatabase {
       db.execute(_schema);
       db.execute(_indexJobCandidateSchema);
       db.execute(_indexJobChangeSchema);
+      db.execute(_directoryGenerationSchema);
       db.execute('COMMIT;');
     } catch (_) {
       db.execute('ROLLBACK;');
@@ -771,6 +777,8 @@ LEFT JOIN child_counts ON child_counts.id = node.id;
   void _migrateV31() {}
 
   void _migrateV32() => db.execute(_indexJobChangeSchema);
+
+  void _migrateV33() => db.execute(_directoryGenerationSchema);
 }
 
 const _legacyTables = [
@@ -1005,6 +1013,39 @@ ON index_job_changes(job_id, node_id, entity_id)
 WHERE change_type = 'link_added';
 CREATE INDEX IF NOT EXISTS idx_index_job_changes_job
 ON index_job_changes(job_id, sequence DESC);
+''';
+
+const _directoryGenerationSchema = '''
+CREATE TABLE IF NOT EXISTS directory_build_generations (
+  directory_root_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  job_id TEXT,
+  created_at INTEGER NOT NULL,
+  committed_at INTEGER,
+  PRIMARY KEY(directory_root_id, generation),
+  FOREIGN KEY(directory_root_id) REFERENCES index_nodes(id) ON DELETE CASCADE,
+  FOREIGN KEY(job_id) REFERENCES index_jobs(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS directory_memberships (
+  directory_root_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  index_node_id TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  relative_path TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(directory_root_id, generation, index_node_id, entity_id),
+  FOREIGN KEY(directory_root_id, generation)
+    REFERENCES directory_build_generations(directory_root_id, generation)
+    ON DELETE CASCADE,
+  FOREIGN KEY(index_node_id) REFERENCES index_nodes(id) ON DELETE CASCADE,
+  FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_directory_memberships_node
+ON directory_memberships(index_node_id, directory_root_id, generation);
+CREATE INDEX IF NOT EXISTS idx_directory_memberships_entity
+ON directory_memberships(entity_id);
 ''';
 
 const _audioPlaybackSessionSchema = '''
