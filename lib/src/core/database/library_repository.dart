@@ -120,63 +120,6 @@ class LibraryRepository {
     );
   }
 
-  DirectoryBuildGeneration beginDirectoryGeneration({
-    required String rootId,
-    required String jobId,
-  }) {
-    final row = database.db.select(
-      'SELECT COALESCE(MAX(generation), 0) AS value FROM directory_build_generations WHERE directory_root_id = ?',
-      [rootId],
-    ).single;
-    final generation = (row['value'] as int) + 1;
-    final now = nowMillis();
-    database.db.execute('''
-      INSERT INTO directory_build_generations
-      (directory_root_id, generation, state, job_id, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    ''', [
-      rootId,
-      generation,
-      DirectoryBuildGenerationState.building.name,
-      jobId,
-      now
-    ]);
-    return DirectoryBuildGeneration(
-      rootId: rootId,
-      generation: generation,
-      state: DirectoryBuildGenerationState.building,
-      jobId: jobId,
-      createdAtMs: now,
-    );
-  }
-
-  void stageDirectoryMemberships({
-    required DirectoryBuildGeneration generation,
-    required Iterable<({String nodeId, String entityId, String relativePath})>
-        memberships,
-  }) {
-    final statement = database.db.prepare('''
-      INSERT OR IGNORE INTO directory_memberships
-      (directory_root_id, generation, index_node_id, entity_id, relative_path, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    ''');
-    try {
-      final now = nowMillis();
-      for (final membership in memberships) {
-        statement.execute([
-          generation.rootId,
-          generation.generation,
-          membership.nodeId,
-          membership.entityId,
-          membership.relativePath,
-          now,
-        ]);
-      }
-    } finally {
-      statement.dispose();
-    }
-  }
-
   void snapshotEntityForIndexJob(String jobId, Entity entity) {
     _appendIndexJobChange(
       jobId: jobId,
