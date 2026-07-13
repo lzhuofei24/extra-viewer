@@ -19,7 +19,6 @@ class LibraryRepository {
   final AppDatabase database;
   final ThumbnailStore thumbnailStore;
   int _transactionSequence = 0;
-  final Map<String, int> _jobChangeSequences = <String, int>{};
 
   IndexBuildJob beginIndexJob(
     String sourcePath, {
@@ -111,7 +110,6 @@ class LibraryRepository {
   /// or any source files.
   void discardIndexJob(String jobId) {
     database.db.execute('DELETE FROM index_jobs WHERE id = ?', [jobId]);
-    _jobChangeSequences.remove(jobId);
   }
 
   /// Abandons a partially applied task. Rollback always precedes deletion so
@@ -209,7 +207,7 @@ class LibraryRepository {
       SELECT change_type, entity_id, node_id, payload_json
       FROM index_job_changes
       WHERE job_id = ?
-      ORDER BY sequence DESC
+      ORDER BY id DESC
     ''', [jobId]);
     final snapshots = changes
         .where((row) => row['change_type'] == 'entity_snapshot')
@@ -269,7 +267,6 @@ class LibraryRepository {
       'UPDATE index_jobs SET index_root_id = NULL, staging_root_id = NULL, updated_at = ? WHERE id = ?',
       [nowMillis(), jobId],
     );
-    _jobChangeSequences.remove(jobId);
   }
 
   void _appendIndexJobChange({
@@ -279,16 +276,11 @@ class LibraryRepository {
     String? nodeId,
     String? payloadJson,
   }) {
-    final sequence = _jobChangeSequences.putIfAbsent(
-      jobId,
-      () => nowMillis() * 1000,
-    );
-    _jobChangeSequences[jobId] = sequence + 1;
     database.db.execute('''
       INSERT OR IGNORE INTO index_job_changes
-      (job_id, sequence, change_type, entity_id, node_id, payload_json)
-      VALUES (?, ?, ?, ?, ?, ?)
-    ''', [jobId, sequence, changeType, entityId, nodeId, payloadJson]);
+      (job_id, change_type, entity_id, node_id, payload_json)
+      VALUES (?, ?, ?, ?, ?)
+    ''', [jobId, changeType, entityId, nodeId, payloadJson]);
   }
 
   void updateIndexJob(

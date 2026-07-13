@@ -1111,7 +1111,7 @@ CREATE TABLE index_node_edges (
     final db = AppDatabase.openForTesting(raw);
     final repository = LibraryRepository(db);
 
-    expect(db.db.userVersion, 32);
+    expect(db.db.userVersion, 33);
     expect(repository.listIndexTree('root'), hasLength(1));
     final merged = repository.listIndexTree('root').single;
     expect(merged.item.id, 'a');
@@ -1208,7 +1208,7 @@ CREATE TABLE index_node_edges (
     final db = AppDatabase.openForTesting(raw);
     final repository = LibraryRepository(db);
 
-    expect(db.db.userVersion, 32);
+    expect(db.db.userVersion, 33);
     expect(
       db.db.select("SELECT id FROM index_nodes WHERE node_type = 'root'"),
       hasLength(1),

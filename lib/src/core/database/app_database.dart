@@ -176,6 +176,10 @@ class AppDatabase {
       _migrateV32();
       db.userVersion = 32;
     }
+    if (version < 33) {
+      _migrateV33();
+      db.userVersion = 33;
+    }
     // Hot restart and older development builds can leave a version marker
     // ahead of the physical schema. These checks are idempotent self-healing.
     _addColumnIfMissing('entities', 'directory_root_id', 'TEXT');
@@ -771,6 +775,14 @@ LEFT JOIN child_counts ON child_counts.id = node.id;
   void _migrateV31() {}
 
   void _migrateV32() => db.execute(_indexJobChangeSchema);
+
+  // Index jobs are resumable only within the current application data model.
+  // Recreate their rollback log so SQLite owns reverse-write ordering instead
+  // of relying on a process-local timestamp sequence.
+  void _migrateV33() {
+    db.execute('DROP TABLE IF EXISTS index_job_changes');
+    db.execute(_indexJobChangeSchema);
+  }
 }
 
 const _legacyTables = [
@@ -985,13 +997,12 @@ CREATE TABLE IF NOT EXISTS node_preview_overrides (
 
 const _indexJobChangeSchema = '''
 CREATE TABLE IF NOT EXISTS index_job_changes (
+  id INTEGER PRIMARY KEY,
   job_id TEXT NOT NULL,
-  sequence INTEGER NOT NULL,
   change_type TEXT NOT NULL,
   entity_id TEXT,
   node_id TEXT,
   payload_json TEXT,
-  PRIMARY KEY(job_id, sequence),
   FOREIGN KEY(job_id) REFERENCES index_jobs(id) ON DELETE CASCADE
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_index_job_changes_entity_snapshot
@@ -1004,7 +1015,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_index_job_changes_link_added
 ON index_job_changes(job_id, node_id, entity_id)
 WHERE change_type = 'link_added';
 CREATE INDEX IF NOT EXISTS idx_index_job_changes_job
-ON index_job_changes(job_id, sequence DESC);
+ON index_job_changes(job_id, id DESC);
 ''';
 
 const _audioPlaybackSessionSchema = '''
