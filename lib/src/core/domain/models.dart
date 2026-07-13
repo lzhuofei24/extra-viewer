@@ -520,9 +520,10 @@ enum IndexJobStatus {
   pending,
   running,
   paused,
+  attentionRequired,
   completed,
   failed,
-  canceled;
+  abandoned;
 }
 
 enum IndexJobPhase {

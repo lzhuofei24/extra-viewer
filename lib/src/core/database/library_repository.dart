@@ -31,7 +31,7 @@ class LibraryRepository {
       final existing = database.db.select(
         '''
         SELECT * FROM index_jobs
-        WHERE source_path = ? AND status IN ('pending', 'running', 'paused', 'failed')
+        WHERE source_path = ? AND status IN ('pending', 'running', 'paused', 'attentionRequired', 'failed')
         ORDER BY updated_at DESC
         LIMIT 1
         ''',
@@ -96,7 +96,7 @@ class LibraryRepository {
   List<IndexBuildJob> listRecoverableIndexJobs() {
     final rows = database.db.select('''
       SELECT * FROM index_jobs
-      WHERE status IN ('pending', 'paused', 'failed')
+      WHERE status IN ('pending', 'paused', 'attentionRequired', 'failed')
       ORDER BY updated_at DESC
     ''');
     return rows.map(_indexBuildJobFromRow).toList(growable: false);
@@ -179,6 +179,9 @@ class LibraryRepository {
     final createdEntities = changes
         .where((row) => row['change_type'] == 'entity_created')
         .toList(growable: false);
+    final createdThumbnailKeys = _thumbnailKeysForEntities(
+      createdEntities.map((row) => row['entity_id'] as String),
+    );
     writeTransaction(() {
       for (final link in addedLinks) {
         database.db.execute(
@@ -210,6 +213,7 @@ class LibraryRepository {
       _deleteUnreferencedThumbnailFiles(thumbnails);
     }
     _deleteUnreferencedThumbnailFiles(transientThumbnailKeys);
+    _deleteUnreferencedThumbnailFiles(createdThumbnailKeys);
     final indexedRootId = job.indexRootId;
     if (rootId == null && indexedRootId != null) {
       pruneEmptyDirectoryNodes(indexedRootId);

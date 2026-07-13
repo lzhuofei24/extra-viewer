@@ -294,7 +294,7 @@ class LibraryScanner {
     if (candidateSummary.failed > 0) {
       repository.updateIndexJob(
         job.id,
-        status: IndexJobStatus.failed,
+        status: IndexJobStatus.attentionRequired,
         phase: IndexJobPhase.previews,
         error: '${candidateSummary.failed} 个预览任务失败，可单独重试。',
       );
@@ -1649,7 +1649,7 @@ class LibraryScanner {
 
   void _checkControl(String jobId, IndexScanControl? control) {
     if (control?._cancelRequested == true) {
-      repository.updateIndexJob(jobId, status: IndexJobStatus.canceled);
+      repository.updateIndexJob(jobId, status: IndexJobStatus.abandoned);
       throw const IndexScanCanceledException();
     }
     if (control?._pauseRequested == true) {

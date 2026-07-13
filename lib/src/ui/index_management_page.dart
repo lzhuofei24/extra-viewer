@@ -487,9 +487,10 @@ String _jobStatusLabel(IndexJobStatus status) => switch (status) {
       IndexJobStatus.pending => '等待中',
       IndexJobStatus.running => '运行中',
       IndexJobStatus.paused => '已暂停',
+      IndexJobStatus.attentionRequired => '需要处理',
       IndexJobStatus.completed => '已完成',
       IndexJobStatus.failed => '失败',
-      IndexJobStatus.canceled => '已取消',
+      IndexJobStatus.abandoned => '已放弃',
     };
 
 String _jobPhaseLabel(IndexJobPhase phase) => switch (phase) {

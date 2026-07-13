@@ -1248,6 +1248,7 @@ class _AppShellState extends State<AppShell> {
         unawaited(_updateCurrentDirectoryNode());
         return;
       }
+      _repository?.rollbackIndexJobStagingRoot(job.id);
       _repository?.discardIndexJob(job.id);
       setState(() {
         _indexError = '无法继续：原目录节点已不存在。';
