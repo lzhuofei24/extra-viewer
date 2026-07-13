@@ -99,4 +99,38 @@ class CandidateProcessor {
       write();
     }
   }
+
+  /// Converts durable thumbnail states into durable candidate states only
+  /// after the thumbnail update buffer has been flushed. Reading entity state
+  /// before that flush leaves failures stuck as `written`.
+  void finalizeWrittenPreviewStates(String jobId) {
+    final candidates = repository.listIndexJobCandidates(
+      jobId,
+      states: {IndexJobCandidateState.written},
+    );
+    final entitiesByPath = repository.getEntitiesByPaths(
+      candidates.map((candidate) => candidate.sourcePath),
+    );
+    for (final candidate in candidates) {
+      final entity = entitiesByPath[candidate.sourcePath];
+      if (entity == null) continue;
+      switch (entity.thumbnailStatus) {
+        case ThumbnailStatus.success || ThumbnailStatus.none:
+          repository.updateIndexJobCandidateState(
+            jobId,
+            candidate.sourcePath,
+            IndexJobCandidateState.previewed,
+          );
+        case ThumbnailStatus.failed:
+          repository.updateIndexJobCandidateState(
+            jobId,
+            candidate.sourcePath,
+            IndexJobCandidateState.failed,
+            error: entity.thumbnailError ?? '预览生成失败',
+          );
+        case ThumbnailStatus.pending:
+          break;
+      }
+    }
+  }
 }

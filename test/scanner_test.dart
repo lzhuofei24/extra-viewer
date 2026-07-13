@@ -1378,6 +1378,26 @@ CREATE TABLE index_node_edges (
     );
   });
 
+  test('thumbnail failure leaves an attention-required recovery task',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('best_viewer_preview_');
+    addTearDown(() => temp.delete(recursive: true));
+    final brokenImage = File(p.join(temp.path, 'broken.jpg'));
+    await brokenImage.writeAsBytes(const [0, 1, 2, 3]);
+    final db = AppDatabase.openInMemory();
+    addTearDown(db.close);
+    final repository = LibraryRepository(db);
+
+    await LibraryScanner(repository).scanPath(temp.path);
+
+    final job = repository.listRecoverableIndexJobs().single;
+    expect(job.status, IndexJobStatus.attentionRequired);
+    final candidate = repository.listIndexJobCandidates(job.id).single;
+    expect(candidate.state, IndexJobCandidateState.failed);
+    expect(candidate.error, isNotEmpty);
+    expect(repository.getEntityByPath(brokenImage.path), isNotNull);
+  });
+
   test('scan write failure persists a recoverable job', () async {
     final temp = await Directory.systemTemp.createTemp('best_viewer_rollback_');
     addTearDown(() => temp.delete(recursive: true));

@@ -646,10 +646,6 @@ class LibraryScanner {
             if (await thumbnailService.ensureThumbnail(result.entity)) {
               thumbnailsBuilt++;
             }
-            final refreshed = repository.getEntity(result.entity.id);
-            if (refreshed?.thumbnailStatus == ThumbnailStatus.success) {
-              candidateState = IndexJobCandidateState.previewed;
-            }
           } catch (error) {
             candidateError = '$error';
             candidateState = IndexJobCandidateState.failed;
@@ -794,6 +790,7 @@ class LibraryScanner {
       flushCheckpoint();
       await progressSubscription.cancel();
       thumbnailUpdates.flush();
+      candidateProcessor.finalizeWrittenPreviewStates(job.id);
       await imageWorkerPool.close();
       if (control?._pauseRequested != true) {
         await PlatformDirectoryPicker.cancelDirectoryTreeScan();
@@ -1457,14 +1454,6 @@ class LibraryScanner {
           try {
             final built = await queueFor(entity).enqueue(entity);
             if (built) thumbnailsBuilt++;
-            final refreshed = repository.getEntity(entity.id);
-            if (refreshed?.thumbnailStatus == ThumbnailStatus.success) {
-              repository.updateIndexJobCandidateState(
-                job.id,
-                p.normalize(entity.path),
-                IndexJobCandidateState.previewed,
-              );
-            }
           } catch (error) {
             // Failed candidates are included in the next resume manifest.
             repository.updateIndexJobCandidateState(
@@ -1508,6 +1497,7 @@ class LibraryScanner {
     } finally {
       thumbnailWatch.stop();
       updateBuffer.flush();
+      candidateProcessor.finalizeWrittenPreviewStates(job.id);
       await imageWorkerPool?.close();
     }
     await service.trimCacheToPlatformLimit();
