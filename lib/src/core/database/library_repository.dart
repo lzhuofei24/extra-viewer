@@ -156,6 +156,38 @@ class LibraryRepository {
     }
   }
 
+  void snapshotIndexJobLinks(
+    String jobId,
+    Iterable<({String entityId, String indexNodeId})> links,
+  ) {
+    final values = links.toSet().toList(growable: false);
+    if (values.isEmpty) return;
+    final nodeIds = values.map((link) => link.indexNodeId).toSet().toList();
+    final entityIds = values.map((link) => link.entityId).toSet().toList();
+    final nodePlaceholders = List.filled(nodeIds.length, '?').join(', ');
+    final entityPlaceholders = List.filled(entityIds.length, '?').join(', ');
+    final rows = database.db.select('''
+      SELECT index_node_id, entity_id FROM index_node_entities
+      WHERE index_node_id IN ($nodePlaceholders)
+        AND entity_id IN ($entityPlaceholders)
+    ''', [...nodeIds, ...entityIds]);
+    final existing = {
+      for (final row in rows)
+        '${row['index_node_id']}\u0000${row['entity_id']}',
+    };
+    for (final link in values) {
+      if (existing.contains('${link.indexNodeId}\u0000${link.entityId}')) {
+        continue;
+      }
+      _appendIndexJobChange(
+        jobId: jobId,
+        changeType: 'link_added',
+        entityId: link.entityId,
+        nodeId: link.indexNodeId,
+      );
+    }
+  }
+
   void rollbackIndexJobStagingRoot(String jobId) {
     final job = getIndexJob(jobId);
     if (job == null) return;
@@ -233,13 +265,10 @@ class LibraryRepository {
     String? nodeId,
     String? payloadJson,
   }) {
-    final sequence = _jobChangeSequences.putIfAbsent(jobId, () {
-      final row = database.db.select(
-        'SELECT COALESCE(MAX(sequence), 0) AS value FROM index_job_changes WHERE job_id = ?',
-        [jobId],
-      ).single;
-      return (row['value'] as int) + 1;
-    });
+    final sequence = _jobChangeSequences.putIfAbsent(
+      jobId,
+      () => nowMillis() * 1000,
+    );
     _jobChangeSequences[jobId] = sequence + 1;
     database.db.execute('''
       INSERT OR IGNORE INTO index_job_changes

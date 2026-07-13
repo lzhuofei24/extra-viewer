@@ -1194,7 +1194,13 @@ class LibraryScanner {
             final handler = candidate.handler;
             final normalizedPath = p.normalize(file.path);
             final existing = writableExistingByPath[normalizedPath];
-            if (existing != null) {
+            if (existing != null &&
+                (existing.hash != candidate.hash ||
+                    existing.format != handler.formatFor(file.path) ||
+                    existing.size != candidate.size ||
+                    existing.metadataPreview != candidate.metadataPreview ||
+                    existing.durationMs != candidate.durationMs ||
+                    existing.directoryRootId != indexRoot.id)) {
               repository.snapshotEntityForIndexJob(job.id, existing);
             }
             if (preservedOwnerRootIds.contains(existing?.directoryRootId)) {
@@ -1241,11 +1247,6 @@ class LibraryScanner {
               entityId: result.entity.id,
               indexNodeId: directoryNode.id,
             ));
-            repository.snapshotIndexJobLink(
-              jobId: job.id,
-              indexNodeId: directoryNode.id,
-              entityId: result.entity.id,
-            );
             writtenPaths.add(normalizedPath);
             if (handler.supportsGeneratedThumbnail) {
               mediaEntities.add(result.entity);
@@ -1254,6 +1255,7 @@ class LibraryScanner {
               audioEntities.add(result.entity);
             }
           }
+          repository.snapshotIndexJobLinks(job.id, links);
           repository.linkEntitiesToIndexNodes(links, rebuildStats: false);
           repository.updateIndexJobCandidateStates(
             job.id,
