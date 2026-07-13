@@ -70,7 +70,7 @@ class _NodePreviewPickerState extends State<NodePreviewPicker> {
   }
 
   Future<void> _loadPage({bool reset = false}) async {
-    if (_loading || (!reset && !_hasMore)) return;
+    if (!reset && (_loading || !_hasMore)) return;
     final version = ++_requestVersion;
     setState(() => _loading = true);
     // Yield so the dialog's loading frame is painted before SQLite walks a
