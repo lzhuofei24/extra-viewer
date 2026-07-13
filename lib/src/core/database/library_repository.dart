@@ -3367,6 +3367,13 @@ LEFT JOIN child_counts ON child_counts.id = node.id
       ''',
       [entityId, indexNodeId],
     );
+    database.db.execute(
+      '''
+      DELETE FROM directory_memberships
+      WHERE entity_id = ? AND index_node_id = ?
+      ''',
+      [entityId, indexNodeId],
+    );
     _touchIndexNode(indexNodeId);
     rebuildIndexNodeStats();
   }
