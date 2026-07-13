@@ -133,4 +133,20 @@ class CandidateProcessor {
       }
     }
   }
+
+  /// Makes a completed candidate batch resumable together with its progress
+  /// cursor. Source adapters may choose when to flush, but not how a durable
+  /// checkpoint is written.
+  void checkpoint({
+    required String jobId,
+    required Iterable<IndexJobCandidate> candidates,
+    required int processed,
+  }) {
+    final batch = candidates.toList(growable: false);
+    if (batch.isEmpty) return;
+    repository.writeTransaction(() {
+      repository.upsertIndexJobCandidates(batch);
+      repository.updateIndexJob(jobId, processed: processed);
+    });
+  }
 }

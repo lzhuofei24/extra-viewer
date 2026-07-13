@@ -498,10 +498,11 @@ class LibraryScanner {
 
     void flushCheckpoint() {
       if (checkpointCandidates.isEmpty) return;
-      repository.writeTransaction(() {
-        repository.upsertIndexJobCandidates(checkpointCandidates);
-        repository.updateIndexJob(job.id, processed: processed);
-      });
+      candidateProcessor.checkpoint(
+        jobId: job.id,
+        candidates: checkpointCandidates,
+        processed: processed,
+      );
       checkpointCandidates.clear();
     }
 
