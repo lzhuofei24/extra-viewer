@@ -31,7 +31,10 @@ class LibraryRepository {
       final existing = database.db.select(
         '''
         SELECT * FROM index_jobs
-        WHERE source_path = ? AND status IN ('pending', 'running', 'paused', 'attention_required', 'failed')
+        WHERE source_path = ? AND status IN (
+          'pending', 'running', 'paused', 'attention_required',
+          'attentionRequired', 'failed'
+        )
         ORDER BY updated_at DESC
         LIMIT 1
         ''',
@@ -96,7 +99,9 @@ class LibraryRepository {
   List<IndexBuildJob> listRecoverableIndexJobs() {
     final rows = database.db.select('''
       SELECT * FROM index_jobs
-      WHERE status IN ('pending', 'paused', 'attention_required', 'failed')
+      WHERE status IN (
+        'pending', 'paused', 'attention_required', 'attentionRequired', 'failed'
+      )
       ORDER BY updated_at DESC
     ''');
     return rows.map(_indexBuildJobFromRow).toList(growable: false);
