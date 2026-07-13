@@ -563,13 +563,25 @@ enum EntitySortMode {
 }
 
 enum IndexJobStatus {
-  pending,
-  running,
-  paused,
-  attentionRequired,
-  completed,
-  failed,
-  abandoned;
+  pending('pending'),
+  running('running'),
+  paused('paused'),
+  attentionRequired('attention_required'),
+  completed('completed'),
+  failed('failed'),
+  abandoned('abandoned');
+
+  const IndexJobStatus(this.storageValue);
+
+  final String storageValue;
+
+  static IndexJobStatus fromStorageValue(String value) {
+    if (value == 'attentionRequired') return attentionRequired;
+    return IndexJobStatus.values.firstWhere(
+      (status) => status.storageValue == value,
+      orElse: () => throw ArgumentError.value(value, 'value', 'status'),
+    );
+  }
 }
 
 enum IndexJobPhase {

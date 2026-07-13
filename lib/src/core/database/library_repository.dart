@@ -31,7 +31,7 @@ class LibraryRepository {
       final existing = database.db.select(
         '''
         SELECT * FROM index_jobs
-        WHERE source_path = ? AND status IN ('pending', 'running', 'paused', 'attentionRequired', 'failed')
+        WHERE source_path = ? AND status IN ('pending', 'running', 'paused', 'attention_required', 'failed')
         ORDER BY updated_at DESC
         LIMIT 1
         ''',
@@ -75,7 +75,7 @@ class LibraryRepository {
       [
         job.id,
         job.sourcePath,
-        job.status.name,
+        job.status.storageValue,
         job.phase.name,
         targetNodeId,
         now,
@@ -96,7 +96,7 @@ class LibraryRepository {
   List<IndexBuildJob> listRecoverableIndexJobs() {
     final rows = database.db.select('''
       SELECT * FROM index_jobs
-      WHERE status IN ('pending', 'paused', 'attentionRequired', 'failed')
+      WHERE status IN ('pending', 'paused', 'attention_required', 'failed')
       ORDER BY updated_at DESC
     ''');
     return rows.map(_indexBuildJobFromRow).toList(growable: false);
@@ -321,7 +321,7 @@ class LibraryRepository {
       WHERE id = ?
       ''',
       [
-        status?.name,
+        status?.storageValue,
         phase?.name,
         indexRootId,
         discovered,
@@ -3942,7 +3942,7 @@ IndexBuildJob _indexBuildJobFromRow(Row row) => IndexBuildJob(
       id: row['id'] as String,
       sourcePath: row['source_path'] as String,
       indexRootId: row['index_root_id'] as String?,
-      status: IndexJobStatus.values.byName(row['status'] as String),
+      status: IndexJobStatus.fromStorageValue(row['status'] as String),
       phase: IndexJobPhase.values.byName(row['phase'] as String),
       discovered: row['discovered'] as int,
       total: row['total'] as int,

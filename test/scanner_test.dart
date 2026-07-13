@@ -1392,6 +1392,11 @@ CREATE TABLE index_node_edges (
 
     final job = repository.listRecoverableIndexJobs().single;
     expect(job.status, IndexJobStatus.attentionRequired);
+    expect(
+      db.db.select('SELECT status FROM index_jobs WHERE id = ?',
+          [job.id]).single['status'],
+      'attention_required',
+    );
     final candidate = repository.listIndexJobCandidates(job.id).single;
     expect(candidate.state, IndexJobCandidateState.failed);
     expect(candidate.error, isNotEmpty);
