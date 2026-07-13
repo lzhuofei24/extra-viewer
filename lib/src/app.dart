@@ -118,7 +118,7 @@ class _AppShellState extends State<AppShell> {
   bool _loading = true;
   bool _scanning = false;
   String? _indexError;
-  String? _lastIndexTaskSummary;
+  List<IndexJobHistoryEntry> _indexTaskHistory = const [];
   ScanProgress? _scanProgress;
   IndexScanControl? _scanControl;
   List<IndexBuildJob> _recoverableIndexJobs = const [];
@@ -466,6 +466,7 @@ class _AppShellState extends State<AppShell> {
     _recoverableJobPaths = {
       for (final job in jobs) job.id: _recoveryJobPath(job),
     };
+    _indexTaskHistory = repository.listIndexJobHistory();
   }
 
   void _updateNavigationCacheScope({
@@ -965,8 +966,6 @@ class _AppShellState extends State<AppShell> {
       setState(() {
         _scanProgress = null;
         _section = AppSection.indexes;
-        _lastIndexTaskSummary =
-            '目录构建完成 · ${summary.imported} 新增，${summary.updated} 更新，${summary.skipped} 未变化 · ${summary.timings.compactReport}';
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1028,10 +1027,6 @@ class _AppShellState extends State<AppShell> {
       );
       _reload(indexNodeId: node.id, invalidateBrowserCache: true);
       if (mounted) {
-        setState(() {
-          _lastIndexTaskSummary =
-              '节点更新完成 · ${summary.imported} 新增，${summary.updated} 更新，${summary.skipped} 未变化';
-        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -2447,7 +2442,7 @@ class _AppShellState extends State<AppShell> {
           recoverableJobFailures: _recoverableJobFailures,
           recoverableJobPaths: _recoverableJobPaths,
           errorMessage: _indexError,
-          taskHistory: _lastIndexTaskSummary,
+          taskHistory: _indexTaskHistory,
           onScan: _scan,
           onPickDirectory: PlatformDirectoryPicker.isSupported
               ? _pickAndroidDirectoryAndScan

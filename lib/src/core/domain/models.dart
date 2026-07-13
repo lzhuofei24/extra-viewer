@@ -713,6 +713,28 @@ class IndexBuildJob {
   final int updatedAtMs;
 }
 
+class IndexJobHistoryEntry {
+  const IndexJobHistoryEntry({
+    required this.id,
+    required this.sourcePath,
+    required this.status,
+    required this.summary,
+    required this.createdAtMs,
+    required this.completedAtMs,
+    this.indexRootId,
+    this.targetNodeId,
+  });
+
+  final String id;
+  final String sourcePath;
+  final String? indexRootId;
+  final String? targetNodeId;
+  final IndexJobStatus status;
+  final String summary;
+  final int createdAtMs;
+  final int completedAtMs;
+}
+
 class EntityPageCursor {
   const EntityPageCursor({
     required this.sortMode,

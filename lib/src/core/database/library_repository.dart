@@ -106,6 +106,39 @@ class LibraryRepository {
     return rows.map(_indexBuildJobFromRow).toList(growable: false);
   }
 
+  List<IndexJobHistoryEntry> listIndexJobHistory({int limit = 6}) {
+    final rows = database.db.select(
+      'SELECT * FROM index_job_history ORDER BY completed_at DESC LIMIT ?',
+      [limit.clamp(1, 50).toInt()],
+    );
+    return rows.map(_indexJobHistoryEntryFromRow).toList(growable: false);
+  }
+
+  void recordIndexJobHistory({
+    required IndexBuildJob job,
+    required IndexJobStatus status,
+    required String summary,
+  }) {
+    database.db.execute(
+      '''
+      INSERT INTO index_job_history(
+        id, source_path, index_root_id, target_node_id, status, summary,
+        created_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ''',
+      [
+        newId(),
+        job.sourcePath,
+        job.indexRootId,
+        job.targetNodeId,
+        status.storageValue,
+        summary,
+        job.createdAtMs,
+        nowMillis(),
+      ],
+    );
+  }
+
   /// Removes a paused/failed scan manifest without touching indexed entities
   /// or any source files.
   void discardIndexJob(String jobId) {
@@ -116,10 +149,19 @@ class LibraryRepository {
   /// no candidate entity, link, thumbnail cache or staging root survives the
   /// disappearance of its recovery manifest.
   void abandonIndexJob(String jobId) {
+    final job = getIndexJob(jobId);
+    if (job == null) return;
     updateIndexJob(jobId, status: IndexJobStatus.abandoned);
     rollbackIndexJobStagingRoot(jobId);
+    recordIndexJobHistory(
+      job: job,
+      status: IndexJobStatus.abandoned,
+      summary: '任务已放弃 · 已处理 ${job.processed}/${job.total}',
+    );
     discardIndexJob(jobId);
   }
+
+  void checkpointWriteAheadLog() => database.checkpointWriteAheadLog();
 
   void setIndexJobRoots({
     required String jobId,
@@ -267,6 +309,7 @@ class LibraryRepository {
       'UPDATE index_jobs SET index_root_id = NULL, staging_root_id = NULL, updated_at = ? WHERE id = ?',
       [nowMillis(), jobId],
     );
+    checkpointWriteAheadLog();
   }
 
   void _appendIndexJobChange({
@@ -3978,6 +4021,18 @@ IndexJobCandidate _indexJobCandidateFromRow(Row row) => IndexJobCandidate(
       sourceModifiedAtMs: row['source_modified_at_ms'] as int?,
       error: row['error'] as String?,
       updatedAtMs: row['updated_at'] as int,
+    );
+
+IndexJobHistoryEntry _indexJobHistoryEntryFromRow(Row row) =>
+    IndexJobHistoryEntry(
+      id: row['id'] as String,
+      sourcePath: row['source_path'] as String,
+      indexRootId: row['index_root_id'] as String?,
+      targetNodeId: row['target_node_id'] as String?,
+      status: IndexJobStatus.fromStorageValue(row['status'] as String),
+      summary: row['summary'] as String,
+      createdAtMs: row['created_at'] as int,
+      completedAtMs: row['completed_at'] as int,
     );
 
 IndexNode _nodeFromRow(Row row) {

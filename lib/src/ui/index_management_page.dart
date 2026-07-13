@@ -18,7 +18,7 @@ class IndexManagementPage extends StatelessWidget {
     required this.recoverableJobFailures,
     required this.recoverableJobPaths,
     this.errorMessage,
-    this.taskHistory,
+    this.taskHistory = const [],
     required this.onScan,
     this.onPickDirectory,
     required this.onPause,
@@ -47,7 +47,7 @@ class IndexManagementPage extends StatelessWidget {
   final Map<String, List<IndexJobCandidate>> recoverableJobFailures;
   final Map<String, String> recoverableJobPaths;
   final String? errorMessage;
-  final String? taskHistory;
+  final List<IndexJobHistoryEntry> taskHistory;
   final VoidCallback onScan;
   final VoidCallback? onPickDirectory;
   final VoidCallback onPause;
@@ -136,11 +136,26 @@ class IndexManagementPage extends StatelessWidget {
             onAbandon: onCancel,
           ),
         ],
-        if (progress == null && taskHistory != null) ...[
+        if (progress == null && taskHistory.isNotEmpty) ...[
           const SizedBox(height: 16),
           _IndexCard(
             title: '最近任务摘要',
-            child: Text(taskHistory!, style: theme.textTheme.bodyMedium),
+            child: Column(
+              children: [
+                for (final entry in taskHistory)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(entry.summary),
+                    subtitle: Text(
+                      entry.sourcePath,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: Text(_jobStatusLabel(entry.status)),
+                  ),
+              ],
+            ),
           ),
         ],
         if (recoverableJobs.isNotEmpty) ...[

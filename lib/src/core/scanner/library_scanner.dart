@@ -296,6 +296,7 @@ class LibraryScanner {
         phase: IndexJobPhase.previews,
         error: '${candidateSummary.failed} 个预览任务失败，可单独重试。',
       );
+      repository.checkpointWriteAheadLog();
       return;
     }
     repository.updateIndexJob(
@@ -305,7 +306,14 @@ class LibraryScanner {
       processed: summary.scanned,
       clearError: true,
     );
+    repository.recordIndexJobHistory(
+      job: repository.getIndexJob(job.id) ?? job,
+      status: IndexJobStatus.completed,
+      summary:
+          '完成 · ${summary.imported} 新增，${summary.updated} 更新，${summary.skipped} 未变化',
+    );
     repository.discardIndexJob(job.id);
+    repository.checkpointWriteAheadLog();
   }
 
   Future<ScanSummary> _runAndroidSafScan(

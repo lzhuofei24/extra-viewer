@@ -49,6 +49,13 @@ class AppDatabase {
 
   void close() => db.dispose();
 
+  /// Flushes pages that are no longer needed by active readers without
+  /// blocking them. Large index tasks call this at stable boundaries so WAL
+  /// files do not keep growing until the next application restart.
+  void checkpointWriteAheadLog() {
+    db.select('PRAGMA wal_checkpoint(PASSIVE)');
+  }
+
   void migrate() {
     db.execute('PRAGMA foreign_keys = ON;');
     db.execute('PRAGMA journal_mode = WAL;');
@@ -180,6 +187,10 @@ class AppDatabase {
       _migrateV33();
       db.userVersion = 33;
     }
+    if (version < 34) {
+      _migrateV34();
+      db.userVersion = 34;
+    }
     // Hot restart and older development builds can leave a version marker
     // ahead of the physical schema. These checks are idempotent self-healing.
     _addColumnIfMissing('entities', 'directory_root_id', 'TEXT');
@@ -205,6 +216,7 @@ class AppDatabase {
     );
     db.execute(_schema);
     db.execute(_indexJobChangeSchema);
+    db.execute(_indexJobHistorySchema);
     db.execute("""
       UPDATE index_jobs
       SET status = 'paused', updated_at =
@@ -224,6 +236,7 @@ class AppDatabase {
       db.execute(_schema);
       db.execute(_indexJobCandidateSchema);
       db.execute(_indexJobChangeSchema);
+      db.execute(_indexJobHistorySchema);
       db.execute('COMMIT;');
     } catch (_) {
       db.execute('ROLLBACK;');
@@ -783,6 +796,8 @@ LEFT JOIN child_counts ON child_counts.id = node.id;
     db.execute('DROP TABLE IF EXISTS index_job_changes');
     db.execute(_indexJobChangeSchema);
   }
+
+  void _migrateV34() => db.execute(_indexJobHistorySchema);
 }
 
 const _legacyTables = [
@@ -1016,6 +1031,21 @@ ON index_job_changes(job_id, node_id, entity_id)
 WHERE change_type = 'link_added';
 CREATE INDEX IF NOT EXISTS idx_index_job_changes_job
 ON index_job_changes(job_id, id DESC);
+''';
+
+const _indexJobHistorySchema = '''
+CREATE TABLE IF NOT EXISTS index_job_history (
+  id TEXT PRIMARY KEY,
+  source_path TEXT NOT NULL,
+  index_root_id TEXT,
+  target_node_id TEXT,
+  status TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  completed_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_index_job_history_completed
+ON index_job_history(completed_at DESC);
 ''';
 
 const _audioPlaybackSessionSchema = '''
