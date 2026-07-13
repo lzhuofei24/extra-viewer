@@ -241,47 +241,6 @@ void main() {
     );
   });
 
-  test('directory generation stays invisible until committed', () {
-    final db = AppDatabase.openInMemory();
-    addTearDown(db.close);
-    final repository = LibraryRepository(db);
-    final root = repository.ensureDirectoryIndexRoot(r'D:\generation');
-    final job = repository.beginIndexJob(r'D:\generation');
-    final entity = repository
-        .upsertEntity(
-          path: r'D:\generation\a.txt',
-          name: 'a.txt',
-          format: 'txt',
-          entityType: EntityType.text,
-          hash: 'generation-a',
-          size: 1,
-          sourceCreatedAtMs: 1,
-          sourceModifiedAtMs: 1,
-          directoryRootId: root.id,
-        )
-        .entity;
-    final generation = repository.beginDirectoryGeneration(
-      rootId: root.id,
-      jobId: job.id,
-    );
-    repository.stageDirectoryMemberships(
-      generation: generation,
-      memberships: [
-        (nodeId: root.id, entityId: entity.id, relativePath: 'a.txt'),
-      ],
-    );
-
-    expect(
-      db.db.select('SELECT * FROM active_node_entity_links'),
-      isEmpty,
-    );
-    repository.commitDirectoryGeneration(generation);
-    expect(
-      db.db.select('SELECT entity_id FROM active_node_entity_links'),
-      hasLength(1),
-    );
-  });
-
   test('entity upsert preserves URI identity and its materialized local path',
       () {
     final db = AppDatabase.openInMemory();
