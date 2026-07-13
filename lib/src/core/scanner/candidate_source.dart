@@ -63,6 +63,23 @@ class FileCandidateSource extends CandidateSource {
   }
 }
 
+class FileCandidateSourceProvider {
+  const FileCandidateSourceProvider(this.rootPath);
+
+  final String rootPath;
+
+  bool get existsSync => Directory(rootPath).existsSync();
+
+  Stream<FileCandidateSource> enumerate() async* {
+    await for (final entry
+        in Directory(rootPath).list(recursive: true, followLinks: false)) {
+      if (entry is File) {
+        yield FileCandidateSource(file: entry, rootPath: rootPath);
+      }
+    }
+  }
+}
+
 class SafCandidateSource extends CandidateSource {
   const SafCandidateSource(this.document);
 
@@ -90,4 +107,40 @@ class SafCandidateSource extends CandidateSource {
       sourceModifiedAtMs: document.modifiedAtMs,
     );
   }
+
+  Future<File> materialize({String cacheScope = 'session'}) async {
+    final path = await PlatformDirectoryPicker.materializeDocument(
+      document.source,
+      name: document.name,
+      cacheScope: cacheScope,
+    );
+    return File(path);
+  }
+}
+
+class SafCandidateSourceProvider {
+  const SafCandidateSourceProvider(this.rootSource);
+
+  final String rootSource;
+
+  static bool get isSupported => PlatformDirectoryPicker.isSupported;
+
+  Stream<int> get discoveryProgress =>
+      PlatformDirectoryPicker.directoryDiscoveryProgress;
+
+  Future<int> begin({String? relativeScope}) =>
+      PlatformDirectoryPicker.beginDirectoryTreeScan(
+        rootSource,
+        relativeScope: relativeScope,
+      );
+
+  Stream<List<SafCandidateSource>> readBatches() =>
+      PlatformDirectoryPicker.readDirectoryTreeBatches().map(
+        (batch) => batch.map(SafCandidateSource.new).toList(growable: false),
+      );
+
+  Future<void> cancel() => PlatformDirectoryPicker.cancelDirectoryTreeScan();
+
+  Future<void> clearTransientDocuments() =>
+      PlatformDirectoryPicker.clearTransientDocuments();
 }

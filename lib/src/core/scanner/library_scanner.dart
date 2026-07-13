@@ -19,7 +19,6 @@ import '../thumbnails/image_thumbnail_worker_pool.dart';
 import '../thumbnails/index_node_thumbnail_service.dart';
 import '../thumbnails/native_image_thumbnail_backend.dart';
 import '../thumbnails/windows_wic_webp_thumbnail_backend.dart';
-import '../sources/platform_directory_picker.dart';
 import '../sources/source_handle.dart';
 
 typedef ScanProgressCallback = void Function(ScanProgress progress);
@@ -338,12 +337,13 @@ class LibraryScanner {
     IndexNode? targetNode,
     String? relativeScope,
   }) async {
-    if (!PlatformDirectoryPicker.isSupported) {
+    if (!SafCandidateSourceProvider.isSupported) {
       throw UnsupportedError('Android SAF directory indexing requires Android');
     }
-    await PlatformDirectoryPicker.clearTransientDocuments();
+    final sourceProvider = SafCandidateSourceProvider(source);
+    await sourceProvider.clearTransientDocuments();
     final progressSubscription =
-        PlatformDirectoryPicker.directoryDiscoveryProgress.listen((discovered) {
+        sourceProvider.discoveryProgress.listen((discovered) {
       onProgress?.call(ScanProgress(
         phase: ScanPhase.discovering,
         discovered: discovered,
@@ -365,10 +365,8 @@ class LibraryScanner {
     ));
     var totalCandidates = 0;
     try {
-      totalCandidates = await PlatformDirectoryPicker.beginDirectoryTreeScan(
-        source,
-        relativeScope: relativeScope,
-      );
+      totalCandidates =
+          await sourceProvider.begin(relativeScope: relativeScope);
     } catch (_) {
       await progressSubscription.cancel();
       rethrow;
@@ -391,8 +389,8 @@ class LibraryScanner {
     );
     Future<void> abortManifestStage() async {
       await progressSubscription.cancel();
-      await PlatformDirectoryPicker.cancelDirectoryTreeScan();
-      await PlatformDirectoryPicker.clearTransientDocuments();
+      await sourceProvider.cancel();
+      await sourceProvider.clearTransientDocuments();
     }
 
     // Android starts the SAF session at the requested subdirectory, so paths
@@ -423,23 +421,22 @@ class LibraryScanner {
         // resume by skipping completed rows rather than rebuilding the index.
         repository.resetIndexJobManifest(job.id);
         var sequence = 0;
-        await for (final batch
-            in PlatformDirectoryPicker.readDirectoryTreeBatches()) {
+        await for (final sourceBatch in sourceProvider.readBatches()) {
           final candidates = <IndexJobCandidate>[];
-          for (final document in batch) {
-            final handler = FileFormatRegistry.resolvePath(document.name);
+          for (final candidate in sourceBatch) {
+            final handler = FileFormatRegistry.resolvePath(candidate.name);
             if (handler == null) continue;
             candidates.add(IndexJobCandidate(
               jobId: job.id,
-              sourcePath: document.source,
-              relativePath: document.relativePath,
+              sourcePath: candidate.sourcePath,
+              relativePath: candidate.relativePath,
               sequence: sequence++,
               state: IndexJobCandidateState.pending,
-              format: handler.formatFor(document.name),
+              format: handler.formatFor(candidate.name),
               entityType: handler.entityType,
-              size: document.size,
-              sourceCreatedAtMs: document.modifiedAtMs,
-              sourceModifiedAtMs: document.modifiedAtMs,
+              size: candidate.document.size,
+              sourceCreatedAtMs: candidate.document.modifiedAtMs,
+              sourceModifiedAtMs: candidate.document.modifiedAtMs,
               updatedAtMs: DateTime.now().millisecondsSinceEpoch,
             ));
           }
@@ -459,10 +456,7 @@ class LibraryScanner {
         manifestComplete = true;
         // The manifest pass consumed the native pull session. Processing uses
         // a fresh session and remains safe after an app restart.
-        await PlatformDirectoryPicker.beginDirectoryTreeScan(
-          source,
-          relativeScope: relativeScope,
-        );
+        await sourceProvider.begin(relativeScope: relativeScope);
       }
     } catch (_) {
       await abortManifestStage();
@@ -528,11 +522,11 @@ class LibraryScanner {
     }
 
     Future<void> processDocument(
-      SourceDocument document, {
+      SafCandidateSource source, {
       Entity? knownExisting,
       required List<({String entityId, String indexNodeId})> pendingLinks,
     }) async {
-      final source = SafCandidateSource(document);
+      final document = source.document;
       _checkControl(job.id, control);
       final handler = FileFormatRegistry.resolvePath(document.name);
       if (handler == null) return;
@@ -575,7 +569,7 @@ class LibraryScanner {
           _isUnchangedAndroidMedia(
             entity: knownExisting,
             handler: handler,
-            document: document,
+            source: source,
             fingerprint: fingerprint,
             indexRootId: indexRoot.id,
           )) {
@@ -590,13 +584,7 @@ class LibraryScanner {
           handler.entityType != EntityType.video;
       File? temporaryFile;
       if (requiresTemporaryFile) {
-        final materializedPath =
-            await PlatformDirectoryPicker.materializeDocument(
-          document.source,
-          name: document.name,
-          cacheScope: 'scan',
-        );
-        temporaryFile = File(materializedPath);
+        temporaryFile = await source.materialize(cacheScope: 'scan');
       }
       String? entityId;
       try {
@@ -696,27 +684,27 @@ class LibraryScanner {
       reportProcessed();
     }
 
-    Future<void> processBatch(List<SourceDocument> batch) async {
+    Future<void> processBatch(List<SafCandidateSource> batch) async {
       final existingByPath = repository.getEntitiesByPaths(
-        batch.map((document) => document.source),
+        batch.map((source) => source.sourcePath),
       );
       final pendingLinks = <({String entityId, String indexNodeId})>[];
-      final imageDocuments = <SourceDocument>[];
-      final videoDocuments = <SourceDocument>[];
-      final documentDocuments = <SourceDocument>[];
-      final audioDocuments = <SourceDocument>[];
-      for (final document in batch) {
-        final handler = FileFormatRegistry.resolvePath(document.name);
+      final imageDocuments = <SafCandidateSource>[];
+      final videoDocuments = <SafCandidateSource>[];
+      final documentDocuments = <SafCandidateSource>[];
+      final audioDocuments = <SafCandidateSource>[];
+      for (final source in batch) {
+        final handler = FileFormatRegistry.resolvePath(source.name);
         switch (handler?.entityType) {
           case EntityType.image:
-            imageDocuments.add(document);
+            imageDocuments.add(source);
           case EntityType.video:
-            videoDocuments.add(document);
+            videoDocuments.add(source);
           case EntityType.audio:
-            audioDocuments.add(document);
+            audioDocuments.add(source);
           case EntityType.text:
           case EntityType.externalLink:
-            documentDocuments.add(document);
+            documentDocuments.add(source);
           case null:
             break;
         }
@@ -724,18 +712,18 @@ class LibraryScanner {
       await _mapConcurrently(
         imageDocuments,
         maxConcurrent: performance.smallImageConcurrency,
-        mapper: (document) => processDocument(
-          document,
-          knownExisting: existingByPath[document.source],
+        mapper: (source) => processDocument(
+          source,
+          knownExisting: existingByPath[source.sourcePath],
           pendingLinks: pendingLinks,
         ),
       );
       await _mapConcurrently(
         videoDocuments,
         maxConcurrent: performance.videoConcurrency,
-        mapper: (document) => processDocument(
-          document,
-          knownExisting: existingByPath[document.source],
+        mapper: (source) => processDocument(
+          source,
+          knownExisting: existingByPath[source.sourcePath],
           pendingLinks: pendingLinks,
         ),
       );
@@ -743,18 +731,18 @@ class LibraryScanner {
       await _mapConcurrently(
         documentDocuments,
         maxConcurrent: performance.documentConcurrency,
-        mapper: (document) => processDocument(
-          document,
-          knownExisting: existingByPath[document.source],
+        mapper: (source) => processDocument(
+          source,
+          knownExisting: existingByPath[source.sourcePath],
           pendingLinks: pendingLinks,
         ),
       );
       await _mapConcurrently(
         audioDocuments,
         maxConcurrent: performance.audioConcurrency,
-        mapper: (document) => processDocument(
-          document,
-          knownExisting: existingByPath[document.source],
+        mapper: (source) => processDocument(
+          source,
+          knownExisting: existingByPath[source.sourcePath],
           pendingLinks: pendingLinks,
         ),
       );
@@ -762,14 +750,13 @@ class LibraryScanner {
     }
 
     try {
-      await for (final batch
-          in PlatformDirectoryPicker.readDirectoryTreeBatches()) {
+      await for (final sourceBatch in sourceProvider.readBatches()) {
         _checkControl(job.id, control);
         final scopedBatch = scopePrefix.isEmpty
-            ? batch
-            : batch
-                .where(
-                    (document) => document.relativePath.startsWith(scopePrefix))
+            ? sourceBatch
+            : sourceBatch
+                .where((candidate) =>
+                    candidate.relativePath.startsWith(scopePrefix))
                 .toList(growable: false);
         if (scopedBatch.isNotEmpty) await processBatch(scopedBatch);
       }
@@ -795,11 +782,11 @@ class LibraryScanner {
       candidateProcessor.finalizeWrittenPreviewStates(job.id);
       await imageWorkerPool.close();
       if (control?._pauseRequested != true) {
-        await PlatformDirectoryPicker.cancelDirectoryTreeScan();
+        await sourceProvider.cancel();
       }
       // Covers cancelled jobs and failed materialization before a Dart File
       // object was returned. This cache must never survive a scan.
-      await PlatformDirectoryPicker.clearTransientDocuments();
+      await sourceProvider.clearTransientDocuments();
       if (control?._cancelRequested == true &&
           createdRoot &&
           repository.isDirectoryIndexRootEmpty(indexRoot.id)) {
@@ -829,8 +816,8 @@ class LibraryScanner {
   }) async {
     final totalWatch = Stopwatch()..start();
     final rootPath = path;
-    final rootDir = Directory(rootPath);
-    if (!rootDir.existsSync()) {
+    final sourceProvider = FileCandidateSourceProvider(rootPath);
+    if (!sourceProvider.existsSync) {
       throw FileSystemException('Library root not found', rootPath);
     }
 
@@ -872,11 +859,9 @@ class LibraryScanner {
       // recovery consistent with Android SAF, but avoids re-reading content
       // when the inexpensive path set has not changed.
       final currentPaths = <String>{};
-      await for (final entity
-          in rootDir.list(recursive: true, followLinks: false)) {
-        if (entity is File &&
-            FileFormatRegistry.resolvePath(entity.path) != null) {
-          currentPaths.add(p.normalize(entity.path));
+      await for (final source in sourceProvider.enumerate()) {
+        if (FileFormatRegistry.resolvePath(source.name) != null) {
+          currentPaths.add(source.sourcePath);
         }
       }
       final manifestPaths = persistedFiles.map((file) => file.path).toSet();
@@ -924,12 +909,10 @@ class LibraryScanner {
       }
       discoveryWatch.start();
       final candidates = <_ScanCandidate>[];
-      await for (final entity
-          in rootDir.list(recursive: true, followLinks: false)) {
-        if (entity is! File) continue;
-        final handler = FileFormatRegistry.resolvePath(entity.path);
+      await for (final source in sourceProvider.enumerate()) {
+        final handler = FileFormatRegistry.resolvePath(source.name);
         if (handler == null) continue;
-        candidates.add(_ScanCandidate(file: entity, handler: handler));
+        candidates.add(_ScanCandidate(file: source.file, handler: handler));
         _checkControl(job.id, control);
         onProgress?.call(ScanProgress(
           phase: ScanPhase.discovering,
@@ -1702,10 +1685,11 @@ Future<List<R>> _mapConcurrently<T, R>(
 bool _isUnchangedAndroidMedia({
   required Entity? entity,
   required FileFormatHandler handler,
-  required SourceDocument document,
+  required SafCandidateSource source,
   required String fingerprint,
   required String indexRootId,
 }) {
+  final document = source.document;
   if (entity == null ||
       (handler.entityType != EntityType.image &&
           handler.entityType != EntityType.video)) {
