@@ -412,6 +412,7 @@ class LibraryRepository {
   List<IndexJobCandidate> listIndexJobCandidates(
     String jobId, {
     Set<IndexJobCandidateState>? states,
+    int? limit,
   }) {
     final requested = states?.toList(growable: false) ?? const [];
     final condition = requested.isEmpty
@@ -422,8 +423,13 @@ class LibraryRepository {
       SELECT * FROM index_job_candidates
       WHERE job_id = ? $condition
       ORDER BY sequence ASC, source_path ASC
+      ${limit == null ? '' : 'LIMIT ?'}
       ''',
-      [jobId, ...requested.map((state) => state.name)],
+      [
+        jobId,
+        ...requested.map((state) => state.name),
+        if (limit != null) limit.clamp(1, 100).toInt(),
+      ],
     );
     return rows.map(_indexJobCandidateFromRow).toList(growable: false);
   }

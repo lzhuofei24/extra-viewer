@@ -15,6 +15,7 @@ class IndexManagementPage extends StatelessWidget {
     required this.progress,
     required this.recoverableJobs,
     required this.recoverableJobSummaries,
+    required this.recoverableJobFailures,
     required this.recoverableJobPaths,
     this.errorMessage,
     this.taskHistory,
@@ -43,6 +44,7 @@ class IndexManagementPage extends StatelessWidget {
   final ScanProgress? progress;
   final List<IndexBuildJob> recoverableJobs;
   final Map<String, IndexJobCandidateSummary> recoverableJobSummaries;
+  final Map<String, List<IndexJobCandidate>> recoverableJobFailures;
   final Map<String, String> recoverableJobPaths;
   final String? errorMessage;
   final String? taskHistory;
@@ -150,6 +152,7 @@ class IndexManagementPage extends StatelessWidget {
               job: job,
               taskPath: recoverableJobPaths[job.id] ?? _rootNameForJob(job),
               summary: recoverableJobSummaries[job.id],
+              failedCandidates: recoverableJobFailures[job.id] ?? const [],
               disabled: scanning,
               onDiscard: () => onDiscardRecovery(job),
               onResume: () => onResume(job),
@@ -351,6 +354,7 @@ class _IndexTaskCard extends StatelessWidget {
   })  : job = null,
         taskPath = null,
         summary = null,
+        failedCandidates = const [],
         disabled = false,
         onDiscard = null,
         onResume = null,
@@ -361,6 +365,7 @@ class _IndexTaskCard extends StatelessWidget {
     required this.job,
     required this.taskPath,
     required this.summary,
+    required this.failedCandidates,
     required this.disabled,
     required this.onDiscard,
     required this.onResume,
@@ -378,6 +383,7 @@ class _IndexTaskCard extends StatelessWidget {
   final IndexBuildJob? job;
   final String? taskPath;
   final IndexJobCandidateSummary? summary;
+  final List<IndexJobCandidate> failedCandidates;
   final bool disabled;
   final VoidCallback? onDiscard;
   final VoidCallback? onResume;
@@ -450,17 +456,29 @@ class _IndexTaskCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(details.join(' · ')),
-          if (value.error?.isNotEmpty == true)
+          if (value.error?.isNotEmpty == true || failedCandidates.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: ExpansionTile(
                 tilePadding: EdgeInsets.zero,
-                title: const Text('错误详情'),
+                title: Text(
+                  '错误详情${failedCandidates.isEmpty ? '' : ' (${failedCandidates.length})'}',
+                ),
                 children: [
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: SelectableText(value.error!),
-                  ),
+                  if (value.error?.isNotEmpty == true)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: SelectableText(value.error!),
+                    ),
+                  for (final candidate in failedCandidates)
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(candidate.relativePath,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(candidate.error ?? '预览生成失败',
+                          maxLines: 2, overflow: TextOverflow.ellipsis),
+                    ),
                 ],
               ),
             ),

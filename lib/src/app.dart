@@ -2423,6 +2423,14 @@ class _AppShellState extends State<AppShell> {
             for (final job in _recoverableIndexJobs)
               job.id: _repository!.summarizeIndexJobCandidates(job.id),
           },
+          recoverableJobFailures: {
+            for (final job in _recoverableIndexJobs)
+              job.id: _repository!.listIndexJobCandidates(
+                job.id,
+                states: {IndexJobCandidateState.failed},
+                limit: 20,
+              ),
+          },
           recoverableJobPaths: {
             for (final job in _recoverableIndexJobs)
               job.id: _recoveryJobPath(job),
