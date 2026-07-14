@@ -395,11 +395,18 @@ class _IndexTaskCard extends StatelessWidget {
   Widget _buildRecoverable(BuildContext context) {
     final value = job!;
     final isPartial = value.targetNodeId != null;
+    final assetOnlyFailure = value.status == LibraryBuildStatus.failed &&
+        value.stage == LibraryBuildStage.nodePreviews &&
+        (value.documentPreviewFailed > 0 ||
+            value.entityPreviewFailed > 0 ||
+            value.nodePreviewFailed > 0);
     final progress = switch (value.stage) {
       LibraryBuildStage.manifest => '${value.manifestTotal} 项',
       LibraryBuildStage.indexWrite ||
       LibraryBuildStage.finalize =>
         '${value.indexedTotal}/${value.manifestTotal}',
+      LibraryBuildStage.documentPreviews =>
+        '${value.documentPreviewDone}/${value.documentPreviewTotal}',
       LibraryBuildStage.entityPreviews =>
         '${value.entityPreviewDone}/${value.entityPreviewTotal}',
       LibraryBuildStage.nodePreviews =>
@@ -407,7 +414,9 @@ class _IndexTaskCard extends StatelessWidget {
       LibraryBuildStage.completed => '完成',
     };
     final details = <String>[
-      '${_buildStatusLabel(value.status)} · ${_buildStageLabel(value.stage)} · $progress',
+      assetOnlyFailure
+          ? '索引已可用 · 预览待重试 · $progress'
+          : '${_buildStatusLabel(value.status)} · ${_buildStageLabel(value.stage)} · $progress',
       if (value.entityPreviewFailed > 0) '实体失败 ${value.entityPreviewFailed}',
       if (value.nodePreviewFailed > 0) '节点失败 ${value.nodePreviewFailed}',
     ];
@@ -476,6 +485,7 @@ class _BuildStageLadder extends StatelessWidget {
       LibraryBuildStage.manifest,
       LibraryBuildStage.indexWrite,
       LibraryBuildStage.finalize,
+      LibraryBuildStage.documentPreviews,
       LibraryBuildStage.entityPreviews,
       LibraryBuildStage.nodePreviews,
     ];
@@ -515,6 +525,8 @@ class _BuildStageLadder extends StatelessWidget {
   }
 
   int _failedFor(LibraryBuildStage stage) => switch (stage) {
+        LibraryBuildStage.documentPreviews =>
+          job?.documentPreviewFailed ?? 0,
         LibraryBuildStage.entityPreviews => job?.entityPreviewFailed ?? 0,
         LibraryBuildStage.nodePreviews => job?.nodePreviewFailed ?? 0,
         _ => 0,
@@ -528,6 +540,10 @@ class _BuildStageLadder extends StatelessWidget {
       LibraryBuildStage.indexWrite =>
         (value.indexedTotal, value.manifestTotal),
       LibraryBuildStage.finalize => (1, 1),
+      LibraryBuildStage.documentPreviews => (
+          value.documentPreviewDone + value.documentPreviewFailed,
+          value.documentPreviewTotal,
+        ),
       LibraryBuildStage.entityPreviews => (
           value.entityPreviewDone + value.entityPreviewFailed,
           value.entityPreviewTotal,
@@ -671,6 +687,7 @@ String _buildStageLabel(LibraryBuildStage stage) => switch (stage) {
       LibraryBuildStage.manifest => '建立清单',
       LibraryBuildStage.indexWrite => '写入索引',
       LibraryBuildStage.finalize => '整理并提交',
+      LibraryBuildStage.documentPreviews => '解析文档预览',
       LibraryBuildStage.entityPreviews => '构建实体预览',
       LibraryBuildStage.nodePreviews => '构建节点预览',
       LibraryBuildStage.completed => '完成',

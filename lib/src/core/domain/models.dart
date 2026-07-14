@@ -688,6 +688,7 @@ enum LibraryBuildStage {
   manifest,
   indexWrite,
   finalize,
+  documentPreviews,
   entityPreviews,
   nodePreviews,
   completed;
@@ -727,6 +728,9 @@ class LibraryBuildJob {
     required this.status,
     required this.manifestTotal,
     required this.indexedTotal,
+    required this.documentPreviewTotal,
+    required this.documentPreviewDone,
+    required this.documentPreviewFailed,
     required this.entityPreviewTotal,
     required this.entityPreviewDone,
     required this.entityPreviewFailed,
@@ -751,6 +755,9 @@ class LibraryBuildJob {
   final LibraryBuildStatus status;
   final int manifestTotal;
   final int indexedTotal;
+  final int documentPreviewTotal;
+  final int documentPreviewDone;
+  final int documentPreviewFailed;
   final int entityPreviewTotal;
   final int entityPreviewDone;
   final int entityPreviewFailed;

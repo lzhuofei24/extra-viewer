@@ -9,7 +9,7 @@ import 'package:sqlite3/sqlite3.dart';
 class AppDatabase {
   AppDatabase._(this.db, this.storageDirectoryPath, this.databasePath);
 
-  static const currentSchemaVersion = 4;
+  static const currentSchemaVersion = 5;
 
   final Database db;
   final String storageDirectoryPath;
@@ -248,6 +248,9 @@ CREATE TABLE IF NOT EXISTS library_build_jobs (
   status TEXT NOT NULL,
   manifest_total INTEGER NOT NULL DEFAULT 0,
   indexed_total INTEGER NOT NULL DEFAULT 0,
+  document_preview_total INTEGER NOT NULL DEFAULT 0,
+  document_preview_done INTEGER NOT NULL DEFAULT 0,
+  document_preview_failed INTEGER NOT NULL DEFAULT 0,
   entity_preview_total INTEGER NOT NULL DEFAULT 0,
   entity_preview_done INTEGER NOT NULL DEFAULT 0,
   entity_preview_failed INTEGER NOT NULL DEFAULT 0,
@@ -280,6 +283,18 @@ CREATE TABLE IF NOT EXISTS library_build_manifest (
 );
 
 CREATE TABLE IF NOT EXISTS library_entity_preview_work (
+  job_id TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY(job_id, entity_id),
+  FOREIGN KEY(job_id) REFERENCES library_build_jobs(id) ON DELETE CASCADE,
+  FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS library_document_preview_work (
   job_id TEXT NOT NULL,
   entity_id TEXT NOT NULL,
   state TEXT NOT NULL DEFAULT 'pending',
@@ -393,6 +408,9 @@ CREATE INDEX IF NOT EXISTS idx_library_build_manifest_sequence
 ON library_build_manifest(job_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_library_entity_preview_work_pending
 ON library_entity_preview_work(job_id, state, entity_id);
+
+CREATE INDEX IF NOT EXISTS idx_library_document_preview_work_pending
+ON library_document_preview_work(job_id, state, entity_id);
 CREATE INDEX IF NOT EXISTS idx_library_node_preview_work_pending
 ON library_node_preview_work(job_id, state, node_id);
 CREATE INDEX IF NOT EXISTS idx_audio_playback_sessions_active

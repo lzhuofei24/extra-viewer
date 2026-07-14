@@ -2,6 +2,8 @@ import '../domain/models.dart';
 import '../utils/ids.dart';
 import 'library_repository.dart';
 
+enum _WorkCounter { document, entity, node }
+
 /// Persistence boundary for the single parent build task. It deliberately
 /// contains no rollback API: cancelling a build only stops future work and
 /// never mutates already committed entities, nodes, or derived assets.
@@ -25,6 +27,9 @@ class LibraryBuildRepository {
       status: LibraryBuildStatus.pending,
       manifestTotal: 0,
       indexedTotal: 0,
+      documentPreviewTotal: 0,
+      documentPreviewDone: 0,
+      documentPreviewFailed: 0,
       entityPreviewTotal: 0,
       entityPreviewDone: 0,
       entityPreviewFailed: 0,
@@ -90,6 +95,11 @@ class LibraryBuildRepository {
         WHERE state = 'processing'
       ''', [now]);
       library.database.db.execute('''
+        UPDATE library_document_preview_work
+        SET state = 'pending', updated_at = ?
+        WHERE state = 'processing'
+      ''', [now]);
+      library.database.db.execute('''
         UPDATE library_node_preview_work
         SET state = 'pending', updated_at = ?
         WHERE state = 'processing'
@@ -135,6 +145,7 @@ class LibraryBuildRepository {
     required LibraryBuildStage stage,
     int? manifestTotal,
     int? indexedTotal,
+    int? documentPreviewTotal,
     int? entityPreviewTotal,
     int? nodePreviewTotal,
   }) =>
@@ -146,6 +157,7 @@ class LibraryBuildRepository {
             : LibraryBuildStatus.running,
         manifestTotal: manifestTotal,
         indexedTotal: indexedTotal,
+        documentPreviewTotal: documentPreviewTotal,
         entityPreviewTotal: entityPreviewTotal,
         nodePreviewTotal: nodePreviewTotal,
       );
@@ -253,6 +265,28 @@ class LibraryBuildRepository {
     _update(jobId, entityPreviewTotal: count);
   }
 
+  void prepareDocumentPreviewWork(String jobId, String scopeNodeId) {
+    final now = nowMillis();
+    library.database.db.execute('''
+      WITH RECURSIVE subtree(id) AS (
+        SELECT ?
+        UNION ALL
+        SELECT child.id FROM index_nodes child JOIN subtree ON child.parent_id = subtree.id
+      )
+      INSERT OR IGNORE INTO library_document_preview_work(
+        job_id, entity_id, state, attempts, updated_at
+      )
+      SELECT ?, entity.id, 'pending', 0, ?
+      FROM index_node_entities link
+      JOIN entities entity ON entity.id = link.entity_id
+      WHERE link.index_node_id IN (SELECT id FROM subtree)
+        AND entity.media_type IN ('text', 'external')
+        AND (entity.metadata_preview IS NULL OR entity.metadata_preview = '')
+    ''', [scopeNodeId, jobId, now]);
+    final count = _count('library_document_preview_work', jobId);
+    _update(jobId, documentPreviewTotal: count);
+  }
+
   void prepareNodePreviewWork(
     String jobId, {
     required String scopeNodeId,
@@ -293,6 +327,14 @@ class LibraryBuildRepository {
         limit: limit,
       );
 
+  List<String> claimDocumentPreviewWork(String jobId, {int limit = 100}) =>
+      _claimWork(
+        table: 'library_document_preview_work',
+        idColumn: 'entity_id',
+        jobId: jobId,
+        limit: limit,
+      );
+
   List<String> claimNodePreviewWork(String jobId, {int limit = 100}) =>
       _claimWork(
         table: 'library_node_preview_work',
@@ -310,7 +352,19 @@ class LibraryBuildRepository {
         idColumn: 'entity_id',
         jobId: jobId,
         results: results,
-        entity: true,
+        counter: _WorkCounter.entity,
+      );
+
+  void completeDocumentPreviewWork(
+    String jobId,
+    Map<String, ({LibraryBuildWorkState state, String? error})> results,
+  ) =>
+      _completeWork(
+        table: 'library_document_preview_work',
+        idColumn: 'entity_id',
+        jobId: jobId,
+        results: results,
+        counter: _WorkCounter.document,
       );
 
   void completeNodePreviewWork(
@@ -322,18 +376,26 @@ class LibraryBuildRepository {
         idColumn: 'node_id',
         jobId: jobId,
         results: results,
-        entity: false,
+        counter: _WorkCounter.node,
       );
 
   bool hasPendingEntityPreviewWork(String jobId) =>
       _hasPending('library_entity_preview_work', jobId);
 
   bool hasPendingNodePreviewWork(String jobId) =>
-      _hasPending('library_node_preview_work', jobId);
+    _hasPending('library_node_preview_work', jobId);
 
-  void releaseProcessingWork(String jobId, {required bool entity}) {
-    final table =
-        entity ? 'library_entity_preview_work' : 'library_node_preview_work';
+  bool hasPendingDocumentPreviewWork(String jobId) =>
+      _hasPending('library_document_preview_work', jobId);
+
+  void releaseProcessingWork(String jobId, {required LibraryBuildStage stage}) {
+    final table = switch (stage) {
+      LibraryBuildStage.documentPreviews => 'library_document_preview_work',
+      LibraryBuildStage.entityPreviews => 'library_entity_preview_work',
+      LibraryBuildStage.nodePreviews => 'library_node_preview_work',
+      _ => null,
+    };
+    if (table == null) return;
     library.database.db.execute('''
       UPDATE $table SET state = 'pending', updated_at = ?
       WHERE job_id = ? AND state = 'processing'
@@ -345,19 +407,27 @@ class LibraryBuildRepository {
     if (job == null) return;
     final now = nowMillis();
     library.writeTransaction(() {
-      if (job.stage == LibraryBuildStage.entityPreviews) {
+      for (final table in const [
+        'library_document_preview_work',
+        'library_entity_preview_work',
+        'library_node_preview_work',
+      ]) {
         library.database.db.execute('''
-          UPDATE library_entity_preview_work
-          SET state = 'pending', error = NULL, updated_at = ?
-          WHERE job_id = ? AND state = 'failed'
-        ''', [now, jobId]);
-      } else if (job.stage == LibraryBuildStage.nodePreviews) {
-        library.database.db.execute('''
-          UPDATE library_node_preview_work
+          UPDATE $table
           SET state = 'pending', error = NULL, updated_at = ?
           WHERE job_id = ? AND state = 'failed'
         ''', [now, jobId]);
       }
+      final retryStage = job.documentPreviewFailed > 0
+          ? LibraryBuildStage.documentPreviews
+          : job.entityPreviewFailed > 0
+              ? LibraryBuildStage.entityPreviews
+              : LibraryBuildStage.nodePreviews;
+      library.database.db.execute('''
+        UPDATE library_build_jobs
+        SET stage = ?, status = 'pending', error = NULL, updated_at = ?
+        WHERE id = ?
+      ''', [retryStage.name, now, jobId]);
     });
   }
 
@@ -372,13 +442,18 @@ class LibraryBuildRepository {
         [jobId],
       );
       library.database.db.execute(
+        'DELETE FROM library_document_preview_work WHERE job_id = ?',
+        [jobId],
+      );
+      library.database.db.execute(
         'DELETE FROM library_node_preview_work WHERE job_id = ?',
         [jobId],
       );
       library.database.db.execute('''
         UPDATE library_build_jobs SET
           stage = 'manifest', status = 'pending', manifest_total = 0,
-          indexed_total = 0, entity_preview_total = 0, entity_preview_done = 0,
+          indexed_total = 0, document_preview_total = 0, document_preview_done = 0,
+          document_preview_failed = 0, entity_preview_total = 0, entity_preview_done = 0,
           entity_preview_failed = 0, node_preview_total = 0,
           node_preview_done = 0, node_preview_failed = 0, error = NULL,
           updated_at = ?
@@ -395,6 +470,7 @@ class LibraryBuildRepository {
     String? stagingRootId,
     int? manifestTotal,
     int? indexedTotal,
+    int? documentPreviewTotal,
     int? entityPreviewTotal,
     int? nodePreviewTotal,
     String? error,
@@ -408,6 +484,7 @@ class LibraryBuildRepository {
         staging_root_id = COALESCE(?, staging_root_id),
         manifest_total = COALESCE(?, manifest_total),
         indexed_total = COALESCE(?, indexed_total),
+        document_preview_total = COALESCE(?, document_preview_total),
         entity_preview_total = COALESCE(?, entity_preview_total),
         node_preview_total = COALESCE(?, node_preview_total),
         error = CASE WHEN ? THEN NULL ELSE COALESCE(?, error) END,
@@ -420,6 +497,7 @@ class LibraryBuildRepository {
       stagingRootId,
       manifestTotal,
       indexedTotal,
+      documentPreviewTotal,
       entityPreviewTotal,
       nodePreviewTotal,
       clearError ? 1 : 0,
@@ -457,7 +535,7 @@ class LibraryBuildRepository {
     required String jobId,
     required Map<String, ({LibraryBuildWorkState state, String? error})>
         results,
-    required bool entity,
+    required _WorkCounter counter,
   }) {
     if (results.isEmpty) return;
     library.writeTransaction(() {
@@ -486,12 +564,14 @@ class LibraryBuildRepository {
         SELECT COUNT(*) AS value FROM $table
         WHERE job_id = ? AND state = 'failed'
       ''', [jobId]).single['value'] as int;
+      final columns = switch (counter) {
+        _WorkCounter.document => ('document_preview_done', 'document_preview_failed'),
+        _WorkCounter.entity => ('entity_preview_done', 'entity_preview_failed'),
+        _WorkCounter.node => ('node_preview_done', 'node_preview_failed'),
+      };
       library.database.db.execute(
-        entity
-            ? '''UPDATE library_build_jobs SET entity_preview_done = ?,
-                 entity_preview_failed = ?, updated_at = ? WHERE id = ?'''
-            : '''UPDATE library_build_jobs SET node_preview_done = ?,
-                 node_preview_failed = ?, updated_at = ? WHERE id = ?''',
+        'UPDATE library_build_jobs SET ${columns.$1} = ?, ${columns.$2} = ?, '
+        'updated_at = ? WHERE id = ?',
         [done, failed, nowMillis(), jobId],
       );
     });
@@ -518,6 +598,9 @@ class LibraryBuildRepository {
         status: LibraryBuildStatus.fromStorageValue(row['status'] as String),
         manifestTotal: row['manifest_total'] as int,
         indexedTotal: row['indexed_total'] as int,
+        documentPreviewTotal: row['document_preview_total'] as int,
+        documentPreviewDone: row['document_preview_done'] as int,
+        documentPreviewFailed: row['document_preview_failed'] as int,
         entityPreviewTotal: row['entity_preview_total'] as int,
         entityPreviewDone: row['entity_preview_done'] as int,
         entityPreviewFailed: row['entity_preview_failed'] as int,

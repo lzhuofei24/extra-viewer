@@ -1856,6 +1856,26 @@ class LibraryRepository {
     );
   }
 
+  void updateEntityMetadataPreview(
+    String entityId,
+    String? metadataPreview,
+    int? durationMs,
+  ) {
+    database.db.execute(
+      '''
+      UPDATE entities
+      SET metadata_preview = ?, duration_ms = ?, updated_at = ?
+      WHERE id = ?
+      ''',
+      [
+        _normalizeOptionalText(metadataPreview),
+        durationMs,
+        nowMillis(),
+        entityId,
+      ],
+    );
+  }
+
   Entity? getEntity(String id) {
     final rows =
         database.db.select('SELECT * FROM entities WHERE id = ?', [id]);

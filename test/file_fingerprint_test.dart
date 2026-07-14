@@ -18,7 +18,7 @@ void main() {
     final second = await fingerprintFile(file, size: await file.length());
 
     expect(first, second);
-    expect(first, startsWith('fp2:71680:'));
+    expect(first, startsWith('fp3:71680:'));
   });
 
   test('file candidate source normalizes metadata for the scanner', () async {
@@ -36,6 +36,6 @@ void main() {
     expect(source.name, 'source.txt');
     expect(source.relativePath, 'child/source.txt');
     expect(snapshot.size, 16);
-    expect(snapshot.fingerprint, startsWith('fp2:16:'));
+    expect(snapshot.fingerprint, startsWith('fp3:16:'));
   });
 }

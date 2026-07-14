@@ -3,8 +3,8 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
-const fileFingerprintVersion = 'fp2';
-const fileFingerprintPrefixBytes = 64 * 1024;
+const fileFingerprintVersion = 'fp3';
+const fileFingerprintPrefixBytes = 8 * 1024;
 
 Future<String> fingerprintFile(File file, {required int size}) async {
   final bytes = BytesBuilder(copy: false);
