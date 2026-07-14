@@ -19,6 +19,15 @@ class NodePreviewCompositeService {
         repository.removeNodePreviewAsset(preview.nodeId);
         continue;
       }
+      if (preview.customOrderTopToBottom &&
+          preview.tiles.any(
+              (tile) => tile.kind != IndexNodePreviewTileKind.visual)) {
+        // Manual mixed previews preserve their selected order and semantic
+        // list tiles, which are cheap to render directly but cannot be
+        // represented by a visual-only WebP compositor.
+        repository.removeNodePreviewAsset(preview.nodeId);
+        continue;
+      }
       final signature = _signature(preview);
       final result = _write(preview);
       if (result == null) {

@@ -54,6 +54,12 @@ class IndexNodeThumbnail extends StatelessWidget {
           IndexNodePreviewKind.visualGrid =>
             _VisualNodeAsset(
               path: data.visualAssetPath,
+              fallback: data.customOrderTopToBottom
+                  ? _BookStack(
+                      tiles: data.tiles,
+                      customOrderTopToBottom: true,
+                    )
+                  : null,
             ),
           IndexNodePreviewKind.audioList => _BookStack(
               tiles: [
@@ -91,9 +97,10 @@ class IndexNodeThumbnail extends StatelessWidget {
 }
 
 class _VisualNodeAsset extends StatelessWidget {
-  const _VisualNodeAsset({this.path});
+  const _VisualNodeAsset({this.path, this.fallback});
 
   final String? path;
+  final Widget? fallback;
 
   @override
   Widget build(BuildContext context) {
@@ -101,7 +108,7 @@ class _VisualNodeAsset extends StatelessWidget {
     if (value == null || value.isEmpty || !File(value).existsSync()) {
       // Visual node previews are persistent build artifacts. Do not recreate
       // a multi-image layout while scrolling when the asset is unavailable.
-      return const SizedBox.expand();
+      return fallback ?? const SizedBox.expand();
     }
     return Image.file(
       File(value),
@@ -112,13 +119,20 @@ class _VisualNodeAsset extends StatelessWidget {
 }
 
 class _BookStack extends StatelessWidget {
-  const _BookStack({required this.tiles});
+  const _BookStack({
+    required this.tiles,
+    this.customOrderTopToBottom = false,
+  });
 
   final List<IndexNodePreviewTile> tiles;
+  final bool customOrderTopToBottom;
 
   @override
   Widget build(BuildContext context) {
-    final layout = _BookStackLayout.fromTiles(tiles);
+    final layout = _BookStackLayout.fromTiles(
+      tiles,
+      customOrderTopToBottom: customOrderTopToBottom,
+    );
     return LayoutBuilder(
       builder: (context, constraints) => Stack(
         children: [

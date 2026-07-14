@@ -2752,20 +2752,16 @@ class LibraryRepository {
     for (final nodeId in ids) {
       final override = overrides[nodeId];
       if (override != null && override.isNotEmpty) {
-        previews[nodeId] = IndexNodePreview(
+        previews[nodeId] = _buildOverrideIndexNodePreview(
           nodeId: nodeId,
-          kind: IndexNodePreviewKind.visualGrid,
           tiles: override
-              .map(
-                (tile) => _resolvePreviewOverrideTile(
-                  tile,
-                  overrideEntities,
-                  overrideNodes,
-                  thumbnailStore,
-                ),
-              )
+              .map((tile) => _resolvePreviewOverrideTile(
+                    tile,
+                    overrideEntities,
+                    overrideNodes,
+                    thumbnailStore,
+                  ))
               .toList(growable: false),
-          customOrderTopToBottom: true,
         );
         continue;
       }
@@ -5354,7 +5350,23 @@ IndexNodePreviewTile _resolvePreviewOverrideTile(
   final entityId = tile.entityId;
   if (entityId != null) {
     final entity = entities[entityId];
-    if (entity != null) return _visualPreviewTile(entity);
+    if (entity != null) {
+      return switch (entity.entityType) {
+        EntityType.image || EntityType.video => _visualPreviewTile(entity),
+        EntityType.audio => IndexNodePreviewTile(
+            kind: IndexNodePreviewTileKind.audio,
+            title: entity.title,
+            entityId: entity.id,
+            audioNames: [_nodePreviewAudioTitle(entity)],
+          ),
+        EntityType.text || EntityType.externalLink => IndexNodePreviewTile(
+            kind: IndexNodePreviewTileKind.document,
+            title: entity.title,
+            entityId: entity.id,
+            documentNames: [entity.title],
+          ),
+      };
+    }
   }
   final nodeId = tile.nodeId;
   if (nodeId != null) {
@@ -5384,6 +5396,48 @@ IndexNodePreviewTile _resolvePreviewOverrideTile(
     }
   }
   return tile;
+}
+
+IndexNodePreview _buildOverrideIndexNodePreview({
+  required String nodeId,
+  required List<IndexNodePreviewTile> tiles,
+}) {
+  final audioNames = _distinctPreviewNames(
+    tiles.expand((tile) => tile.audioNames),
+  );
+  final documentNames = _distinctPreviewNames(
+    tiles.expand((tile) => tile.documentNames),
+  );
+  final hasVisual =
+      tiles.any((tile) => tile.kind == IndexNodePreviewTileKind.visual);
+  if (!hasVisual) {
+    if (audioNames.isNotEmpty && documentNames.isNotEmpty) {
+      return IndexNodePreview(
+        nodeId: nodeId,
+        kind: IndexNodePreviewKind.splitLists,
+        audioNames: audioNames,
+        documentNames: documentNames,
+        customOrderTopToBottom: true,
+      );
+    }
+    return IndexNodePreview(
+      nodeId: nodeId,
+      kind: audioNames.isNotEmpty
+          ? IndexNodePreviewKind.audioList
+          : IndexNodePreviewKind.documentList,
+      audioNames: audioNames,
+      documentNames: documentNames,
+      customOrderTopToBottom: true,
+    );
+  }
+  return IndexNodePreview(
+    nodeId: nodeId,
+    kind: IndexNodePreviewKind.visualGrid,
+    tiles: tiles,
+    audioNames: audioNames,
+    documentNames: documentNames,
+    customOrderTopToBottom: true,
+  );
 }
 
 double _nodePreviewAspectRatio(EntityListItem entity) {
