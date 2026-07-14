@@ -520,9 +520,13 @@ class _BuildStageLadder extends StatelessWidget {
               completed: index == current
                   ? progress.completed
                   : index < current
-                      ? 1
+                      ? _storedProgress(stages[index]).$1
                       : 0,
-              total: index == current ? progress.total : 1,
+              total: index == current
+                  ? progress.total
+                  : index < current
+                      ? _storedProgress(stages[index]).$2
+                      : 0,
               failed: index == current
                   ? progress.failed
                   : _failedFor(stages[index]),
@@ -539,6 +543,26 @@ class _BuildStageLadder extends StatelessWidget {
         LibraryBuildStage.nodePreviews => job?.nodePreviewFailed ?? 0,
         _ => 0,
       };
+
+  (int, int) _storedProgress(LibraryBuildStage stage) {
+    final value = job;
+    if (value == null) return (0, 0);
+    return switch (stage) {
+      LibraryBuildStage.manifest => (value.manifestTotal, value.manifestTotal),
+      LibraryBuildStage.indexWrite =>
+        (value.indexedTotal, value.manifestTotal),
+      LibraryBuildStage.finalize => (1, 1),
+      LibraryBuildStage.entityPreviews => (
+          value.entityPreviewDone + value.entityPreviewFailed,
+          value.entityPreviewTotal,
+        ),
+      LibraryBuildStage.nodePreviews => (
+          value.nodePreviewDone + value.nodePreviewFailed,
+          value.nodePreviewTotal,
+        ),
+      LibraryBuildStage.completed => (0, 0),
+    };
+  }
 }
 
 enum _BuildStageLineState { pending, active, completed }

@@ -5200,13 +5200,36 @@ IndexNodePreview _buildIndexNodePreview({
   final audioNames = entities
       .where((entity) => entity.entityType == EntityType.audio)
       .map(_nodePreviewAudioTitle)
-      .toList(growable: false);
+      .toList(growable: true);
   final documentNames = entities
       .where(_isTextDataPreviewEntity)
       .map((entity) => entity.title)
-      .toList(growable: false);
-  final hasSemanticData = audioNames.isNotEmpty || documentNames.isNotEmpty;
-  final visualCandidates = <IndexNodePreviewTile>[...childTiles, ...visuals]
+      .toList(growable: true);
+  // A child can represent a visual cover or semantic data. Only actual
+  // visuals are valid candidates for a persisted WebP composite; audio and
+  // documents stay as inexpensive dynamic name-list tiles.
+  for (final tile in childTiles) {
+    switch (tile.kind) {
+      case IndexNodePreviewTileKind.audio:
+        audioNames.addAll(tile.audioNames);
+      case IndexNodePreviewTileKind.document:
+        documentNames.addAll(tile.documentNames);
+      case IndexNodePreviewTileKind.mixedData:
+        audioNames.addAll(tile.audioNames);
+        documentNames.addAll(tile.documentNames);
+      case IndexNodePreviewTileKind.visual || IndexNodePreviewTileKind.node:
+        break;
+    }
+  }
+  final distinctAudioNames = _distinctPreviewNames(audioNames);
+  final distinctDocumentNames = _distinctPreviewNames(documentNames);
+  final hasSemanticData =
+      distinctAudioNames.isNotEmpty || distinctDocumentNames.isNotEmpty;
+  final visualCandidates = <IndexNodePreviewTile>[
+    ...childTiles.where(
+        (tile) => tile.kind == IndexNodePreviewTileKind.visual),
+    ...visuals,
+  ]
     ..sort(
       childTiles.isEmpty
           ? (left, right) => left.title.compareTo(right.title)
@@ -5214,24 +5237,24 @@ IndexNodePreview _buildIndexNodePreview({
     );
 
   if (visualCandidates.isEmpty) {
-    if (audioNames.isEmpty && documentNames.isEmpty) {
+    if (distinctAudioNames.isEmpty && distinctDocumentNames.isEmpty) {
       return IndexNodePreview(nodeId: nodeId, kind: IndexNodePreviewKind.empty);
     }
-    if (audioNames.isNotEmpty && documentNames.isNotEmpty) {
+    if (distinctAudioNames.isNotEmpty && distinctDocumentNames.isNotEmpty) {
       return IndexNodePreview(
         nodeId: nodeId,
         kind: IndexNodePreviewKind.splitLists,
-        audioNames: audioNames,
-        documentNames: documentNames,
+        audioNames: distinctAudioNames,
+        documentNames: distinctDocumentNames,
       );
     }
     return IndexNodePreview(
       nodeId: nodeId,
-      kind: audioNames.isNotEmpty
-          ? IndexNodePreviewKind.audioList
-          : IndexNodePreviewKind.documentList,
-      audioNames: audioNames,
-      documentNames: documentNames,
+        kind: distinctAudioNames.isNotEmpty
+            ? IndexNodePreviewKind.audioList
+            : IndexNodePreviewKind.documentList,
+        audioNames: distinctAudioNames,
+        documentNames: distinctDocumentNames,
     );
   }
 
@@ -5248,14 +5271,14 @@ IndexNodePreview _buildIndexNodePreview({
     // Semantic data forms the left-most book spine, leaving visual covers
     // prominent while still exposing music and document content.
     tiles.add(IndexNodePreviewTile(
-      kind: audioNames.isNotEmpty && documentNames.isNotEmpty
+      kind: distinctAudioNames.isNotEmpty && distinctDocumentNames.isNotEmpty
           ? IndexNodePreviewTileKind.mixedData
-          : audioNames.isNotEmpty
+          : distinctAudioNames.isNotEmpty
               ? IndexNodePreviewTileKind.audio
               : IndexNodePreviewTileKind.document,
       title: '资料',
-      audioNames: audioNames,
-      documentNames: documentNames,
+      audioNames: distinctAudioNames,
+      documentNames: distinctDocumentNames,
     ));
   }
   final selectedVisuals =
@@ -5266,6 +5289,14 @@ IndexNodePreview _buildIndexNodePreview({
     kind: IndexNodePreviewKind.visualGrid,
     tiles: tiles,
   );
+}
+
+List<String> _distinctPreviewNames(Iterable<String> values) {
+  final seen = <String>{};
+  return [
+    for (final value in values)
+      if (value.trim().isNotEmpty && seen.add(value)) value,
+  ];
 }
 
 IndexNodePreview _withNodePreviewAsset(

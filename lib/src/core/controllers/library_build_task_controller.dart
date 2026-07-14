@@ -219,6 +219,9 @@ class LibraryBuildTaskController extends ChangeNotifier {
         job = builds.get(job.id)!;
         _activeJob = job;
         notifyListeners();
+        // Let the progress UI paint the checkpoint before a fast following
+        // stage completes synchronously (especially for text-only indexes).
+        await Future<void>.delayed(const Duration(milliseconds: 16));
       }
       return job;
     } on LibraryBuildPausedException {
@@ -718,8 +721,10 @@ class LibraryBuildTaskController extends ChangeNotifier {
     String message, {
     int failed = 0,
   }) {
+    final current = builds.get(job.id) ?? job;
+    _activeJob = current;
     _progress = LibraryBuildProgress(
-      stage: job.stage,
+      stage: current.stage,
       completed: completed,
       total: total,
       failed: failed,
