@@ -11,6 +11,8 @@ class ThumbnailArtifact {
     this.decodeMs = 0,
     this.resizeMs = 0,
     this.encodeMs = 0,
+    this.writeMs = 0,
+    this.persistedPath,
   });
 
   final Uint8List bytes;
@@ -22,4 +24,6 @@ class ThumbnailArtifact {
   final int decodeMs;
   final int resizeMs;
   final int encodeMs;
+  final int writeMs;
+  final String? persistedPath;
 }

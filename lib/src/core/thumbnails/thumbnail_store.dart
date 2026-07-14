@@ -21,6 +21,14 @@ class ThumbnailStore {
 
   File fileFor(String key, String format) => File(pathFor(key, format));
 
+  /// Prepares an app-owned destination for a native backend. The backend
+  /// writes `<path>.tmp` and atomically replaces this final path itself.
+  Future<String> prepareNativeOutputPath(String key, String format) async {
+    final file = fileFor(key, format);
+    await _ensureDirectory(file.parent.path);
+    return file.path;
+  }
+
   Future<String> writeBytes({
     required String key,
     required String format,

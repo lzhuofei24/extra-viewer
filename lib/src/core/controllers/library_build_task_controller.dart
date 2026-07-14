@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../database/library_build_repository.dart';
 import '../database/library_repository.dart';
+import '../diagnostics/app_diagnostic_log.dart';
 import '../domain/models.dart';
 import '../formats/file_format_handlers.dart';
 import '../formats/text_decoder.dart';
@@ -573,16 +574,18 @@ class LibraryBuildTaskController extends ChangeNotifier {
       final entities = library.getEntitiesByIds(entityIds);
       final results =
           <String, ({LibraryBuildWorkState state, String? error})>{};
+      final imageConcurrency = _thumbnails.recommendedImageConcurrency;
+      final videoConcurrency = _thumbnails.recommendedVideoConcurrency;
       await Future.wait([
-        _forEachConcurrent(entityIds, 8, (id) async {
+        _forEachConcurrent(entityIds, imageConcurrency, (id) async {
           final entity = entities[id];
           if (entity?.entityType != EntityType.image) return;
-          await _buildOneEntityPreview(id, entity!, results);
+          await _buildOneEntityPreview(job.id, id, entity!, results);
         }),
-        _forEachConcurrent(entityIds, 4, (id) async {
+        _forEachConcurrent(entityIds, videoConcurrency, (id) async {
           final entity = entities[id];
           if (entity?.entityType != EntityType.video) return;
-          await _buildOneEntityPreview(id, entity!, results);
+          await _buildOneEntityPreview(job.id, id, entity!, results);
         }),
       ]);
       for (final id in entityIds) {
@@ -617,6 +620,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
   }
 
   Future<void> _buildOneEntityPreview(
+    String jobId,
     String id,
     Entity entity,
     Map<String, ({LibraryBuildWorkState state, String? error})> results,
@@ -626,19 +630,42 @@ class LibraryBuildTaskController extends ChangeNotifier {
       await _thumbnails.ensureThumbnail(entity);
       _control!.check();
       final refreshed = library.getEntity(id);
-      results[id] = refreshed?.thumbnailStatus == ThumbnailStatus.success
-          ? (state: LibraryBuildWorkState.completed, error: null)
-          : (
-              state: LibraryBuildWorkState.failed,
-              error: refreshed?.thumbnailError ?? '缩略图生成失败',
-            );
+      if (refreshed?.thumbnailStatus == ThumbnailStatus.success) {
+        results[id] = (state: LibraryBuildWorkState.completed, error: null);
+        return;
+      }
+      final message = refreshed?.thumbnailError ?? '缩略图生成失败';
+      results[id] = (state: LibraryBuildWorkState.failed, error: message);
+      _logThumbnailFailure(jobId, entity, message, StackTrace.current);
     } on LibraryBuildPausedException {
       rethrow;
     } on LibraryBuildAbandonedException {
       rethrow;
-    } catch (error) {
+    } catch (error, stackTrace) {
       results[id] = (state: LibraryBuildWorkState.failed, error: '$error');
+      _logThumbnailFailure(jobId, entity, '$error', stackTrace);
     }
+  }
+
+  void _logThumbnailFailure(
+    String jobId,
+    Entity entity,
+    String message,
+    StackTrace stackTrace,
+  ) {
+    AppDiagnosticLog.instance.error(
+      'thumbnail_build_failed',
+      StateError(message),
+      stackTrace,
+      fields: {
+        'jobId': jobId,
+        'entityId': entity.id,
+        'name': entity.name,
+        'path': entity.path,
+        'type': entity.entityType.value,
+        'format': entity.format,
+      },
+    );
   }
 
   Future<void> _buildNodePreviews(LibraryBuildJob job) async {
@@ -646,6 +673,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
     if (rootId == null) throw StateError('索引根节点缺失');
     // Preview descriptions are computed bottom-up once before the composite
     // work. The asset writer then only reads existing entity WebPs.
+    _report(job, 0, job.nodePreviewTotal, '正在整理节点预览描述');
+    await Future<void>.delayed(const Duration(milliseconds: 16));
     library.rebuildIndexNodePreviewCache(job.targetNodeId ?? rootId);
     final compositor = NodePreviewCompositeService(library);
     while (true) {
@@ -678,6 +707,9 @@ class LibraryBuildTaskController extends ChangeNotifier {
         '正在构建节点预览：${current.nodePreviewDone}/${current.nodePreviewTotal}',
         failed: current.nodePreviewFailed,
       );
+      // WebP composition is CPU-heavy Dart work. Keep batches small and give
+      // the Flutter frame scheduler a chance to paint task progress.
+      await Future<void>.delayed(const Duration(milliseconds: 1));
     }
     final nodeComplete = builds.get(job.id)!;
     final failed = nodeComplete.documentPreviewFailed +

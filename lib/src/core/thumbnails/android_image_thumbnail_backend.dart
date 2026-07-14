@@ -15,6 +15,7 @@ class AndroidImageThumbnailBackend {
 
   Future<ThumbnailArtifact?> encode(
     String source, {
+    required String outputPath,
     ThumbnailCancellationToken? cancellationToken,
   }) async {
     cancellationToken?.throwIfCancelled();
@@ -35,6 +36,7 @@ class AndroidImageThumbnailBackend {
         'createImageThumbnail',
         <String, Object>{
           'source': source,
+          'outputPath': outputPath,
           'requestId': requestId,
           'targetPixelCount': thumbnailTargetPixelCount,
           'quality': thumbnailWebpQuality,
@@ -47,18 +49,23 @@ class AndroidImageThumbnailBackend {
       cancellationToken?.removeListener(cancel);
     }
     cancellationToken?.throwIfCancelled();
-    final bytes = result?['bytes'];
     final width = result?['width'];
     final height = result?['height'];
-    if (bytes is! Uint8List || width is! num || height is! num) {
+    final persistedPath = result?['outputPath'];
+    if (persistedPath is! String || width is! num || height is! num) {
       throw const FormatException('Android returned an invalid thumbnail');
     }
     return ThumbnailArtifact(
-      bytes: bytes,
+      bytes: Uint8List(0),
       width: width.toInt(),
       height: height.toInt(),
       sourcePixelCount: (result?['sourcePixelCount'] as num?)?.toInt(),
-      encodeMs: watch.elapsedMilliseconds,
+      readMs: (result?['readMs'] as num?)?.toInt() ?? 0,
+      decodeMs: (result?['decodeMs'] as num?)?.toInt() ?? 0,
+      resizeMs: (result?['resizeMs'] as num?)?.toInt() ?? 0,
+      encodeMs: (result?['encodeMs'] as num?)?.toInt() ?? watch.elapsedMilliseconds,
+      writeMs: (result?['writeMs'] as num?)?.toInt() ?? 0,
+      persistedPath: persistedPath,
     );
   }
 }

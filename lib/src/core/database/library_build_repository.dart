@@ -335,7 +335,7 @@ class LibraryBuildRepository {
         limit: limit,
       );
 
-  List<String> claimNodePreviewWork(String jobId, {int limit = 100}) =>
+  List<String> claimNodePreviewWork(String jobId, {int limit = 8}) =>
       _claimWork(
         table: 'library_node_preview_work',
         idColumn: 'node_id',

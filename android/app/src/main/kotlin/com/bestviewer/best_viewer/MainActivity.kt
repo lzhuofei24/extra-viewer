@@ -6,9 +6,11 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.database.Cursor
 import android.os.Bundle
+import android.os.SystemClock
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.util.Size
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -81,6 +83,7 @@ class MainActivity : FlutterActivity() {
                 )
                 "createImageThumbnail" -> createImageThumbnail(
                     call.argument<String>("source"),
+                    call.argument<String>("outputPath"),
                     call.argument<String>("requestId"),
                     call.argument<Int>("targetPixelCount") ?: 600 * 600,
                     call.argument<Int>("quality") ?: 78,
@@ -88,6 +91,7 @@ class MainActivity : FlutterActivity() {
                 )
                 "createVideoThumbnail" -> createVideoThumbnail(
                     call.argument<String>("source"),
+                    call.argument<String>("outputPath"),
                     call.argument<String>("requestId"),
                     call.argument<Int>("targetPixelCount") ?: 600 * 600,
                     call.argument<Int>("quality") ?: 78,
@@ -237,35 +241,67 @@ class MainActivity : FlutterActivity() {
 
     private fun createImageThumbnail(
         source: String?,
+        outputPath: String?,
         requestId: String?,
         targetPixelCount: Int,
         quality: Int,
         result: MethodChannel.Result,
     ) {
-        if (source.isNullOrBlank()) {
-            result.error("argument", "source is required", null)
+        if (source.isNullOrBlank() || outputPath.isNullOrBlank()) {
+            result.error("argument", "source and outputPath are required", null)
             return
         }
         val job = sourceExecutor.submit {
             try {
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                decodeBitmap(source, bounds)
-                val sourceWidth = bounds.outWidth
-                val sourceHeight = bounds.outHeight
-                if (sourceWidth <= 0 || sourceHeight <= 0) {
-                    throw IllegalArgumentException("Unsupported image source")
+                val readStarted = SystemClock.elapsedRealtime()
+                var sourceWidth = 0
+                var sourceHeight = 0
+                var decoded: Bitmap? = null
+                if (source.startsWith("content://") &&
+                    android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    try {
+                        // Providers such as MediaStore can return their cached
+                        // thumbnail without streaming the full TF-card file.
+                        decoded = contentResolver.loadThumbnail(
+                            Uri.parse(source),
+                            Size(640, 640),
+                            null,
+                        )
+                        sourceWidth = decoded.width
+                        sourceHeight = decoded.height
+                    } catch (_: Exception) {
+                        // SAF providers are not required to expose thumbnails.
+                    }
                 }
+                val readMs = SystemClock.elapsedRealtime() - readStarted
+                val decodeStarted = SystemClock.elapsedRealtime()
+                if (decoded == null) {
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    decodeBitmap(source, bounds)
+                    sourceWidth = bounds.outWidth
+                    sourceHeight = bounds.outHeight
+                    if (sourceWidth <= 0 || sourceHeight <= 0) {
+                        throw IllegalArgumentException("Unsupported image source")
+                    }
+                    val (requestedWidth, requestedHeight) = thumbnailDimensions(
+                        sourceWidth,
+                        sourceHeight,
+                        targetPixelCount,
+                    )
+                    val options = BitmapFactory.Options().apply {
+                        inSampleSize = sampleSizeFor(sourceWidth, sourceHeight, requestedWidth, requestedHeight)
+                        inPreferredConfig = Bitmap.Config.ARGB_8888
+                    }
+                    decoded = decodeBitmap(source, options)
+                        ?: throw IllegalArgumentException("Image decode returned no bitmap")
+                }
+                val decodeMs = SystemClock.elapsedRealtime() - decodeStarted
                 val (targetWidth, targetHeight) = thumbnailDimensions(
-                    sourceWidth,
-                    sourceHeight,
+                    decoded.width,
+                    decoded.height,
                     targetPixelCount,
                 )
-                val options = BitmapFactory.Options().apply {
-                    inSampleSize = sampleSizeFor(sourceWidth, sourceHeight, targetWidth, targetHeight)
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                }
-                val decoded = decodeBitmap(source, options)
-                    ?: throw IllegalArgumentException("Image decode returned no bitmap")
+                val resizeStarted = SystemClock.elapsedRealtime()
                 val scaled = if (decoded.width == targetWidth && decoded.height == targetHeight) {
                     decoded
                 } else {
@@ -273,21 +309,22 @@ class MainActivity : FlutterActivity() {
                         if (it !== decoded) decoded.recycle()
                     }
                 }
-                val output = java.io.ByteArrayOutputStream()
-                val compressed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                    scaled.compress(Bitmap.CompressFormat.WEBP_LOSSY, quality.coerceIn(1, 100), output)
-                } else {
-                    @Suppress("DEPRECATION")
-                    scaled.compress(Bitmap.CompressFormat.WEBP, quality.coerceIn(1, 100), output)
-                }
+                val resizeMs = SystemClock.elapsedRealtime() - resizeStarted
+                val encodeStarted = SystemClock.elapsedRealtime()
+                val writeMs = writeWebpAtomically(scaled, quality, outputPath, requestId)
+                val encodeMs = SystemClock.elapsedRealtime() - encodeStarted - writeMs
                 scaled.recycle()
-                if (!compressed) throw IllegalStateException("WebP compression failed")
                 runOnUiThread {
                     result.success(mapOf(
-                        "bytes" to output.toByteArray(),
+                        "outputPath" to outputPath,
                         "width" to targetWidth,
                         "height" to targetHeight,
                         "sourcePixelCount" to sourceWidth.toLong() * sourceHeight.toLong(),
+                        "readMs" to readMs,
+                        "decodeMs" to decodeMs,
+                        "resizeMs" to resizeMs,
+                        "encodeMs" to encodeMs.coerceAtLeast(0),
+                        "writeMs" to writeMs,
                     ))
                 }
             } catch (error: Exception) {
@@ -303,34 +340,53 @@ class MainActivity : FlutterActivity() {
 
     private fun createVideoThumbnail(
         source: String?,
+        outputPath: String?,
         requestId: String?,
         targetPixelCount: Int,
         quality: Int,
         result: MethodChannel.Result,
     ) {
-        if (source.isNullOrBlank()) {
-            result.error("argument", "source is required", null)
+        if (source.isNullOrBlank() || outputPath.isNullOrBlank()) {
+            result.error("argument", "source and outputPath are required", null)
             return
         }
         val job = sourceExecutor.submit {
             val retriever = MediaMetadataRetriever()
             if (requestId != null) activeVideoRetrievers[requestId] = retriever
             try {
+                val readStarted = SystemClock.elapsedRealtime()
                 if (source.startsWith("content://")) {
                     retriever.setDataSource(this, Uri.parse(source))
                 } else {
                     retriever.setDataSource(source)
                 }
-                val frame = retriever.getFrameAtTime(
-                    2_000_000,
-                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
-                ) ?: retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                    ?: throw IllegalArgumentException("Video contains no decodable frame")
+                val sourceWidth = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH,
+                )?.toIntOrNull() ?: 0
+                val sourceHeight = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT,
+                )?.toIntOrNull() ?: 0
                 val (targetWidth, targetHeight) = thumbnailDimensions(
-                    frame.width,
-                    frame.height,
-                    targetPixelCount,
+                    sourceWidth.coerceAtLeast(1), sourceHeight.coerceAtLeast(1), targetPixelCount,
                 )
+                val readMs = SystemClock.elapsedRealtime() - readStarted
+                val decodeStarted = SystemClock.elapsedRealtime()
+                val frame = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1 &&
+                    sourceWidth > 0 && sourceHeight > 0) {
+                    retriever.getScaledFrameAtTime(
+                        2_000_000,
+                        MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                        targetWidth,
+                        targetHeight,
+                    )
+                } else {
+                    retriever.getFrameAtTime(
+                        2_000_000,
+                        MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                    ) ?: retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                } ?: throw IllegalArgumentException("Video contains no decodable frame")
+                val decodeMs = SystemClock.elapsedRealtime() - decodeStarted
+                val resizeStarted = SystemClock.elapsedRealtime()
                 val scaled = if (frame.width == targetWidth && frame.height == targetHeight) {
                     frame
                 } else {
@@ -338,24 +394,25 @@ class MainActivity : FlutterActivity() {
                         if (it !== frame) frame.recycle()
                     }
                 }
-                val output = java.io.ByteArrayOutputStream()
-                val compressed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                    scaled.compress(Bitmap.CompressFormat.WEBP_LOSSY, quality.coerceIn(1, 100), output)
-                } else {
-                    @Suppress("DEPRECATION")
-                    scaled.compress(Bitmap.CompressFormat.WEBP, quality.coerceIn(1, 100), output)
-                }
+                val resizeMs = SystemClock.elapsedRealtime() - resizeStarted
+                val encodeStarted = SystemClock.elapsedRealtime()
+                val writeMs = writeWebpAtomically(scaled, quality, outputPath, requestId)
+                val encodeMs = SystemClock.elapsedRealtime() - encodeStarted - writeMs
                 scaled.recycle()
-                if (!compressed) throw IllegalStateException("WebP compression failed")
                 val durationMs = retriever.extractMetadata(
                     MediaMetadataRetriever.METADATA_KEY_DURATION,
                 )?.toLongOrNull()
                 runOnUiThread {
                     result.success(mapOf(
-                        "bytes" to output.toByteArray(),
+                        "outputPath" to outputPath,
                         "width" to targetWidth,
                         "height" to targetHeight,
                         "durationMs" to durationMs,
+                        "readMs" to readMs,
+                        "decodeMs" to decodeMs,
+                        "resizeMs" to resizeMs,
+                        "encodeMs" to encodeMs.coerceAtLeast(0),
+                        "writeMs" to writeMs,
                     ))
                 }
             } catch (error: Exception) {
@@ -382,6 +439,35 @@ class MainActivity : FlutterActivity() {
             activeVideoRetrievers.remove(requestId)?.release()
         }
         result.success(null)
+    }
+
+    private fun writeWebpAtomically(
+        bitmap: Bitmap,
+        quality: Int,
+        outputPath: String,
+        requestId: String?,
+    ): Long {
+        val started = SystemClock.elapsedRealtime()
+        val output = File(outputPath)
+        output.parentFile?.mkdirs()
+        val suffix = requestId?.take(12) ?: Thread.currentThread().id.toString()
+        val temporary = File("${output.absolutePath}.${suffix}.tmp")
+        temporary.outputStream().use { stream ->
+            val compressed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, quality.coerceIn(1, 100), stream)
+            } else {
+                @Suppress("DEPRECATION")
+                bitmap.compress(Bitmap.CompressFormat.WEBP, quality.coerceIn(1, 100), stream)
+            }
+            if (!compressed) throw IllegalStateException("WebP compression failed")
+        }
+        if (output.exists() && !output.delete()) {
+            throw IllegalStateException("Cannot replace existing thumbnail")
+        }
+        if (!temporary.renameTo(output)) {
+            throw IllegalStateException("Cannot finalize thumbnail output")
+        }
+        return SystemClock.elapsedRealtime() - started
     }
 
     private fun thumbnailDimensions(

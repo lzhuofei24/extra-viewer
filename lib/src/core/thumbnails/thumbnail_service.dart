@@ -36,6 +36,12 @@ class ThumbnailService {
   final WindowsWicWebpThumbnailBackend? windowsWicBackend;
   final ThumbnailUpdateBuffer? updateBuffer;
   final timings = ThumbnailTimingCollector();
+  final concurrencyAdvisor = ThumbnailConcurrencyAdvisor();
+
+  int get recommendedImageConcurrency =>
+      concurrencyAdvisor.recommendedImageConcurrency;
+  int get recommendedVideoConcurrency =>
+      concurrencyAdvisor.recommendedVideoConcurrency;
 
   Future<bool> ensureThumbnail(
     Entity entity, {
@@ -61,9 +67,14 @@ class ThumbnailService {
     ThumbnailArtifact? artifact;
     try {
       final sourceFile = File(entity.localPath ?? entity.path);
+      final nativeOutputPath = await store.prepareNativeOutputPath(
+        expectedKey,
+        'webp',
+      );
       if (handler is ImageFileHandler) {
         artifact = await androidImageBackend?.encode(
           entity.path,
+          outputPath: nativeOutputPath,
           cancellationToken: cancellationToken,
         );
         cancellationToken?.throwIfCancelled();
@@ -104,6 +115,7 @@ class ThumbnailService {
       } else if (handler is VideoFileHandler) {
         artifact = await androidVideoBackend?.encode(
           entity.path,
+          outputPath: nativeOutputPath,
           cancellationToken: cancellationToken,
         );
         cancellationToken?.throwIfCancelled();
@@ -143,15 +155,22 @@ class ThumbnailService {
         return true;
       }
       cancellationToken?.throwIfCancelled();
-      await store.writeBytes(
-        key: expectedKey,
-        format: 'webp',
-        bytes: artifact.bytes,
-      );
+      if (artifact.persistedPath == null) {
+        await store.writeBytes(
+          key: expectedKey,
+          format: 'webp',
+          bytes: artifact.bytes,
+        );
+      } else if (!await File(artifact.persistedPath!).exists()) {
+        throw FileSystemException('Native thumbnail output was missing',
+            artifact.persistedPath);
+      }
       repository.recordThumbnailAsset(
         key: expectedKey,
         format: 'webp',
-        byteSize: artifact.bytes.length,
+        byteSize: artifact.persistedPath == null
+            ? artifact.bytes.length
+            : await File(artifact.persistedPath!).length(),
       );
       _recordUpdate(ThumbnailDatabaseUpdate.success(
         entityId: entity.id,
@@ -170,6 +189,7 @@ class ThumbnailService {
     } finally {
       stopwatch.stop();
       timings.record(entity.entityType, stopwatch.elapsed, artifact);
+      concurrencyAdvisor.record(entity.entityType, stopwatch.elapsed, artifact);
     }
   }
 
@@ -185,6 +205,36 @@ class ThumbnailService {
       repository.applyThumbnailUpdates([update]);
     }
   }
+}
+
+class ThumbnailConcurrencyAdvisor {
+  int _imageAverageMs = 0;
+  int _videoAverageMs = 0;
+
+  int get recommendedImageConcurrency {
+    if (!Platform.isAndroid) return 8;
+    if (_imageAverageMs == 0) return 4;
+    return _imageAverageMs < 280 ? 6 : _imageAverageMs < 700 ? 5 : 4;
+  }
+
+  int get recommendedVideoConcurrency {
+    if (!Platform.isAndroid) return 4;
+    if (_videoAverageMs == 0) return 1;
+    return _videoAverageMs < 900 ? 2 : 1;
+  }
+
+  void record(EntityType type, Duration elapsed, ThumbnailArtifact? artifact) {
+    final value = elapsed.inMilliseconds;
+    if (value <= 0 || artifact == null) return;
+    if (type == EntityType.image) {
+      _imageAverageMs = _smoothed(_imageAverageMs, value);
+    } else if (type == EntityType.video) {
+      _videoAverageMs = _smoothed(_videoAverageMs, value);
+    }
+  }
+
+  int _smoothed(int previous, int next) =>
+      previous == 0 ? next : ((previous * 7) + next) ~/ 8;
 }
 
 class ThumbnailUpdateBuffer {
