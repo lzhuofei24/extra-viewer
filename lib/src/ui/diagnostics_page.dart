@@ -470,7 +470,6 @@ class _Panel extends StatelessWidget {
     final theme = Theme.of(context);
     return Material(
       color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: .55),
-      borderRadius: BorderRadius.circular(AppTokens.radiusMd),
       shape: RoundedRectangleBorder(
         side: BorderSide(color: theme.colorScheme.outlineVariant),
         borderRadius: BorderRadius.circular(AppTokens.radiusMd),
