@@ -198,7 +198,14 @@ class LibraryBuildTaskController extends ChangeNotifier {
     _error = null;
     var job = builds.setRunning(initial.id);
     _activeJob = job;
-    notifyListeners();
+    _report(
+      job,
+      _storedStageCompleted(job),
+      _storedStageTotal(job),
+      initial.status == LibraryBuildStatus.paused
+          ? '正在继续任务：已恢复已保存进度'
+          : '正在启动索引任务',
+    );
     try {
       while (job.stage != LibraryBuildStage.completed) {
         _control!.check();
@@ -733,6 +740,26 @@ class LibraryBuildTaskController extends ChangeNotifier {
 
     await Future.wait(List.generate(concurrency, (_) => worker()));
   }
+
+  int _storedStageCompleted(LibraryBuildJob job) => switch (job.stage) {
+        LibraryBuildStage.manifest => builds.manifestItemCount(job.id),
+        LibraryBuildStage.indexWrite => job.indexedTotal,
+        LibraryBuildStage.finalize => 0,
+        LibraryBuildStage.entityPreviews =>
+          job.entityPreviewDone + job.entityPreviewFailed,
+        LibraryBuildStage.nodePreviews =>
+          job.nodePreviewDone + job.nodePreviewFailed,
+        LibraryBuildStage.completed => 1,
+      };
+
+  int _storedStageTotal(LibraryBuildJob job) => switch (job.stage) {
+        LibraryBuildStage.manifest => job.manifestTotal,
+        LibraryBuildStage.indexWrite => job.manifestTotal,
+        LibraryBuildStage.finalize => 1,
+        LibraryBuildStage.entityPreviews => job.entityPreviewTotal,
+        LibraryBuildStage.nodePreviews => job.nodePreviewTotal,
+        LibraryBuildStage.completed => 1,
+      };
 
   void _report(
     LibraryBuildJob job,

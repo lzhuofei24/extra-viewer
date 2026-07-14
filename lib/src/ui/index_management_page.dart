@@ -169,30 +169,6 @@ class IndexManagementPage extends StatelessWidget {
             onRebuildPreviews: onRebuildNodePreviews,
           ),
         ],
-        if (progress == null && taskHistory.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          _IndexCard(
-            title: '最近任务摘要',
-            child: Column(
-              children: [
-                for (final entry in taskHistory)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    title: Text(
-                      '${entry.targetNodeId == null ? '目录索引' : '部分更新'} · ${_buildStageLabel(entry.stage)}',
-                    ),
-                    subtitle: Text(
-                      entry.sourcePath,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: Text(_buildStatusLabel(entry.status)),
-                  ),
-              ],
-            ),
-          ),
-        ],
         const SizedBox(height: 100),
       ],
     );
