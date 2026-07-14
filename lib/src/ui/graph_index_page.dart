@@ -13,12 +13,20 @@ class GraphIndexPage extends StatefulWidget {
     required this.graphRoot,
     required this.onOpenNode,
     required this.onReturnToRootIndex,
+    required this.onPreviewDirty,
+    required this.onThumbnailEntityNeeded,
   });
 
   final LibraryRepository repository;
   final IndexNode graphRoot;
   final ValueChanged<IndexNode> onOpenNode;
   final VoidCallback onReturnToRootIndex;
+  final ValueChanged<String> onThumbnailEntityNeeded;
+  final Future<void> Function(
+    String nodeId, {
+    IndexPreviewRebuildScope scope,
+    String? reason,
+  }) onPreviewDirty;
 
   @override
   State<GraphIndexPage> createState() => _GraphIndexPageState();
@@ -104,6 +112,7 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
         : parentPosition + const Offset(230, 0);
     widget.repository
         .setGraphNodePosition(nodeId: node.id, x: position.dx, y: position.dy);
+    await widget.onPreviewDirty(node.id, reason: 'graph_node_created');
     _reload();
   }
 
@@ -117,6 +126,7 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
       entityIds: selectedIds,
       indexNodeId: node.id,
     );
+    await widget.onPreviewDirty(node.id, reason: 'graph_entities_linked');
     _reload();
   }
 
@@ -149,7 +159,11 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
       ),
     );
     if (confirmed != true) return;
+    final parentId = node.parentId;
     widget.repository.deleteIndexNode(nodeId);
+    if (parentId != null) {
+      await widget.onPreviewDirty(parentId, reason: 'graph_node_deleted');
+    }
     setState(() {
       _selectedId = null;
       _linkMode = false;
@@ -236,6 +250,7 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
                         preview: _previews[node.id],
                         summary: _summaries[node.id],
                         selected: node.id == _selectedId,
+                        onThumbnailEntityNeeded: widget.onThumbnailEntityNeeded,
                       ),
                     ),
                   ),
@@ -349,11 +364,13 @@ class _GraphNodeCard extends StatelessWidget {
       {required this.node,
       required this.preview,
       required this.summary,
-      required this.selected});
+      required this.selected,
+      required this.onThumbnailEntityNeeded});
   final IndexNode node;
   final IndexNodePreview? preview;
   final IndexNodeSummary? summary;
   final bool selected;
+  final ValueChanged<String> onThumbnailEntityNeeded;
 
   @override
   Widget build(BuildContext context) => DecoratedBox(

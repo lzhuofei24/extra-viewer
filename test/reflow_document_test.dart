@@ -125,6 +125,52 @@ void main() {
         [1, 2, 3]);
   });
 
+  test('reader EPUB session is shared by chapters and embedded images',
+      () async {
+    final temp =
+        await Directory.systemTemp.createTemp('best_viewer_epub_session_');
+    addTearDown(() => temp.delete(recursive: true));
+    final file = File('${temp.path}/book.epub');
+    await file.writeAsBytes(_zip({
+      'META-INF/container.xml':
+          '<container><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>',
+      'OPS/book.opf':
+          '<package><metadata><title>会话书</title></metadata><manifest><item id="a" href="a.xhtml"/></manifest><spine><itemref idref="a"/></spine></package>',
+      'OPS/a.xhtml':
+          '<html><body><p>正文</p><img src="images/a.bin"/></body></html>',
+      'OPS/images/a.bin': 'image-bytes',
+    }));
+
+    final document = await openEpubDocumentSession(file);
+    addTearDown(() => document.archiveSession?.close());
+    final image = document.chapters.single.blocks
+        .firstWhere((block) => block.imageArchivePath != null);
+
+    expect(document.archiveSession, isNotNull);
+    expect(image.archiveSession, same(document.archiveSession));
+    expect(
+      document.archiveSession!.readBytes(image.imageArchivePath!),
+      utf8.encode('image-bytes'),
+    );
+  });
+
+  test('DOCX reader uses a retained archive session for its resources',
+      () async {
+    final temp =
+        await Directory.systemTemp.createTemp('best_viewer_docx_session_');
+    addTearDown(() => temp.delete(recursive: true));
+    final file = File('${temp.path}/book.docx');
+    await file.writeAsBytes(_zip({
+      'word/document.xml':
+          '<w:document xmlns:w="w"><w:body><w:p><w:r><w:t>正文</w:t></w:r></w:p></w:body></w:document>',
+    }));
+
+    final document = await openDocxDocumentSession(file);
+    addTearDown(() => document.archiveSession?.close());
+    expect(document.archiveSession, isNotNull);
+    expect(document.plainText, '正文');
+  });
+
   test('attached illustrated EPUB image reference can be read', () async {
     const path = r'D:\AI\05_Data_Factory\电子书\精品\【插画版】崩铁昔涟「为你而在的故事」.epub';
     final file = File(path);

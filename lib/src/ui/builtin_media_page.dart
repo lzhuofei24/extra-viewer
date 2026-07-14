@@ -17,9 +17,11 @@ import '../core/domain/models.dart';
 import '../core/formats/file_format_handlers.dart';
 import '../core/media/audio_waveform_service.dart';
 import '../core/media/app_audio_controller.dart';
+import '../core/media/media_player_lifecycle.dart';
 import '../core/media/media_source_resolver.dart';
 import '../core/readers/docx_decoder.dart';
 import '../core/readers/epub_decoder.dart';
+import '../core/readers/archive_session.dart';
 import '../core/readers/reflow_document.dart';
 import '../core/readers/reflow_text_decoder.dart';
 import '../core/sources/source_handle.dart';
@@ -91,7 +93,8 @@ class EntityViewerPage extends StatefulWidget {
 }
 
 class _EntityViewerPageState extends State<EntityViewerPage> {
-  static const _imageWindowOffsets = <int>[0, 1, 2, -1, 3, -2, 4];
+  // Keep the current original plus two predecessors and three successors.
+  static const _imageWindowOffsets = <int>[0, 1, 2, 3, -1, -2];
 
   final MediaSourceResolver _sourceResolver = const MediaSourceResolver();
   late int _currentIndex;
@@ -192,9 +195,11 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
         _sourceResolver.displayLocation(_current),
       );
     }
-    if (viewerKind == ViewerKind.docxReader) return readDocxDocument(file);
+    if (viewerKind == ViewerKind.docxReader) {
+      return openDocxDocumentSession(file);
+    }
     if (viewerKind == ViewerKind.epubReader) {
-      return Isolate.run(() => readEpubDocumentAtPath(file.path));
+      return openEpubDocumentSession(file);
     }
     return readReflowTextDocument(file);
   }
@@ -2649,6 +2654,10 @@ class _VideoPlayerPreview extends StatefulWidget {
 class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
   late final Player _player;
   late final VideoController _controller;
+  final MediaPlayerLifecycle _lifecycle = MediaPlayerLifecycle();
+  Future<void> _openChain = Future<void>.value();
+  Future<void>? _closeFuture;
+  int _activeGeneration = 0;
   StreamSubscription<bool>? _completedSubscription;
   StreamSubscription<bool>? _playingSubscription;
   Timer? _controlsTimer;
@@ -2681,9 +2690,12 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
           : const VideoControllerConfiguration(),
     );
     _completedSubscription = _player.stream.completed.listen((completed) {
-      if (completed) widget.onCompleted(_player);
+      if (completed && _lifecycle.isCurrent(_activeGeneration)) {
+        unawaited(widget.onCompleted(_player));
+      }
     });
     _playingSubscription = _player.stream.playing.listen((playing) {
+      if (!_lifecycle.isCurrent(_activeGeneration)) return;
       if (!playing) {
         _showControls(keepVisible: true);
       } else {
@@ -2695,31 +2707,79 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
         Timer.periodic(const Duration(seconds: 5), (_) => _savePlaybackState());
   }
 
-  Future<void> _open() async {
+  Future<void> _open() {
+    final generation = _lifecycle.beginOperation();
+    final operation = _runOpenAfterPrevious(generation);
+    _openChain = operation.catchError((_) {});
+    return operation;
+  }
+
+  Future<void> _runOpenAfterPrevious(int generation) async {
+    try {
+      await _openChain;
+    } catch (_) {
+      // A failed/stale open must not block a later retry.
+    }
+    if (!_lifecycle.isCurrent(generation)) return;
+    await _openSerial(generation);
+  }
+
+  Future<void> _openSerial(int generation) async {
     if (mounted) setState(() => _loadError = null);
     try {
+      final source =
+          await widget.sourceResolver.playerSourceAsync(widget.entity);
+      if (!_lifecycle.isCurrent(generation)) return;
       await _player.open(
-        Media(await widget.sourceResolver.playerSourceAsync(widget.entity)),
+        Media(source),
       );
+      if (!_lifecycle.isCurrent(generation)) {
+        await _player.stop();
+        return;
+      }
+      _activeGeneration = generation;
       final position = widget.entity.lastPositionMs;
       if (position != null && position > 0) {
         await _player.seek(Duration(milliseconds: position));
       }
     } catch (error) {
-      if (mounted) setState(() => _loadError = error);
+      if (_lifecycle.isCurrent(generation) && mounted) {
+        setState(() => _loadError = error);
+      }
     }
   }
 
   @override
   void dispose() {
-    _completedSubscription?.cancel();
-    _playingSubscription?.cancel();
+    unawaited(_close());
+    super.dispose();
+  }
+
+  Future<void> _close() => _closeFuture ??= _lifecycle.close(_closeImpl);
+
+  Future<void> _closeImpl() async {
     _controlsTimer?.cancel();
     _progressSaveTimer?.cancel();
     _savePlaybackState();
-    _player.dispose();
-    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
-    super.dispose();
+    await Future.wait([
+      if (_completedSubscription != null) _completedSubscription!.cancel(),
+      if (_playingSubscription != null) _playingSubscription!.cancel(),
+    ]);
+    try {
+      await _openChain;
+    } catch (_) {
+      // Always release the native player after an open failure.
+    }
+    try {
+      await _player.dispose();
+    } catch (error, stackTrace) {
+      debugPrint('Video player dispose failed: $error\n$stackTrace');
+    }
+    try {
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    } catch (error, stackTrace) {
+      debugPrint('System UI restore failed: $error\n$stackTrace');
+    }
   }
 
   void _savePlaybackState() {
@@ -2777,8 +2837,8 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
               Positioned(
                 left: MediaQuery.sizeOf(context).width / 6,
                 width: MediaQuery.sizeOf(context).width * 2 / 3,
-                bottom: 0,
-                height: MediaQuery.sizeOf(context).height * .05,
+                bottom: 20,
+                height: MediaQuery.sizeOf(context).height * .10,
                 child: _VideoOverlayVisibility(
                   visible: _controlsVisible,
                   child: DecoratedBox(
@@ -3777,6 +3837,10 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
   @override
   void dispose() {
     _saveState();
+    unawaited(widget.documentFuture.then<void>(
+      (document) => document?.archiveSession?.close(),
+      onError: (_, __) {},
+    ));
     _controller.dispose();
     super.dispose();
   }
@@ -4265,6 +4329,7 @@ class _ReflowBlockView extends StatelessWidget {
         final image = block.imageBytes;
         final epubPath = block.imageEpubPath;
         final archivePath = block.imageArchivePath;
+        final archiveSession = block.archiveSession;
         if (image == null && (epubPath == null || archivePath == null)) {
           return const SizedBox.shrink();
         }
@@ -4284,6 +4349,7 @@ class _ReflowBlockView extends StatelessWidget {
                         key: ValueKey('$epubPath::$archivePath'),
                         epubPath: epubPath!,
                         archivePath: archivePath!,
+                        session: archiveSession,
                       ),
               ),
             );
@@ -4308,9 +4374,11 @@ class _DeferredEpubImage extends StatefulWidget {
     super.key,
     required this.epubPath,
     required this.archivePath,
+    this.session,
   });
   final String epubPath;
   final String archivePath;
+  final ArchiveSession? session;
 
   @override
   State<_DeferredEpubImage> createState() => _DeferredEpubImageState();
@@ -4329,7 +4397,8 @@ class _DeferredEpubImageState extends State<_DeferredEpubImage> {
   void didUpdateWidget(covariant _DeferredEpubImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.epubPath != widget.epubPath ||
-        oldWidget.archivePath != widget.archivePath) {
+        oldWidget.archivePath != widget.archivePath ||
+        oldWidget.session != widget.session) {
       _bytes = _loadBytes();
     }
   }
@@ -4340,6 +4409,10 @@ class _DeferredEpubImageState extends State<_DeferredEpubImage> {
     // isolates; only the two plain path strings may cross this boundary.
     final epubPath = widget.epubPath;
     final archivePath = widget.archivePath;
+    final session = widget.session;
+    if (session != null) {
+      return Future<Uint8List?>.value(session.readBytes(archivePath));
+    }
     try {
       return await Isolate.run(
         () => readEpubImageAtPath(epubPath, archivePath),

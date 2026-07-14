@@ -1,11 +1,10 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
 import 'package:path/path.dart' as p;
 import 'package:xml/xml.dart';
 
+import 'archive_session.dart';
 import 'reflow_document.dart';
 
 class EpubBook {
@@ -22,20 +21,40 @@ class EpubChapter {
   final String text;
 }
 
-/// Isolate-friendly entry point used by the viewer to keep archive parsing off
-/// the Flutter UI isolate.
+/// Isolate-friendly entry point used by callers that do not need a live
+/// resource session after parsing.
 Future<ReflowDocument> readEpubDocumentAtPath(String path) =>
     readEpubDocument(File(path));
 
 Future<ReflowDocument> readEpubDocument(File file) async {
-  final input = InputFileStream(file.path);
-  final archive = ZipDecoder().decodeStream(input);
-  final files = <String, ArchiveFile>{
-    for (final entry in archive.files)
-      if (entry.isFile) _normalizeArchivePath(entry.name): entry,
-  };
-  final container = _requireFile(files, 'META-INF/container.xml');
-  final containerXml = XmlDocument.parse(_decodeArchiveFile(container));
+  final session = await ArchiveSession.open(file);
+  try {
+    return _parseEpub(file, session, keepSession: false);
+  } finally {
+    session.close();
+  }
+}
+
+/// Opens an EPUB for the reader. The returned document owns the session and
+/// must close [ReflowDocument.archiveSession] when the reader is disposed.
+Future<ReflowDocument> openEpubDocumentSession(File file) async {
+  final session = await ArchiveSession.open(file);
+  try {
+    return _parseEpub(file, session, keepSession: true);
+  } catch (_) {
+    session.close();
+    rethrow;
+  }
+}
+
+ReflowDocument _parseEpub(
+  File file,
+  ArchiveSession session, {
+  required bool keepSession,
+}) {
+  final containerXml = XmlDocument.parse(
+    _decodeArchiveEntry(session, 'META-INF/container.xml'),
+  );
   final packagePath =
       _firstElement(containerXml, 'rootfile')?.getAttribute('full-path');
   if (packagePath == null || packagePath.trim().isEmpty) {
@@ -43,7 +62,7 @@ Future<ReflowDocument> readEpubDocument(File file) async {
   }
   final normalizedPackagePath = _normalizeArchivePath(packagePath);
   final packageXml = XmlDocument.parse(
-    _decodeArchiveFile(_requireFile(files, normalizedPackagePath)),
+    _decodeArchiveEntry(session, normalizedPackagePath),
   );
   final manifest = <String, String>{};
   for (final item
@@ -59,12 +78,12 @@ Future<ReflowDocument> readEpubDocument(File file) async {
     final href = manifest[itemRef.getAttribute('idref')];
     if (href == null) continue;
     final chapterPath = _resolveArchivePath(packageDir, href);
-    final chapterFile = files[chapterPath];
-    if (chapterFile == null) continue;
+    if (session.entry(chapterPath) == null) continue;
     final blocks = _xhtmlBlocks(
-      _decodeArchiveFile(chapterFile),
+      _decodeArchiveEntry(session, chapterPath),
       chapterPath: chapterPath,
-      files: files,
+      session: session,
+      retainedSession: keepSession ? session : null,
       epubPath: file.path,
     );
     if (blocks.isEmpty) continue;
@@ -79,18 +98,18 @@ Future<ReflowDocument> readEpubDocument(File file) async {
     ));
   }
   if (chapters.isEmpty) throw const FormatException('EPUB 中没有可读取的章节。');
-  final document = ReflowDocument(
+  return ReflowDocument(
     title: _bookTitle(packageXml) ?? p.basenameWithoutExtension(file.path),
     chapters: chapters,
+    archiveSession: keepSession ? session : null,
   );
-  input.closeSync();
-  return document;
 }
 
 List<ReflowBlock> _xhtmlBlocks(
   String source, {
   required String chapterPath,
-  required Map<String, ArchiveFile> files,
+  required ArchiveSession session,
+  required ArchiveSession? retainedSession,
   required String epubPath,
 }) {
   try {
@@ -105,11 +124,12 @@ List<ReflowBlock> _xhtmlBlocks(
         final imagePath = src == null
             ? null
             : _resolveArchivePath(p.posix.dirname(chapterPath), src);
-        if (imagePath != null && files.containsKey(imagePath)) {
+        if (imagePath != null && session.entry(imagePath) != null) {
           result.add(ReflowBlock(
             kind: ReflowBlockKind.image,
             imageEpubPath: epubPath,
             imageArchivePath: imagePath,
+            archiveSession: retainedSession,
             altText: element.getAttribute('alt'),
           ));
         }
@@ -161,93 +181,71 @@ List<ReflowBlock> _xhtmlBlocks(
   }
 }
 
-/// Reads one embedded image on demand. Used from an isolate by the renderer.
+/// Compatibility helper for callers that do not own a reader session.
 Future<Uint8List?> readEpubImageAtPath(
     String epubPath, String archivePath) async {
-  final input = InputFileStream(epubPath);
+  final session = await ArchiveSession.open(File(epubPath));
   try {
-    final archive = ZipDecoder().decodeStream(input);
-    final normalized = _normalizeArchivePath(archivePath);
-    final entry = archive.files
-        .where(
-          (file) =>
-              file.isFile && _normalizeArchivePath(file.name) == normalized,
-        )
-        .cast<ArchiveFile?>()
-        .firstWhere(
-          (file) => file != null,
-          orElse: () => null,
-        );
-    if (entry == null) {
-      throw FormatException('EPUB 内部不存在图片条目：$normalized');
-    }
-    final bytes = entry.readBytes();
+    final bytes = session.readBytes(archivePath);
     if (bytes == null || bytes.isEmpty) {
-      throw FormatException('EPUB 图片条目为空或无法解压：$normalized');
+      throw FormatException('EPUB 图片条目为空或无法解压：$archivePath');
     }
-    return Uint8List.fromList(bytes);
+    return bytes;
   } finally {
-    input.closeSync();
+    session.close();
   }
 }
 
 Future<EpubBook> readEpubBook(File file) async {
-  final archive = ZipDecoder().decodeBytes(await file.readAsBytes());
-  final files = <String, ArchiveFile>{
-    for (final entry in archive.files)
-      if (entry.isFile) _normalizeArchivePath(entry.name): entry,
-  };
-  final container = _requireFile(files, 'META-INF/container.xml');
-  final containerXml = XmlDocument.parse(_decodeArchiveFile(container));
-  final rootfile = _firstElement(containerXml, 'rootfile');
-  final packagePath = rootfile?.getAttribute('full-path');
-  if (packagePath == null || packagePath.trim().isEmpty) {
-    throw const FormatException('EPUB container.xml 中缺少 OPF 路径。');
+  final session = await ArchiveSession.open(file);
+  try {
+    final containerXml = XmlDocument.parse(
+      _decodeArchiveEntry(session, 'META-INF/container.xml'),
+    );
+    final packagePath =
+        _firstElement(containerXml, 'rootfile')?.getAttribute('full-path');
+    if (packagePath == null || packagePath.trim().isEmpty) {
+      throw const FormatException('EPUB container.xml 中缺少 OPF 路径。');
+    }
+    final normalizedPackagePath = _normalizeArchivePath(packagePath);
+    final packageXml = XmlDocument.parse(
+      _decodeArchiveEntry(session, normalizedPackagePath),
+    );
+    final manifest = <String, String>{};
+    for (final item
+        in _elements(packageXml).where((node) => node.name.local == 'item')) {
+      final id = item.getAttribute('id');
+      final href = item.getAttribute('href');
+      if (id != null && href != null) manifest[id] = href;
+    }
+    final packageDir = p.posix.dirname(normalizedPackagePath);
+    final chapters = <EpubChapter>[];
+    for (final itemRef in _elements(packageXml)
+        .where((node) => node.name.local == 'itemref')) {
+      final href = manifest[itemRef.getAttribute('idref')];
+      if (href == null) continue;
+      final chapterPath = _resolveArchivePath(packageDir, href);
+      if (session.entry(chapterPath) == null) continue;
+      final text = _xhtmlText(_decodeArchiveEntry(session, chapterPath));
+      if (text.isEmpty) continue;
+      chapters.add(EpubChapter(title: _chapterTitle(chapterPath), text: text));
+    }
+    if (chapters.isEmpty) {
+      throw const FormatException('EPUB 中没有可读取的章节。');
+    }
+    return EpubBook(
+      title: _bookTitle(packageXml) ?? p.basenameWithoutExtension(file.path),
+      chapters: chapters,
+    );
+  } finally {
+    session.close();
   }
-
-  final normalizedPackagePath = _normalizeArchivePath(packagePath);
-  final packageXml = XmlDocument.parse(
-    _decodeArchiveFile(_requireFile(files, normalizedPackagePath)),
-  );
-  final manifest = <String, String>{};
-  for (final item
-      in _elements(packageXml).where((node) => node.name.local == 'item')) {
-    final id = item.getAttribute('id');
-    final href = item.getAttribute('href');
-    if (id != null && href != null) manifest[id] = href;
-  }
-  final packageDir = p.posix.dirname(normalizedPackagePath);
-  final chapters = <EpubChapter>[];
-  for (final itemRef
-      in _elements(packageXml).where((node) => node.name.local == 'itemref')) {
-    final href = manifest[itemRef.getAttribute('idref')];
-    if (href == null) continue;
-    final chapterPath = _resolveArchivePath(packageDir, href);
-    final chapterFile = files[chapterPath];
-    if (chapterFile == null) continue;
-    final text = _xhtmlText(_decodeArchiveFile(chapterFile));
-    if (text.isEmpty) continue;
-    chapters.add(EpubChapter(title: _chapterTitle(chapterPath), text: text));
-  }
-  if (chapters.isEmpty) {
-    throw const FormatException('EPUB 中没有可读取的章节。');
-  }
-  return EpubBook(
-    title: _bookTitle(packageXml) ?? p.basenameWithoutExtension(file.path),
-    chapters: chapters,
-  );
 }
 
-ArchiveFile _requireFile(Map<String, ArchiveFile> files, String path) {
-  final file = files[_normalizeArchivePath(path)];
-  if (file == null) throw FormatException('EPUB 中缺少 $path。');
-  return file;
-}
-
-String _decodeArchiveFile(ArchiveFile file) {
-  final bytes = file.readBytes();
-  if (bytes == null) throw FormatException('无法读取 EPUB 内部文件 ${file.name}。');
-  return utf8.decode(bytes, allowMalformed: true);
+String _decodeArchiveEntry(ArchiveSession session, String path) {
+  final text = session.readText(path);
+  if (text == null) throw FormatException('EPUB 中缺少 $path。');
+  return text;
 }
 
 String _normalizeArchivePath(String value) => p.posix

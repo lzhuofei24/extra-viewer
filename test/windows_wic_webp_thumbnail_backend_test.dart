@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
+import 'package:best_viewer/src/core/formats/thumbnail_spec.dart';
 import 'package:best_viewer/src/core/thumbnails/windows_wic_webp_thumbnail_backend.dart';
 
 void main() {
@@ -16,10 +17,11 @@ void main() {
     await source.writeAsBytes(img.encodePng(image));
 
     final result = await WindowsWicWebpThumbnailBackend().encode(source);
+    final expected = thumbnailDimensionsForTargetPixelCount(1600, 1000);
 
     expect(result, isNotNull);
-    expect(result!.width, 640);
-    expect(result.height, 400);
+    expect(result!.width, expected.width);
+    expect(result.height, expected.height);
     expect(result.bytes.take(4), [0x52, 0x49, 0x46, 0x46]);
   });
 }

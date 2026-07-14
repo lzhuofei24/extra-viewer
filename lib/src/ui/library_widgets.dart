@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -17,7 +16,7 @@ class EntityArtwork extends StatelessWidget {
     this.metadataPreview,
     this.thumbnailStatus = ThumbnailStatus.none,
     this.thumbnailPath,
-    this.thumbnailPng,
+    this.onThumbnailNeeded,
     this.height,
     this.borderRadius,
   });
@@ -28,7 +27,7 @@ class EntityArtwork extends StatelessWidget {
   final String? metadataPreview;
   final ThumbnailStatus thumbnailStatus;
   final String? thumbnailPath;
-  final Uint8List? thumbnailPng;
+  final VoidCallback? onThumbnailNeeded;
   final double? height;
   final BorderRadius? borderRadius;
 
@@ -47,26 +46,21 @@ class EntityArtwork extends StatelessWidget {
   }
 
   Widget _buildVisual(BuildContext context) {
-    if (thumbnailPng != null && thumbnailPng!.isNotEmpty) {
-      return Image.memory(
-        thumbnailPng!,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _FallbackArtwork(
-          entityType: entityType,
-          format: format,
-          thumbnailStatus: thumbnailStatus,
-        ),
-      );
-    }
     final path = thumbnailPath;
     if (path != null && path.isNotEmpty) {
-      return Image.file(
-        File(path),
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _FallbackArtwork(
-          entityType: entityType,
-          format: format,
-          thumbnailStatus: thumbnailStatus,
+      return ColoredBox(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: Image.file(
+          File(path),
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) {
+            _requestThumbnail();
+            return _FallbackArtwork(
+              entityType: entityType,
+              format: format,
+              thumbnailStatus: thumbnailStatus,
+            );
+          },
         ),
       );
     }
@@ -78,11 +72,18 @@ class EntityArtwork extends StatelessWidget {
         metadataPreview: metadataPreview,
       );
     }
+    _requestThumbnail();
     return _FallbackArtwork(
       entityType: entityType,
       format: format,
       thumbnailStatus: thumbnailStatus,
     );
+  }
+
+  void _requestThumbnail() {
+    final callback = onThumbnailNeeded;
+    if (callback == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) => callback());
   }
 }
 
@@ -92,36 +93,26 @@ class RootArtwork extends StatelessWidget {
   final IndexNode node;
 
   @override
-  Widget build(BuildContext context) {
-    if (node.thumbnailPng != null && node.thumbnailPng!.isNotEmpty) {
-      return EntityArtwork(
-        entityType: EntityType.image,
-        format: _nodeTypeShortLabel(node.nodeType),
-        thumbnailPng: node.thumbnailPng,
-        borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+  Widget build(BuildContext context) => DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+          gradient: LinearGradient(
+            colors: [
+              _indexNodeColor(node.nodeType).withValues(alpha: 0.9),
+              _indexNodeColor(node.nodeType).withValues(alpha: 0.55),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Center(
+          child: Icon(
+            _indexNodeIcon(node.nodeType),
+            size: 36,
+            color: Colors.white,
+          ),
+        ),
       );
-    }
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(AppTokens.radiusSm),
-        gradient: LinearGradient(
-          colors: [
-            _indexNodeColor(node.nodeType).withValues(alpha: 0.9),
-            _indexNodeColor(node.nodeType).withValues(alpha: 0.55),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      child: Center(
-        child: Icon(
-          _indexNodeIcon(node.nodeType),
-          size: 36,
-          color: Colors.white,
-        ),
-      ),
-    );
-  }
 }
 
 class EntityCard extends StatelessWidget {
@@ -135,6 +126,7 @@ class EntityCard extends StatelessWidget {
     this.onToggleSelection,
     this.onStartSelection,
     this.onShowMenu,
+    this.onThumbnailNeeded,
   });
 
   final EntityListItem entity;
@@ -145,6 +137,7 @@ class EntityCard extends StatelessWidget {
   final VoidCallback? onToggleSelection;
   final VoidCallback? onStartSelection;
   final VoidCallback? onShowMenu;
+  final VoidCallback? onThumbnailNeeded;
 
   @override
   Widget build(BuildContext context) {
@@ -158,14 +151,18 @@ class EntityCard extends StatelessWidget {
             entity.thumbnailWidth! > 0 &&
             entity.thumbnailHeight! > 0
         ? entity.thumbnailWidth! / entity.thumbnailHeight!
-        : entity.entityType == EntityType.audio
-            ? 16 / 9
-            : 4 / 3;
+        : switch (entity.entityType) {
+            EntityType.audio ||
+            EntityType.text ||
+            EntityType.externalLink =>
+              1.0,
+            _ => 4 / 3,
+          };
     return Card(
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(immersive ? 1 : 8),
+        borderRadius: BorderRadius.circular(immersive ? 2 : 16),
         side: BorderSide(
           color: theme.colorScheme.outlineVariant.withValues(alpha: 0.65),
           width: 1,
@@ -186,6 +183,7 @@ class EntityCard extends StatelessWidget {
                 metadataPreview: entity.metadataPreview,
                 thumbnailStatus: entity.thumbnailStatus,
                 thumbnailPath: entity.thumbnailPath,
+                onThumbnailNeeded: onThumbnailNeeded,
                 borderRadius: BorderRadius.zero,
               ),
               if (duration != '-')
@@ -598,6 +596,15 @@ class _RuntimePreviewArtwork extends StatelessWidget {
   final String? title;
   final String? metadataPreview;
 
+  static const _chineseFontFallbacks = <String>[
+    'Microsoft YaHei',
+    'Noto Sans CJK SC',
+    'Noto Sans SC',
+    'PingFang SC',
+    'Source Han Sans SC',
+    'Droid Sans Fallback',
+  ];
+
   @override
   Widget build(BuildContext context) {
     if (entityType == EntityType.audio) {
@@ -622,6 +629,10 @@ class _RuntimePreviewArtwork extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final textStyle = theme.textTheme.bodySmall?.copyWith(
+            // Use the platform sans-serif family instead of inheriting the
+            // Windows-only app font, then provide CJK fallbacks for previews.
+            fontFamily: 'sans-serif',
+            fontFamilyFallback: _chineseFontFallbacks,
             color: colors.$2.withValues(alpha: 0.84),
             height: 1.55,
           );
@@ -721,15 +732,6 @@ String openButtonLabel(ViewerKind viewerKind) {
     ViewerKind.audioPlayer ||
     ViewerKind.videoPlayer =>
       '内置预览',
-  };
-}
-
-String _nodeTypeShortLabel(NodeType type) {
-  return switch (type) {
-    NodeType.directoryIndexRoot || NodeType.folder => 'DIR',
-    NodeType.categoryIndexRoot || NodeType.category => 'IDX',
-    NodeType.graphIndexRoot || NodeType.graphNode => 'MAP',
-    NodeType.root => 'ROOT',
   };
 }
 

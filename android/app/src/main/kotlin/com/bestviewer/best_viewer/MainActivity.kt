@@ -15,7 +15,11 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.util.ArrayDeque
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 class MainActivity : FlutterActivity() {
     companion object {
@@ -34,6 +38,9 @@ class MainActivity : FlutterActivity() {
     // allowing a large directory scan to flood the provider or disk cache.
     private val sourceExecutor = Executors.newFixedThreadPool(8)
     private val scanExecutor = Executors.newSingleThreadExecutor()
+    private val thumbnailJobs = ConcurrentHashMap<String, Future<*>>()
+    private val activeVideoRetrievers =
+        ConcurrentHashMap<String, MediaMetadataRetriever>()
     private var scanProgressSink: EventChannel.EventSink? = null
     private var directoryScanSession: DirectoryScanSession? = null
 
@@ -74,14 +81,20 @@ class MainActivity : FlutterActivity() {
                 )
                 "createImageThumbnail" -> createImageThumbnail(
                     call.argument<String>("source"),
-                    call.argument<Int>("maxWidth") ?: 640,
+                    call.argument<String>("requestId"),
+                    call.argument<Int>("targetPixelCount") ?: 600 * 600,
                     call.argument<Int>("quality") ?: 78,
                     result,
                 )
                 "createVideoThumbnail" -> createVideoThumbnail(
                     call.argument<String>("source"),
-                    call.argument<Int>("maxWidth") ?: 640,
+                    call.argument<String>("requestId"),
+                    call.argument<Int>("targetPixelCount") ?: 600 * 600,
                     call.argument<Int>("quality") ?: 78,
+                    result,
+                )
+                "cancelThumbnail" -> cancelThumbnail(
+                    call.argument<String>("requestId"),
                     result,
                 )
                 "clearTransientDocuments" -> clearTransientDocuments(result)
@@ -153,7 +166,10 @@ class MainActivity : FlutterActivity() {
                 }
                 existing?.close()
                 val startDocumentId = resolveDirectoryId(uri, scope)
-                val total = countDocuments(uri, startDocumentId)
+                // Count without retaining document metadata. The following
+                // pull session is independent, so Dart can show a stable
+                // total while it persists the durable manifest in batches.
+                val total = countDirectoryTree(uri, startDocumentId, scope)
                 directoryScanSession = DirectoryScanSession(uri, total, startDocumentId, scope)
                 runOnUiThread { result.success(mapOf("total" to total)) }
             } catch (error: Exception) {
@@ -221,7 +237,8 @@ class MainActivity : FlutterActivity() {
 
     private fun createImageThumbnail(
         source: String?,
-        maxWidth: Int,
+        requestId: String?,
+        targetPixelCount: Int,
         quality: Int,
         result: MethodChannel.Result,
     ) {
@@ -229,7 +246,7 @@ class MainActivity : FlutterActivity() {
             result.error("argument", "source is required", null)
             return
         }
-        sourceExecutor.execute {
+        val job = sourceExecutor.submit {
             try {
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 decodeBitmap(source, bounds)
@@ -238,9 +255,11 @@ class MainActivity : FlutterActivity() {
                 if (sourceWidth <= 0 || sourceHeight <= 0) {
                     throw IllegalArgumentException("Unsupported image source")
                 }
-                val targetWidth = minOf(sourceWidth, maxWidth.coerceAtLeast(1))
-                val targetHeight = (sourceHeight.toDouble() * targetWidth / sourceWidth)
-                    .toInt().coerceAtLeast(1)
+                val (targetWidth, targetHeight) = thumbnailDimensions(
+                    sourceWidth,
+                    sourceHeight,
+                    targetPixelCount,
+                )
                 val options = BitmapFactory.Options().apply {
                     inSampleSize = sampleSizeFor(sourceWidth, sourceHeight, targetWidth, targetHeight)
                     inPreferredConfig = Bitmap.Config.ARGB_8888
@@ -275,13 +294,17 @@ class MainActivity : FlutterActivity() {
                 runOnUiThread {
                     result.error("thumbnail", "Cannot create image thumbnail.", error.message)
                 }
+            } finally {
+                if (requestId != null) thumbnailJobs.remove(requestId)
             }
         }
+        if (requestId != null) thumbnailJobs[requestId] = job
     }
 
     private fun createVideoThumbnail(
         source: String?,
-        maxWidth: Int,
+        requestId: String?,
+        targetPixelCount: Int,
         quality: Int,
         result: MethodChannel.Result,
     ) {
@@ -289,8 +312,9 @@ class MainActivity : FlutterActivity() {
             result.error("argument", "source is required", null)
             return
         }
-        sourceExecutor.execute {
+        val job = sourceExecutor.submit {
             val retriever = MediaMetadataRetriever()
+            if (requestId != null) activeVideoRetrievers[requestId] = retriever
             try {
                 if (source.startsWith("content://")) {
                     retriever.setDataSource(this, Uri.parse(source))
@@ -302,9 +326,11 @@ class MainActivity : FlutterActivity() {
                     MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
                 ) ?: retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                     ?: throw IllegalArgumentException("Video contains no decodable frame")
-                val targetWidth = minOf(frame.width, maxWidth.coerceAtLeast(1))
-                val targetHeight = (frame.height.toDouble() * targetWidth / frame.width)
-                    .toInt().coerceAtLeast(1)
+                val (targetWidth, targetHeight) = thumbnailDimensions(
+                    frame.width,
+                    frame.height,
+                    targetPixelCount,
+                )
                 val scaled = if (frame.width == targetWidth && frame.height == targetHeight) {
                     frame
                 } else {
@@ -337,9 +363,40 @@ class MainActivity : FlutterActivity() {
                     result.error("videoThumbnail", "Cannot create video thumbnail.", error.message)
                 }
             } finally {
+                if (requestId != null) {
+                    activeVideoRetrievers.remove(requestId)
+                    thumbnailJobs.remove(requestId)
+                }
                 retriever.release()
             }
         }
+        if (requestId != null) thumbnailJobs[requestId] = job
+    }
+
+    private fun cancelThumbnail(
+        requestId: String?,
+        result: MethodChannel.Result,
+    ) {
+        if (!requestId.isNullOrBlank()) {
+            thumbnailJobs.remove(requestId)?.cancel(true)
+            activeVideoRetrievers.remove(requestId)?.release()
+        }
+        result.success(null)
+    }
+
+    private fun thumbnailDimensions(
+        sourceWidth: Int,
+        sourceHeight: Int,
+        targetPixelCount: Int,
+    ): Pair<Int, Int> {
+        val width = sourceWidth.coerceAtLeast(1)
+        val height = sourceHeight.coerceAtLeast(1)
+        val sourcePixels = width.toLong() * height.toLong()
+        val targetPixels = targetPixelCount.coerceAtLeast(1).toLong()
+        if (sourcePixels <= targetPixels) return width to height
+        val scale = sqrt(targetPixels.toDouble() / sourcePixels.toDouble())
+        return (width * scale).roundToInt().coerceAtLeast(1) to
+            (height * scale).roundToInt().coerceAtLeast(1)
     }
 
     private fun decodeBitmap(source: String, options: BitmapFactory.Options): Bitmap? {
@@ -498,38 +555,6 @@ class MainActivity : FlutterActivity() {
         return results
     }
 
-    private fun countDocuments(rootUri: Uri, startDocumentId: String): Int {
-        val pending = ArrayDeque<Pair<String, String>>()
-        pending.add(startDocumentId to "")
-        var total = 0
-        while (pending.isNotEmpty()) {
-            val (documentId, relativeDirectory) = pending.removeFirst()
-            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(rootUri, documentId)
-            contentResolver.query(childrenUri, DIRECTORY_PROJECTION, null, null, null)?.use { cursor ->
-                val idColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
-                val mimeColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
-                while (cursor.moveToNext()) {
-                    val childId = cursor.getString(idColumn) ?: continue
-                    if (cursor.getString(mimeColumn) == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        pending.add(childId to relativeDirectory)
-                    } else {
-                        total++
-                        if (total == 1 || total % 100 == 0) {
-                            val counted = total
-                            runOnUiThread {
-                                scanProgressSink?.success(mapOf("discovered" to counted))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        runOnUiThread {
-            scanProgressSink?.success(mapOf("discovered" to total, "completed" to true))
-        }
-        return total
-    }
-
     private fun resolveDirectoryId(rootUri: Uri, scope: String): String {
         var currentId = DocumentsContract.getTreeDocumentId(rootUri)
         if (scope.isEmpty()) return currentId
@@ -551,6 +576,21 @@ class MainActivity : FlutterActivity() {
             currentId = nextId ?: throw IllegalArgumentException("Directory no longer exists: $scope")
         }
         return currentId
+    }
+
+    private fun countDirectoryTree(rootUri: Uri, startDocumentId: String, scope: String): Int {
+        val session = DirectoryScanSession(rootUri, 0, startDocumentId, scope)
+        var discovered = 0
+        try {
+            while (true) {
+                val batch = session.nextBatch(500)
+                discovered = batch.discovered
+                if (batch.completed) break
+            }
+        } finally {
+            session.close()
+        }
+        return discovered
     }
 
     private inner class DirectoryScanSession(

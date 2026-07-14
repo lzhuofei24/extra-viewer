@@ -7,6 +7,7 @@ import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 
 import '../domain/models.dart';
+import '../thumbnails/thumbnail_cancellation.dart';
 import 'thumbnail_spec.dart';
 import 'document_preview_renderer.dart';
 import '../thumbnails/webp_encoder.dart';
@@ -237,15 +238,14 @@ class DocxFileHandler extends FileFormatHandler {
 }
 
 List<int> _encodeAdaptivePngThumbnail(img.Image source) {
-  final targetWidth = source.width.clamp(1, thumbnailWidth).toInt();
-  final targetHeight = (source.height * targetWidth / source.width)
-      .round()
-      .clamp(1, 1 << 30)
-      .toInt();
+  final dimensions = thumbnailDimensionsForTargetPixelCount(
+    source.width,
+    source.height,
+  );
   final resized = img.copyResize(
     source,
-    width: targetWidth,
-    height: targetHeight,
+    width: dimensions.width,
+    height: dimensions.height,
   );
   return img.encodePng(resized, level: 6);
 }
@@ -255,15 +255,14 @@ Uint8List _encodeAdaptiveWebpThumbnail(Uint8List sourceBytes) {
   if (source == null) {
     throw const FormatException('Image thumbnail decode failed');
   }
-  final targetWidth = source.width.clamp(1, thumbnailWidth).toInt();
-  final targetHeight = (source.height * targetWidth / source.width)
-      .round()
-      .clamp(1, 1 << 30)
-      .toInt();
+  final dimensions = thumbnailDimensionsForTargetPixelCount(
+    source.width,
+    source.height,
+  );
   final resized = img.copyResize(
     source,
-    width: targetWidth,
-    height: targetHeight,
+    width: dimensions.width,
+    height: dimensions.height,
   );
   return encodeThumbnailWebp(resized);
 }
@@ -319,8 +318,12 @@ abstract class VideoThumbnailBackend {
   Future<Uint8List> buildFirstFrameWebp(File file) => buildFirstFramePng(file);
 
   Future<VideoThumbnailResult> buildFirstFrameWebpWithMetadata(
-      File file) async {
+    File file, {
+    ThumbnailCancellationToken? cancellationToken,
+  }) async {
+    cancellationToken?.throwIfCancelled();
     final bytes = await buildFirstFrameWebp(file);
+    cancellationToken?.throwIfCancelled();
     final image = img.decodeImage(bytes);
     if (image == null) {
       throw FileSystemException('Video thumbnail decode failed', file.path);
@@ -399,12 +402,14 @@ class FfmpegVideoThumbnailBackend extends VideoThumbnailBackend {
 
   @override
   Future<VideoThumbnailResult> buildFirstFrameWebpWithMetadata(
-    File file,
-  ) async {
+    File file, {
+    ThumbnailCancellationToken? cancellationToken,
+  }) async {
     try {
       var result = await _runFfmpegUntilSuccess(
         _rawFrameArguments(file.path, seekSeconds: 2, includeMetadata: true),
         stdoutEncoding: null,
+        cancellationToken: cancellationToken,
       );
       if (result.exitCode != 0 ||
           result.stdout is! List<int> ||
@@ -412,6 +417,7 @@ class FfmpegVideoThumbnailBackend extends VideoThumbnailBackend {
         result = await _runFfmpegUntilSuccess(
           _rawFrameArguments(file.path, includeMetadata: true),
           stdoutEncoding: null,
+          cancellationToken: cancellationToken,
         );
       }
       if (result.exitCode != 0 ||
@@ -533,6 +539,7 @@ class FfmpegVideoThumbnailBackend extends VideoThumbnailBackend {
   Future<ProcessResult> _runFfmpegUntilSuccess(
     List<String> arguments, {
     Encoding? stdoutEncoding = systemEncoding,
+    ThumbnailCancellationToken? cancellationToken,
   }) async {
     ProcessException? lastError;
     ProcessResult? lastResult;
@@ -543,10 +550,11 @@ class FfmpegVideoThumbnailBackend extends VideoThumbnailBackend {
     };
     for (final candidate in candidates) {
       try {
-        final result = await Process.run(
+        final result = await _runCancelableProcess(
           candidate,
           arguments,
           stdoutEncoding: stdoutEncoding,
+          cancellationToken: cancellationToken,
         );
         if (result.exitCode == 0) {
           if (executable == 'ffmpeg') _cachedWebpExecutable = candidate;
@@ -559,7 +567,50 @@ class FfmpegVideoThumbnailBackend extends VideoThumbnailBackend {
     }
     if (lastResult != null) return lastResult;
     if (lastError != null) throw lastError;
-    return Process.run(executable, arguments, stdoutEncoding: stdoutEncoding);
+    return _runCancelableProcess(
+      executable,
+      arguments,
+      stdoutEncoding: stdoutEncoding,
+      cancellationToken: cancellationToken,
+    );
+  }
+
+  Future<ProcessResult> _runCancelableProcess(
+    String executable,
+    List<String> arguments, {
+    required Encoding? stdoutEncoding,
+    ThumbnailCancellationToken? cancellationToken,
+  }) async {
+    cancellationToken?.throwIfCancelled();
+    Process? process;
+    void cancel() => process?.kill();
+    cancellationToken?.addListener(cancel);
+    try {
+      process = await Process.start(executable, arguments);
+      final stdoutFuture = process.stdout.fold<List<int>>(
+        <int>[],
+        (bytes, chunk) => bytes..addAll(chunk),
+      );
+      final stderrFuture = process.stderr.fold<List<int>>(
+        <int>[],
+        (bytes, chunk) => bytes..addAll(chunk),
+      );
+      final exitCode = await process.exitCode;
+      final stdoutBytes = await stdoutFuture;
+      final stderrBytes = await stderrFuture;
+      cancellationToken?.throwIfCancelled();
+      return ProcessResult(
+        process.pid,
+        exitCode,
+        stdoutEncoding == null
+            ? stdoutBytes
+            : stdoutEncoding.decode(stdoutBytes),
+        systemEncoding.decode(stderrBytes),
+      );
+    } finally {
+      cancellationToken?.removeListener(cancel);
+      if (cancellationToken?.isCancelled == true) process?.kill();
+    }
   }
 
   List<String> _ffmpegExecutableCandidates() {
@@ -644,4 +695,5 @@ List<String> _ffprobeExecutableCandidates() {
   return candidates.toSet().toList();
 }
 
-const _ffmpegContainFilter = "scale='min(iw,$thumbnailWidth)':-2,format=rgba";
+const _ffmpegContainFilter =
+    "scale='trunc(iw*min(1,sqrt($thumbnailTargetPixelCount/(iw*ih))))':'trunc(ih*min(1,sqrt($thumbnailTargetPixelCount/(iw*ih))))',format=rgba";

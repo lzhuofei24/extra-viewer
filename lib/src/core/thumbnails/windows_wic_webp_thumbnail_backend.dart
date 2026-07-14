@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
@@ -7,13 +8,22 @@ import 'package:ffi/ffi.dart';
 
 import '../formats/thumbnail_spec.dart';
 import 'thumbnail_artifact.dart';
+import 'thumbnail_cancellation.dart';
 
 /// Windows-only WIC decoder plus libwebp encoder. It down-samples while
 /// decoding and performs all pixel work outside the Flutter UI isolate.
 class WindowsWicWebpThumbnailBackend {
-  Future<ThumbnailArtifact?> encode(File file) async {
+  Future<ThumbnailArtifact?> encode(
+    File file, {
+    ThumbnailCancellationToken? cancellationToken,
+  }) async {
     if (!Platform.isWindows) return null;
-    final result = await _runWicThumbnail(file.path);
+    cancellationToken?.throwIfCancelled();
+    final result = await _runWicThumbnail(
+      file.path,
+      cancellationToken: cancellationToken,
+    );
+    cancellationToken?.throwIfCancelled();
     if (result == null) return null;
     return ThumbnailArtifact(
       bytes: result.bytes,
@@ -24,8 +34,69 @@ class WindowsWicWebpThumbnailBackend {
   }
 }
 
-Future<_WicThumbnailResult?> _runWicThumbnail(String path) {
-  return Isolate.run(() => _encodeWicThumbnail(path));
+Future<_WicThumbnailResult?> _runWicThumbnail(
+  String path, {
+  ThumbnailCancellationToken? cancellationToken,
+}) async {
+  cancellationToken?.throwIfCancelled();
+  final response = ReceivePort();
+  final isolate = await Isolate.spawn(
+    _wicThumbnailWorkerMain,
+    <Object>[path, response.sendPort],
+  );
+  final result = Completer<_WicThumbnailResult?>();
+  void cancel() {
+    if (result.isCompleted) return;
+    isolate.kill(priority: Isolate.immediate);
+    result.completeError(const ThumbnailTaskCanceledException());
+  }
+
+  final subscription = response.listen((rawMessage) {
+    if (result.isCompleted) return;
+    final message = rawMessage as List<Object?>;
+    if (message.first != true) {
+      result.complete(null);
+      return;
+    }
+    final bytes = (message[1] as TransferableTypedData).materialize();
+    result.complete(_WicThumbnailResult(
+      bytes.asUint8List(),
+      message[2]! as int,
+      message[3]! as int,
+      message[4]! as int,
+    ));
+  });
+  cancellationToken?.addListener(cancel);
+  try {
+    cancellationToken?.throwIfCancelled();
+    return await result.future;
+  } finally {
+    cancellationToken?.removeListener(cancel);
+    await subscription.cancel();
+    response.close();
+    isolate.kill(priority: Isolate.beforeNextEvent);
+  }
+}
+
+void _wicThumbnailWorkerMain(List<Object> message) {
+  final path = message[0] as String;
+  final reply = message[1] as SendPort;
+  try {
+    final result = _encodeWicThumbnail(path);
+    if (result == null) {
+      reply.send(const <Object?>[false]);
+      return;
+    }
+    reply.send(<Object?>[
+      true,
+      TransferableTypedData.fromList(<Uint8List>[result.bytes]),
+      result.width,
+      result.height,
+      result.elapsedMs,
+    ]);
+  } catch (_) {
+    reply.send(const <Object?>[false]);
+  }
 }
 
 _WicThumbnailResult? _encodeWicThumbnail(String path) {
@@ -40,7 +111,7 @@ _WicThumbnailResult? _encodeWicThumbnail(String path) {
   try {
     final result = bindings.create(
       nativePath,
-      thumbnailWidth,
+      thumbnailTargetPixelCount,
       thumbnailWebpQuality.toDouble(),
       output,
       outputSize,

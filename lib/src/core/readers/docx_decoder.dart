@@ -1,10 +1,9 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 
+import 'archive_session.dart';
 import 'reflow_document.dart';
 
 Future<String> readDocxText(File file) async {
@@ -12,18 +11,37 @@ Future<String> readDocxText(File file) async {
 }
 
 Future<ReflowDocument> readDocxDocument(File file) async {
-  final archive = ZipDecoder().decodeBytes(await file.readAsBytes());
-  final files = <String, ArchiveFile>{
-    for (final entry in archive.files)
-      if (entry.isFile) entry.name.toLowerCase(): entry,
-  };
-  final documentFile = files['word/document.xml'];
-  if (documentFile == null) {
+  final session = await ArchiveSession.open(file);
+  try {
+    return _parseDocx(file, session, keepSession: false);
+  } finally {
+    session.close();
+  }
+}
+
+/// Opens a DOCX while retaining its archive session for the reader. DOCX
+/// images are loaded from this same session instead of reopening the ZIP.
+Future<ReflowDocument> openDocxDocumentSession(File file) async {
+  final session = await ArchiveSession.open(file);
+  try {
+    return _parseDocx(file, session, keepSession: true);
+  } catch (_) {
+    session.close();
+    rethrow;
+  }
+}
+
+ReflowDocument _parseDocx(
+  File file,
+  ArchiveSession session, {
+  required bool keepSession,
+}) {
+  final documentText = session.readText('word/document.xml');
+  if (documentText == null) {
     throw const FormatException('DOCX 中缺少 word/document.xml。');
   }
-  final document = XmlDocument.parse(_decodeArchiveFile(documentFile));
-  final relationships =
-      _docxRelationships(files['word/_rels/document.xml.rels']);
+  final document = XmlDocument.parse(documentText);
+  final relationships = _docxRelationships(session);
   final blocks = <ReflowBlock>[];
   for (final element in _elements(document)) {
     if (element.name.local != 'p') continue;
@@ -50,12 +68,12 @@ Future<ReflowDocument> readDocxDocument(File file) async {
       }
       if (relationshipId == null) continue;
       final target = relationships[relationshipId];
-      final image = target == null ? null : files[target.toLowerCase()];
-      final bytes = image?.readBytes();
-      if (bytes != null) {
+      final bytes = target == null ? null : session.readBytes(target);
+      if (bytes != null && bytes.isNotEmpty) {
         blocks.add(ReflowBlock(
           kind: ReflowBlockKind.image,
           imageBytes: Uint8List.fromList(bytes),
+          archiveSession: keepSession ? session : null,
           altText: '文档图片',
         ));
       }
@@ -68,19 +86,21 @@ Future<ReflowDocument> readDocxDocument(File file) async {
     title: file.uri.pathSegments.last
         .replaceFirst(RegExp(r'\.docx$', caseSensitive: false), ''),
     chapters: [ReflowChapter(title: '正文', blocks: blocks)],
+    archiveSession: keepSession ? session : null,
   );
 }
 
-Map<String, String> _docxRelationships(ArchiveFile? file) {
-  if (file == null) return const {};
-  final document = XmlDocument.parse(_decodeArchiveFile(file));
+Map<String, String> _docxRelationships(ArchiveSession session) {
+  final source = session.readText('word/_rels/document.xml.rels');
+  if (source == null) return const {};
+  final document = XmlDocument.parse(source);
   final relationships = <String, String>{};
   for (final relation in _elements(document)
       .where((node) => node.name.local == 'Relationship')) {
     final id = relation.getAttribute('Id');
     final target = relation.getAttribute('Target');
     if (id != null && target != null) {
-      relationships[id] = 'word/$target'.replaceAll('\\', '/');
+      relationships[id] = _normalizeDocxPath(target);
     }
   }
   return relationships;
@@ -106,10 +126,19 @@ String? _paragraphStyle(XmlElement paragraph) {
 bool _isListParagraph(XmlElement paragraph) =>
     _elements(paragraph).any((node) => node.name.local == 'numPr');
 
-String _decodeArchiveFile(ArchiveFile file) {
-  final bytes = file.readBytes();
-  if (bytes == null) throw const FormatException('无法读取 DOCX 内部文件。');
-  return utf8.decode(bytes, allowMalformed: true);
+String _normalizeDocxPath(String target) {
+  final normalized = target.replaceAll('\\', '/');
+  if (normalized.startsWith('/')) return normalized.substring(1);
+  final parts = <String>['word'];
+  for (final segment in normalized.split('/')) {
+    if (segment.isEmpty || segment == '.') continue;
+    if (segment == '..') {
+      if (parts.length > 1) parts.removeLast();
+    } else {
+      parts.add(segment);
+    }
+  }
+  return parts.join('/');
 }
 
 Iterable<XmlElement> _elements(XmlNode node) sync* {

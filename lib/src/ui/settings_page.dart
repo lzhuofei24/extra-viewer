@@ -11,12 +11,14 @@ class SettingsPage extends StatelessWidget {
     required this.sortMode,
     required this.onThemeChanged,
     required this.onSortChanged,
+    required this.onResetLocalIndex,
   });
 
   final ViewerThemeChoice themeChoice;
   final EntitySortMode sortMode;
   final ValueChanged<ViewerThemeChoice> onThemeChanged;
   final ValueChanged<EntitySortMode> onSortChanged;
+  final VoidCallback onResetLocalIndex;
 
   @override
   Widget build(BuildContext context) {
@@ -101,6 +103,30 @@ class SettingsPage extends StatelessWidget {
             '阅读字体、默认播放速度和循环策略将作为独立的应用偏好保存。',
             style: theme.textTheme.bodyMedium
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ),
+        const SizedBox(height: 18),
+        _SettingsCard(
+          title: '本地索引数据',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '重置会删除本应用的索引、构建任务、缩略图和播放缓存。真实资料文件不会被删除或修改。',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 14),
+              OutlinedButton.icon(
+                onPressed: onResetLocalIndex,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: theme.colorScheme.error,
+                ),
+                icon: const Icon(Icons.delete_sweep_outlined),
+                label: const Text('重置本地索引数据'),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 100),

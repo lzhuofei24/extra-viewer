@@ -5,6 +5,7 @@
 #include <wincodec.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -12,13 +13,13 @@
 
 extern "C" __declspec(dllexport) int BestViewerCreateThumbnail(
     const wchar_t* input_path,
-    int max_width,
+    int target_pixel_count,
     float quality,
     uint8_t** output_bytes,
     size_t* output_size,
     int* output_width,
     int* output_height) {
-  if (input_path == nullptr || max_width <= 0 || output_bytes == nullptr ||
+  if (input_path == nullptr || target_pixel_count <= 0 || output_bytes == nullptr ||
       output_size == nullptr || output_width == nullptr || output_height == nullptr) {
     return E_INVALIDARG;
   }
@@ -48,10 +49,13 @@ extern "C" __declspec(dllexport) int BestViewerCreateThumbnail(
   UINT width = 0;
   UINT height = 0;
   if (SUCCEEDED(result)) {
-    width = std::min(source_width, static_cast<UINT>(max_width));
-    height = std::max(1u, static_cast<UINT>((static_cast<uint64_t>(source_height) * width +
-                                              source_width / 2) /
-                                             source_width));
+    const uint64_t source_pixels =
+        static_cast<uint64_t>(source_width) * source_height;
+    const double scale = source_pixels <= static_cast<uint64_t>(target_pixel_count)
+        ? 1.0
+        : std::sqrt(static_cast<double>(target_pixel_count) / source_pixels);
+    width = std::max(1u, static_cast<UINT>(std::lround(source_width * scale)));
+    height = std::max(1u, static_cast<UINT>(std::lround(source_height * scale)));
     result = factory->CreateBitmapScaler(&scaler);
   }
   if (SUCCEEDED(result)) {

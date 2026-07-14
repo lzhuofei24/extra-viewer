@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -42,6 +44,9 @@ class CollectionBrowserPage extends StatelessWidget {
     required this.onPathNodeSelected,
     required this.onOpenEntity,
     required this.onShowEntityMenu,
+    required this.onThumbnailNeeded,
+    required this.onThumbnailEntityNeeded,
+    required this.onLoadThumbnailPreloadPage,
     required this.onLoadMoreEntities,
     required this.selectedEntityIds,
     required this.onToggleEntitySelection,
@@ -90,6 +95,10 @@ class CollectionBrowserPage extends StatelessWidget {
   final ValueChanged<IndexNode> onPathNodeSelected;
   final ValueChanged<EntityListItem> onOpenEntity;
   final ValueChanged<EntityListItem> onShowEntityMenu;
+  final ValueChanged<EntityListItem> onThumbnailNeeded;
+  final ValueChanged<String> onThumbnailEntityNeeded;
+  final Future<ThumbnailPreloadPage> Function(String? afterEntityId)
+      onLoadThumbnailPreloadPage;
   final VoidCallback onLoadMoreEntities;
   final Set<String> selectedEntityIds;
   final ValueChanged<EntityListItem> onToggleEntitySelection;
@@ -162,7 +171,9 @@ class CollectionBrowserPage extends StatelessWidget {
           ),
         Expanded(
           child: _BrowserScrollShell(
-            entities: entities,
+            preloadScopeKey:
+                '${currentNode?.id ?? ''}:${immersiveBrowsing ? 'recursive' : 'direct'}',
+            onLoadThumbnailPreloadPage: onLoadThumbnailPreloadPage,
             hasMore: hasMoreEntities,
             onLoadMore: onLoadMoreEntities,
             selectionMode: selectionMode,
@@ -176,6 +187,7 @@ class CollectionBrowserPage extends StatelessWidget {
                     summaries: nodeSummaries,
                     previews: nodePreviews,
                     onOpenNode: onOpenNode,
+                    onThumbnailEntityNeeded: onThumbnailEntityNeeded,
                     selectedNodeIds: selectedNodeIds,
                     selectionMode: selectionMode,
                     onToggleNodeSelection: onToggleNodeSelection,
@@ -187,6 +199,7 @@ class CollectionBrowserPage extends StatelessWidget {
                     summaries: nodeSummaries,
                     previews: nodePreviews,
                     onOpenNode: onOpenNode,
+                    onThumbnailEntityNeeded: onThumbnailEntityNeeded,
                     selectedNodeIds: selectedNodeIds,
                     selectionMode: selectionMode,
                     onToggleNodeSelection: onToggleNodeSelection,
@@ -225,6 +238,7 @@ class CollectionBrowserPage extends StatelessWidget {
                               selectionRegistry: selectionRegistry,
                               onOpenEntity: onOpenEntity,
                               onShowEntityMenu: onShowEntityMenu,
+                              onThumbnailNeeded: onThumbnailNeeded,
                               onToggleEntitySelection: onToggleEntitySelection,
                               onStartEntitySelection: onStartEntitySelection,
                             ),
@@ -237,6 +251,7 @@ class CollectionBrowserPage extends StatelessWidget {
                               selectionRegistry: selectionRegistry,
                               onOpenEntity: onOpenEntity,
                               onShowEntityMenu: onShowEntityMenu,
+                              onThumbnailNeeded: onThumbnailNeeded,
                               onToggleEntitySelection: onToggleEntitySelection,
                               onStartEntitySelection: onStartEntitySelection,
                             ),
@@ -248,6 +263,7 @@ class CollectionBrowserPage extends StatelessWidget {
                                 selectionRegistry: selectionRegistry,
                                 onOpenEntity: onOpenEntity,
                                 onShowEntityMenu: onShowEntityMenu,
+                                onThumbnailNeeded: onThumbnailNeeded,
                                 selectedEntityIds: selectedEntityIds,
                                 onToggleEntitySelection:
                                     onToggleEntitySelection,
@@ -259,6 +275,7 @@ class CollectionBrowserPage extends StatelessWidget {
                               selectionRegistry: selectionRegistry,
                               onOpenEntity: onOpenEntity,
                               onShowEntityMenu: onShowEntityMenu,
+                              onThumbnailNeeded: onThumbnailNeeded,
                               selectedEntityIds: selectedEntityIds,
                               onToggleEntitySelection: onToggleEntitySelection,
                               onStartEntitySelection: onStartEntitySelection),
@@ -269,6 +286,7 @@ class CollectionBrowserPage extends StatelessWidget {
                           selectionMode: selectionMode,
                           onOpenEntity: onOpenEntity,
                           onShowEntityMenu: onShowEntityMenu,
+                          onThumbnailNeeded: onThumbnailNeeded,
                           onToggleEntitySelection: onToggleEntitySelection,
                           onStartEntitySelection: onStartEntitySelection,
                         ),
@@ -306,6 +324,7 @@ List<Widget> _rootIndexGroupSlivers(
   required Map<String, IndexNodeSummary> summaries,
   required Map<String, IndexNodePreview> previews,
   required ValueChanged<IndexNode> onOpenNode,
+  required ValueChanged<String> onThumbnailEntityNeeded,
   required Set<String> selectedNodeIds,
   required bool selectionMode,
   required ValueChanged<IndexNode> onToggleNodeSelection,
@@ -347,6 +366,7 @@ List<Widget> _rootIndexGroupSlivers(
         summaries: summaries,
         previews: previews,
         onOpenNode: onOpenNode,
+        onThumbnailEntityNeeded: onThumbnailEntityNeeded,
         selectedNodeIds: selectedNodeIds,
         selectionMode: selectionMode,
         onToggleNodeSelection: onToggleNodeSelection,
@@ -369,7 +389,8 @@ List<Widget> _rootIndexGroupSlivers(
 
 class _BrowserScrollShell extends StatefulWidget {
   const _BrowserScrollShell({
-    required this.entities,
+    required this.preloadScopeKey,
+    required this.onLoadThumbnailPreloadPage,
     required this.hasMore,
     required this.onLoadMore,
     required this.selectionMode,
@@ -377,7 +398,9 @@ class _BrowserScrollShell extends StatefulWidget {
     required this.child,
   });
 
-  final List<EntityListItem> entities;
+  final String preloadScopeKey;
+  final Future<ThumbnailPreloadPage> Function(String? afterEntityId)
+      onLoadThumbnailPreloadPage;
   final bool hasMore;
   final VoidCallback onLoadMore;
   final bool selectionMode;
@@ -393,8 +416,14 @@ class _BrowserScrollShell extends StatefulWidget {
 
 class _BrowserScrollShellState extends State<_BrowserScrollShell> {
   final ScrollController _scrollController = ScrollController();
-  String _entitySignature = '';
-  int _lastForwardPrefetchStart = -1;
+  final Queue<String> _thumbnailPrefetchQueue = Queue<String>();
+  final Set<String> _scheduledThumbnailPaths = <String>{};
+  String? _thumbnailPreloadCursor;
+  String _activePreloadScope = '';
+  int _thumbnailPreloadGeneration = 0;
+  bool _thumbnailPreloadHasMore = true;
+  bool _thumbnailPreloadLoading = false;
+  bool _prefetchRunning = false;
   final _EntitySelectionRegistry _selectionRegistry =
       _EntitySelectionRegistry();
   final Map<int, Map<String, EntityListItem>> _dragEntitiesByPointer =
@@ -404,23 +433,25 @@ class _BrowserScrollShellState extends State<_BrowserScrollShell> {
   @override
   void initState() {
     super.initState();
-    _entitySignature = _signatureFor(widget.entities);
+    _activePreloadScope = widget.preloadScopeKey;
     _scrollController.addListener(_handleScroll);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _prefetchWindow(0));
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _resetThumbnailPreload());
   }
 
   @override
   void didUpdateWidget(covariant _BrowserScrollShell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final signature = _signatureFor(widget.entities);
-    if (signature == _entitySignature) return;
-    _entitySignature = signature;
-    _lastForwardPrefetchStart = -1;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _prefetchWindow(0));
+    if (widget.preloadScopeKey == _activePreloadScope) return;
+    _activePreloadScope = widget.preloadScopeKey;
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _resetThumbnailPreload());
   }
 
   @override
   void dispose() {
+    _thumbnailPrefetchQueue.clear();
+    _scheduledThumbnailPaths.clear();
     _scrollController
       ..removeListener(_handleScroll)
       ..dispose();
@@ -429,11 +460,6 @@ class _BrowserScrollShellState extends State<_BrowserScrollShell> {
 
   void _handleScroll() {
     if (!_scrollController.hasClients) return;
-    final width = MediaQuery.sizeOf(context).width;
-    final columns = (width / 240).floor().clamp(1, 6).toInt();
-    final estimatedVisibleStart =
-        ((_scrollController.position.pixels / 250).floor() * columns).toInt();
-    _prefetchWindow(estimatedVisibleStart + columns * 2);
     if (widget.hasMore && _scrollController.position.extentAfter < 640) {
       widget.onLoadMore();
     }
@@ -462,21 +488,82 @@ class _BrowserScrollShellState extends State<_BrowserScrollShell> {
     widget.onSelectEntitiesByDrag([entity]);
   }
 
-  void _prefetchWindow(int start) {
-    if (!mounted || start <= _lastForwardPrefetchStart) return;
-    _lastForwardPrefetchStart = start;
-    final end = (start + 18).clamp(0, widget.entities.length).toInt();
-    final first = start.clamp(0, widget.entities.length).toInt();
-    for (var index = first; index < end; index++) {
-      final path = widget.entities[index].thumbnailPath;
-      if (path == null || path.isEmpty) continue;
-      precacheImage(FileImage(File(path)), context, onError: (_, __) {});
+  void _resetThumbnailPreload() {
+    if (!mounted) return;
+    _thumbnailPreloadGeneration++;
+    _thumbnailPreloadCursor = null;
+    _thumbnailPreloadHasMore = true;
+    _thumbnailPreloadLoading = false;
+    _thumbnailPrefetchQueue.clear();
+    _scheduledThumbnailPaths.clear();
+    unawaited(_fillThumbnailPreloadQueue(_thumbnailPreloadGeneration));
+  }
+
+  Future<void> _fillThumbnailPreloadQueue(int generation) async {
+    if (!mounted ||
+        generation != _thumbnailPreloadGeneration ||
+        _thumbnailPreloadLoading ||
+        !_thumbnailPreloadHasMore ||
+        _thumbnailPrefetchQueue.length >= 80) {
+      return;
+    }
+    _thumbnailPreloadLoading = true;
+    try {
+      final page =
+          await widget.onLoadThumbnailPreloadPage(_thumbnailPreloadCursor);
+      if (!mounted || generation != _thumbnailPreloadGeneration) return;
+      _thumbnailPreloadCursor = page.nextEntityId;
+      _thumbnailPreloadHasMore = page.hasMore;
+      for (final path in page.paths) {
+        if (_scheduledThumbnailPaths.add(path)) {
+          _thumbnailPrefetchQueue.add(path);
+        }
+      }
+    } finally {
+      if (generation == _thumbnailPreloadGeneration) {
+        _thumbnailPreloadLoading = false;
+      }
+    }
+    unawaited(_drainThumbnailPrefetchQueue());
+  }
+
+  Future<void> _drainThumbnailPrefetchQueue() async {
+    if (_prefetchRunning || !mounted || _thumbnailPrefetchQueue.isEmpty) {
+      return;
+    }
+    _prefetchRunning = true;
+    try {
+      await Future.wait([
+        _runThumbnailPrefetchWorker(),
+        _runThumbnailPrefetchWorker(),
+      ]);
+    } finally {
+      _prefetchRunning = false;
+      if (mounted && _thumbnailPrefetchQueue.isNotEmpty) {
+        unawaited(_drainThumbnailPrefetchQueue());
+      }
     }
   }
 
-  String _signatureFor(List<EntityListItem> entities) {
-    if (entities.isEmpty) return '';
-    return '${entities.length}:${entities.first.id}:${entities.last.id}';
+  Future<void> _runThumbnailPrefetchWorker() async {
+    while (mounted && _thumbnailPrefetchQueue.isNotEmpty) {
+      final path = _thumbnailPrefetchQueue.removeFirst();
+      try {
+        if (!mounted) return;
+        await precacheImage(
+          FileImage(File(path)),
+          context,
+          onError: (_, __) {},
+        );
+      } finally {
+        // Yield before the next decode so scrolling and gesture handling get
+        // a frame even on slower Android storage.
+        await Future<void>.delayed(Duration.zero);
+        if (_thumbnailPrefetchQueue.length < 60) {
+          unawaited(_fillThumbnailPreloadQueue(_thumbnailPreloadGeneration));
+        }
+      }
+    }
   }
 
   @override
@@ -697,6 +784,7 @@ class _EntityGridSliver extends StatelessWidget {
     required this.selectionRegistry,
     required this.onOpenEntity,
     required this.onShowEntityMenu,
+    required this.onThumbnailNeeded,
     required this.selectedEntityIds,
     required this.onToggleEntitySelection,
     required this.onStartEntitySelection,
@@ -708,6 +796,7 @@ class _EntityGridSliver extends StatelessWidget {
   final _EntitySelectionRegistry selectionRegistry;
   final ValueChanged<EntityListItem> onOpenEntity;
   final ValueChanged<EntityListItem> onShowEntityMenu;
+  final ValueChanged<EntityListItem> onThumbnailNeeded;
   final Set<String> selectedEntityIds;
   final ValueChanged<EntityListItem> onToggleEntitySelection;
   final ValueChanged<EntityListItem> onStartEntitySelection;
@@ -721,6 +810,7 @@ class _EntityGridSliver extends StatelessWidget {
       keyFor: selectionRegistry.keyFor,
       onOpenEntity: onOpenEntity,
       onShowEntityMenu: onShowEntityMenu,
+      onThumbnailNeeded: onThumbnailNeeded,
       selectedEntityIds: selectedEntityIds,
       onToggleEntitySelection: onToggleEntitySelection,
       onStartEntitySelection: onStartEntitySelection,
@@ -736,6 +826,7 @@ class _EntityMasonryGridSliver extends StatelessWidget {
     required this.selectionRegistry,
     required this.onOpenEntity,
     required this.onShowEntityMenu,
+    required this.onThumbnailNeeded,
     required this.selectedEntityIds,
     required this.onToggleEntitySelection,
     required this.onStartEntitySelection,
@@ -747,13 +838,14 @@ class _EntityMasonryGridSliver extends StatelessWidget {
   final _EntitySelectionRegistry selectionRegistry;
   final ValueChanged<EntityListItem> onOpenEntity;
   final ValueChanged<EntityListItem> onShowEntityMenu;
+  final ValueChanged<EntityListItem> onThumbnailNeeded;
   final Set<String> selectedEntityIds;
   final ValueChanged<EntityListItem> onToggleEntitySelection;
   final ValueChanged<EntityListItem> onStartEntitySelection;
 
   @override
   Widget build(BuildContext context) {
-    final gap = immersive ? 2.0 : 4.0;
+    final gap = immersive ? 2.0 : 8.0;
     return SliverLayoutBuilder(
       builder: (context, constraints) {
         final layout = CollectionGridLayout.calculate(
@@ -781,6 +873,7 @@ class _EntityMasonryGridSliver extends StatelessWidget {
               selectionMode: selectionMode,
               onToggleSelection: () => onToggleEntitySelection(entities[index]),
               onShowMenu: () => onShowEntityMenu(entities[index]),
+              onThumbnailNeeded: () => onThumbnailNeeded(entities[index]),
               onStartSelection: () => onStartEntitySelection(entities[index]),
             ),
           ),
@@ -798,6 +891,7 @@ class _SpanningEntityGridSliver extends StatelessWidget {
       required this.selectionRegistry,
       required this.onOpenEntity,
       required this.onShowEntityMenu,
+      required this.onThumbnailNeeded,
       required this.selectedEntityIds,
       required this.onToggleEntitySelection,
       required this.onStartEntitySelection});
@@ -807,6 +901,7 @@ class _SpanningEntityGridSliver extends StatelessWidget {
   final _EntitySelectionRegistry selectionRegistry;
   final ValueChanged<EntityListItem> onOpenEntity;
   final ValueChanged<EntityListItem> onShowEntityMenu;
+  final ValueChanged<EntityListItem> onThumbnailNeeded;
   final Set<String> selectedEntityIds;
   final ValueChanged<EntityListItem> onToggleEntitySelection;
   final ValueChanged<EntityListItem> onStartEntitySelection;
@@ -816,7 +911,7 @@ class _SpanningEntityGridSliver extends StatelessWidget {
         targetCellWidth: GalleryMetrics.cardWidth,
         targetRowHeight: GalleryMetrics.cardHeight,
         crossRowMode: false,
-        gap: immersive ? 2 : 4,
+        gap: immersive ? 2 : 8,
         horizontalPadding: immersive ? 2 : 8,
         aspectRatio: _entityAspectRatio,
         itemBuilder: (context, entity) => EntityCard(
@@ -828,6 +923,7 @@ class _SpanningEntityGridSliver extends StatelessWidget {
             selectionMode: selectionMode,
             onToggleSelection: () => onToggleEntitySelection(entity),
             onShowMenu: () => onShowEntityMenu(entity),
+            onThumbnailNeeded: () => onThumbnailNeeded(entity),
             onStartSelection: () => onStartEntitySelection(entity)),
       );
 }
@@ -840,6 +936,7 @@ class _SquareEntityGridSliver extends StatelessWidget {
       required this.selectionRegistry,
       required this.onOpenEntity,
       required this.onShowEntityMenu,
+      required this.onThumbnailNeeded,
       required this.selectedEntityIds,
       required this.onToggleEntitySelection,
       required this.onStartEntitySelection});
@@ -849,6 +946,7 @@ class _SquareEntityGridSliver extends StatelessWidget {
   final _EntitySelectionRegistry selectionRegistry;
   final ValueChanged<EntityListItem> onOpenEntity;
   final ValueChanged<EntityListItem> onShowEntityMenu;
+  final ValueChanged<EntityListItem> onThumbnailNeeded;
   final Set<String> selectedEntityIds;
   final ValueChanged<EntityListItem> onToggleEntitySelection;
   final ValueChanged<EntityListItem> onStartEntitySelection;
@@ -857,7 +955,7 @@ class _SquareEntityGridSliver extends StatelessWidget {
       SliverLayoutBuilder(builder: (context, constraints) {
         final layout = CollectionGridLayout.calculate(
             availableWidth: constraints.crossAxisExtent,
-            gap: immersive ? 2 : 4,
+            gap: immersive ? 2 : 8,
             targetItemWidth: GalleryMetrics.squareSize);
         return SliverPadding(
             padding: EdgeInsets.fromLTRB(
@@ -874,12 +972,13 @@ class _SquareEntityGridSliver extends StatelessWidget {
                       selectionMode: selectionMode,
                       onToggleSelection: () => onToggleEntitySelection(entity),
                       onShowMenu: () => onShowEntityMenu(entity),
+                      onThumbnailNeeded: () => onThumbnailNeeded(entity),
                       onStartSelection: () => onStartEntitySelection(entity));
                 }, childCount: entities.length),
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: layout.columnCount,
-                    mainAxisSpacing: immersive ? 2 : 4,
-                    crossAxisSpacing: immersive ? 2 : 4,
+                    mainAxisSpacing: immersive ? 2 : 8,
+                    crossAxisSpacing: immersive ? 2 : 8,
                     childAspectRatio: 1)));
       });
 }
@@ -887,9 +986,13 @@ class _SquareEntityGridSliver extends StatelessWidget {
 double _entityAspectRatio(EntityListItem entity) {
   final width = entity.thumbnailWidth;
   final height = entity.thumbnailHeight;
-  return width != null && height != null && width > 0 && height > 0
-      ? width / height
-      : 4 / 3;
+  if (width != null && height != null && width > 0 && height > 0) {
+    return width / height;
+  }
+  return switch (entity.entityType) {
+    EntityType.audio || EntityType.text || EntityType.externalLink => 1,
+    _ => 4 / 3,
+  };
 }
 
 String _gridLayoutLabel(BrowserGridLayout mode) => switch (mode) {
@@ -968,6 +1071,7 @@ class _EntityListSliver extends StatelessWidget {
     required this.selectionMode,
     required this.onOpenEntity,
     required this.onShowEntityMenu,
+    required this.onThumbnailNeeded,
     required this.selectedEntityIds,
     required this.onToggleEntitySelection,
     required this.onStartEntitySelection,
@@ -977,6 +1081,7 @@ class _EntityListSliver extends StatelessWidget {
   final bool selectionMode;
   final ValueChanged<EntityListItem> onOpenEntity;
   final ValueChanged<EntityListItem> onShowEntityMenu;
+  final ValueChanged<EntityListItem> onThumbnailNeeded;
   final Set<String> selectedEntityIds;
   final ValueChanged<EntityListItem> onToggleEntitySelection;
   final ValueChanged<EntityListItem> onStartEntitySelection;
@@ -984,38 +1089,75 @@ class _EntityListSliver extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SliverPadding(
-      padding: const EdgeInsets.fromLTRB(8, 12, 8, 0),
-      sliver: SliverList.separated(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      sliver: SliverGrid.builder(
         itemCount: entities.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          mainAxisExtent: 76,
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 8,
+        ),
         itemBuilder: (context, index) {
           final entity = entities[index];
-          return ListTile(
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            leading: SizedBox(
-              width: 56,
-              height: 56,
-              child: EntityArtwork(
-                entityType: entity.entityType,
-                format: entity.format,
-                thumbnailPath: entity.thumbnailPath,
+          final isSelected = selectedEntityIds.contains(entity.id);
+          return Material(
+            color: Theme.of(context).colorScheme.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(16),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: selectionMode
+                  ? () => onToggleEntitySelection(entity)
+                  : () => onOpenEntity(entity),
+              onLongPress: () => onStartEntitySelection(entity),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: EntityArtwork(
+                        entityType: entity.entityType,
+                        format: entity.format,
+                        thumbnailPath: entity.thumbnailPath,
+                        onThumbnailNeeded: () => onThumbnailNeeded(entity),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            entity.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            '${entity.format.toUpperCase()} · ${formatTime(entity.modifiedAtMs)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.labelSmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (isSelected)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 4),
+                        child: Icon(Icons.check_circle_rounded, size: 18),
+                      ),
+                  ],
+                ),
               ),
             ),
-            title: Text(entity.title,
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text(
-                '${entity.format.toUpperCase()} · ${formatTime(entity.modifiedAtMs)}'),
-            trailing: selectedEntityIds.contains(entity.id)
-                ? const Icon(Icons.check_circle_rounded)
-                : const Icon(Icons.chevron_right_rounded),
-            onTap: selectionMode
-                ? () => onToggleEntitySelection(entity)
-                : () => onOpenEntity(entity),
-            onLongPress: () => onStartEntitySelection(entity),
           );
         },
-        separatorBuilder: (context, index) =>
-            Divider(color: Theme.of(context).colorScheme.outlineVariant),
       ),
     );
   }
@@ -1153,6 +1295,7 @@ class _NodeGridSliver extends StatelessWidget {
     required this.summaries,
     required this.previews,
     required this.onOpenNode,
+    required this.onThumbnailEntityNeeded,
     required this.selectedNodeIds,
     required this.selectionMode,
     required this.onToggleNodeSelection,
@@ -1163,6 +1306,7 @@ class _NodeGridSliver extends StatelessWidget {
   final Map<String, IndexNodeSummary> summaries;
   final Map<String, IndexNodePreview> previews;
   final ValueChanged<IndexNode> onOpenNode;
+  final ValueChanged<String> onThumbnailEntityNeeded;
   final Set<String> selectedNodeIds;
   final bool selectionMode;
   final ValueChanged<IndexNode> onToggleNodeSelection;
@@ -1174,6 +1318,7 @@ class _NodeGridSliver extends StatelessWidget {
         summaries: summaries,
         previews: previews,
         onOpenNode: onOpenNode,
+        onThumbnailEntityNeeded: onThumbnailEntityNeeded,
         selectedNodeIds: selectedNodeIds,
         selectionMode: selectionMode,
         onToggleNodeSelection: onToggleNodeSelection,
@@ -1187,6 +1332,7 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
     required this.summaries,
     required this.previews,
     required this.onOpenNode,
+    required this.onThumbnailEntityNeeded,
     required this.selectedNodeIds,
     required this.selectionMode,
     required this.onToggleNodeSelection,
@@ -1197,6 +1343,7 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
   final Map<String, IndexNodeSummary> summaries;
   final Map<String, IndexNodePreview> previews;
   final ValueChanged<IndexNode> onOpenNode;
+  final ValueChanged<String> onThumbnailEntityNeeded;
   final Set<String> selectedNodeIds;
   final bool selectionMode;
   final ValueChanged<IndexNode> onToggleNodeSelection;
@@ -1204,14 +1351,14 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const gap = 4.0;
-    final targetHeight = GalleryMetrics.cardHeight;
+    const gap = 8.0;
+    final targetHeight = GalleryMetrics.nodeCardHeight;
     return SliverLayoutBuilder(
       builder: (context, constraints) {
-        final rows = JustifiedGalleryLayout.calculate(
-          items: nodes,
+        final rows = _FixedHeightNodeRows.calculate(
+          nodes: nodes,
           availableWidth: constraints.crossAxisExtent - 16,
-          targetHeight: targetHeight,
+          height: targetHeight,
           gap: gap,
           aspectRatio: (node) => indexNodePreviewAspectRatio(previews[node.id]),
         );
@@ -1224,21 +1371,24 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
               return Padding(
                 padding: const EdgeInsets.only(bottom: gap),
                 child: SizedBox(
-                  height: row.height,
-                  child: Row(
-                    children: [
-                      for (var index = 0; index < row.items.length; index++)
-                        Padding(
-                          padding: EdgeInsets.only(
-                            right: index == row.items.length - 1 ? 0 : gap,
+                  height: targetHeight,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (var index = 0; index < row.nodes.length; index++)
+                          Padding(
+                            padding: EdgeInsets.only(
+                              right: index == row.nodes.length - 1 ? 0 : gap,
+                            ),
+                            child: SizedBox(
+                              width: row.widths[index],
+                              height: targetHeight,
+                              child: _nodeCard(row.nodes[index]),
+                            ),
                           ),
-                          child: SizedBox(
-                            width: row.widths[index],
-                            height: row.height,
-                            child: _nodeCard(row.items[index]),
-                          ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               );
@@ -1259,8 +1409,59 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
           ? () => onToggleNodeSelection(node)
           : () => onOpenNode(node),
       onLongPress: () => onStartNodeSelection(node),
+      onThumbnailEntityNeeded: onThumbnailEntityNeeded,
     );
   }
+}
+
+class _FixedHeightNodeRows {
+  const _FixedHeightNodeRows._();
+
+  static List<_FixedHeightNodeRow> calculate({
+    required List<IndexNode> nodes,
+    required double availableWidth,
+    required double height,
+    required double gap,
+    required double Function(IndexNode node) aspectRatio,
+  }) {
+    if (nodes.isEmpty || availableWidth <= 0 || height <= 0) return const [];
+    final rows = <_FixedHeightNodeRow>[];
+    final pending = <IndexNode>[];
+    final widths = <double>[];
+    var occupiedWidth = 0.0;
+
+    void commit() {
+      if (pending.isEmpty) return;
+      rows.add(_FixedHeightNodeRow(
+        nodes: List.unmodifiable(pending),
+        widths: List.unmodifiable(widths),
+      ));
+      pending.clear();
+      widths.clear();
+      occupiedWidth = 0;
+    }
+
+    for (final node in nodes) {
+      final width = (aspectRatio(node).clamp(.12, 8) * height).toDouble();
+      final requiredWidth = pending.isEmpty ? width : gap + width;
+      if (pending.isNotEmpty &&
+          occupiedWidth + requiredWidth > availableWidth) {
+        commit();
+      }
+      pending.add(node);
+      widths.add(width);
+      occupiedWidth += pending.length == 1 ? width : gap + width;
+    }
+    commit();
+    return rows;
+  }
+}
+
+class _FixedHeightNodeRow {
+  const _FixedHeightNodeRow({required this.nodes, required this.widths});
+
+  final List<IndexNode> nodes;
+  final List<double> widths;
 }
 
 class IndexNodePreviewCard extends StatelessWidget {
@@ -1270,6 +1471,7 @@ class IndexNodePreviewCard extends StatelessWidget {
     required this.preview,
     required this.summary,
     required this.onTap,
+    required this.onThumbnailEntityNeeded,
     this.selected = false,
     this.onLongPress,
   });
@@ -1278,6 +1480,7 @@ class IndexNodePreviewCard extends StatelessWidget {
   final IndexNodePreview? preview;
   final IndexNodeSummary? summary;
   final VoidCallback onTap;
+  final ValueChanged<String> onThumbnailEntityNeeded;
   final bool selected;
   final VoidCallback? onLongPress;
 
@@ -1289,7 +1492,7 @@ class IndexNodePreviewCard extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         onLongPress: onLongPress,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -1297,7 +1500,7 @@ class IndexNodePreviewCard extends StatelessWidget {
             AspectRatio(
               aspectRatio: indexNodePreviewAspectRatio(preview),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(16),
                 child: Stack(
                   fit: StackFit.expand,
                   children: [

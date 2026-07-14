@@ -11,6 +11,8 @@ enum AppSection {
   reading,
   music,
   indexes,
+  logs,
+  pet,
   settings
 }
 
@@ -50,6 +52,10 @@ class AppSidebar extends StatelessWidget {
   static const _utilityItems = [
     _SidebarItem(AppSection.indexes, '索引', Icons.account_tree_outlined,
         Icons.account_tree_rounded),
+    _SidebarItem(AppSection.logs, '日志', Icons.bug_report_outlined,
+        Icons.bug_report_rounded),
+    _SidebarItem(AppSection.pet, '宠物', Icons.smart_toy_outlined,
+        Icons.smart_toy_rounded),
     _SidebarItem(
         AppSection.settings, '设置', Icons.tune_outlined, Icons.tune_rounded),
   ];

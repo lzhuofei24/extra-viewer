@@ -9,6 +9,18 @@ import 'package:best_viewer/src/core/formats/file_format_handlers.dart';
 import 'package:best_viewer/src/core/formats/thumbnail_spec.dart';
 
 void main() {
+  test('media thumbnail dimensions preserve ratio near the target area', () {
+    final landscape = thumbnailDimensionsForTargetPixelCount(4000, 2000);
+    final portrait = thumbnailDimensionsForTargetPixelCount(2000, 4000);
+
+    expect(landscape.width / landscape.height, closeTo(2, .01));
+    expect(portrait.width / portrait.height, closeTo(.5, .01));
+    expect(landscape.width * landscape.height,
+        closeTo(thumbnailTargetPixelCount, 1200));
+    expect(portrait.width * portrait.height,
+        closeTo(thumbnailTargetPixelCount, 1200));
+  });
+
   test('format registry resolves stored formats and source paths', () {
     expect(
       FileFormatRegistry.resolveFormat('MP4')?.viewerKind,
@@ -151,7 +163,7 @@ exit 0
 
     expect(img.decodePng(bytes), isNotNull);
     expect(args, contains('-ss 00:00:02'));
-    expect(args, contains("scale='min(iw,$thumbnailMaxEdge)':-2"));
+    expect(args, contains('sqrt($thumbnailTargetPixelCount/(iw*ih))'));
     expect(args, contains('format=rgba'));
   });
 

@@ -1,13 +1,11 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:pdfrx/pdfrx.dart';
 
-import '../readers/docx_decoder.dart';
-import '../readers/epub_decoder.dart';
+import '../readers/archive_session.dart';
 import '../thumbnails/webp_encoder.dart';
 import 'thumbnail_spec.dart';
 
@@ -17,11 +15,8 @@ Future<Uint8List?> buildDocumentPreviewPng(File source) async {
   final format = p.extension(source.path).replaceFirst('.', '').toLowerCase();
   return switch (format) {
     'pdf' => _buildPdfContentPreview(source),
-    'docx' => _buildArchiveContentPreview(source, readDocxText),
-    'epub' => _buildArchiveContentPreview(source, (file) async {
-        final book = await readEpubBook(file);
-        return book.chapters.map((chapter) => chapter.text).join('\n');
-      }),
+    'docx' => _buildArchiveContentPreview(source),
+    'epub' => _buildArchiveContentPreview(source),
     _ => throw FileSystemException('Unsupported document preview', source.path),
   };
 }
@@ -38,21 +33,28 @@ Future<Uint8List?> buildDocumentPreviewWebp(File source) async {
   };
 }
 
-Future<Uint8List?> _buildArchiveContentPreview(
-  File source,
-  Future<String> Function(File file) readText,
-) async {
-  final archive = ZipDecoder().decodeBytes(await source.readAsBytes());
-  final image = _selectArchivePreviewImage(archive);
-  return image == null
-      ? null
-      : Uint8List.fromList(img.encodePng(_resizePreviewImage(image)));
+Future<Uint8List?> _buildArchiveContentPreview(File source) async {
+  final session = await ArchiveSession.open(source);
+  try {
+    final image = _selectArchivePreviewImage(session);
+    return image == null
+        ? null
+        : Uint8List.fromList(img.encodePng(_resizePreviewImage(image)));
+  } finally {
+    session.close();
+  }
 }
 
 Future<Uint8List?> _buildArchiveContentPreviewWebp(File source) async {
-  final archive = ZipDecoder().decodeBytes(await source.readAsBytes());
-  final image = _selectArchivePreviewImage(archive);
-  return image == null ? null : encodeThumbnailWebp(_resizePreviewImage(image));
+  final session = await ArchiveSession.open(source);
+  try {
+    final image = _selectArchivePreviewImage(session);
+    return image == null
+        ? null
+        : encodeThumbnailWebp(_resizePreviewImage(image));
+  } finally {
+    session.close();
+  }
 }
 
 Future<Uint8List?> _buildPdfContentPreview(File source) async {
@@ -65,9 +67,10 @@ Future<Uint8List?> _buildPdfContentPreviewWebp(File source) async {
   return image == null ? null : encodeThumbnailWebp(image);
 }
 
-img.Image? _selectArchivePreviewImage(Archive archive) {
-  final images = archive.files
-      .where((entry) => entry.isFile && _isPreviewImage(entry.name))
+img.Image? _selectArchivePreviewImage(ArchiveSession session) {
+  final images = session.fileNames
+      .where(_isPreviewImage)
+      .map((name) => (name: name, size: session.entry(name)?.size ?? 0))
       .toList(growable: false)
     ..sort((left, right) {
       final leftCover = _looksLikeCover(left.name) ? 0 : 1;
@@ -76,7 +79,7 @@ img.Image? _selectArchivePreviewImage(Archive archive) {
       return right.size.compareTo(left.size);
     });
   for (final entry in images.take(12)) {
-    final bytes = entry.readBytes();
+    final bytes = session.readBytes(entry.name);
     final image = bytes == null ? null : img.decodeImage(bytes);
     if (image != null && image.width >= 96 && image.height >= 96) return image;
   }

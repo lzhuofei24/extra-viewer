@@ -1,69 +1,51 @@
 import 'package:flutter/material.dart';
 
+import '../core/controllers/library_build_task_controller.dart';
 import '../core/domain/models.dart';
-import '../core/scanner/library_scanner.dart';
 import 'design_tokens.dart';
 import 'library_widgets.dart';
 
 class IndexManagementPage extends StatelessWidget {
   const IndexManagementPage({
     super.key,
-    required this.pathController,
     required this.roots,
     required this.rootCounts,
     required this.scanning,
     required this.progress,
+    this.activeBuildJob,
     required this.recoverableJobs,
-    required this.recoverableJobSummaries,
-    required this.recoverableJobFailures,
-    required this.recoverableJobPaths,
     this.errorMessage,
     this.taskHistory = const [],
-    required this.onScan,
-    this.onPickDirectory,
-    required this.onPause,
-    required this.onCancel,
-    required this.onResume,
-    required this.onRecheck,
-    required this.onRetryFailed,
-    required this.onDiscardRecovery,
-    required this.onRename,
-    required this.onDelete,
-    required this.onUpdateDirectoryIndex,
-    required this.onRebuildNodePreviews,
-    required this.onCreateCollection,
-    required this.onCreateGraph,
-    required this.onCreateNodeAtRoot,
-    required this.onOpenRoot,
+    required this.actions,
   });
 
-  final TextEditingController pathController;
   final List<IndexNode> roots;
   final Map<String, int> rootCounts;
   final bool scanning;
-  final ScanProgress? progress;
-  final List<IndexBuildJob> recoverableJobs;
-  final Map<String, IndexJobCandidateSummary> recoverableJobSummaries;
-  final Map<String, List<IndexJobCandidate>> recoverableJobFailures;
-  final Map<String, String> recoverableJobPaths;
+  final LibraryBuildProgress? progress;
+  final LibraryBuildJob? activeBuildJob;
+  final List<LibraryBuildJob> recoverableJobs;
   final String? errorMessage;
-  final List<IndexJobHistoryEntry> taskHistory;
-  final VoidCallback onScan;
-  final VoidCallback? onPickDirectory;
-  final VoidCallback onPause;
-  final VoidCallback onCancel;
-  final ValueChanged<IndexBuildJob> onResume;
-  final ValueChanged<IndexBuildJob> onRecheck;
-  final ValueChanged<IndexBuildJob> onRetryFailed;
-  final ValueChanged<IndexBuildJob> onDiscardRecovery;
-  final ValueChanged<IndexNode> onRename;
-  final ValueChanged<IndexNode> onDelete;
-  final ValueChanged<IndexNode> onUpdateDirectoryIndex;
-  final ValueChanged<IndexNode> onRebuildNodePreviews;
-  final VoidCallback onCreateCollection;
-  final VoidCallback onCreateGraph;
-  final ValueChanged<IndexNode> onCreateNodeAtRoot;
-  final ValueChanged<IndexNode> onOpenRoot;
+  final List<LibraryBuildJob> taskHistory;
+  final IndexManagementActions actions;
+
+  VoidCallback get onCreateDirectoryIndex => actions.onCreateDirectoryIndex;
+  VoidCallback get onPause => actions.onPause;
+  VoidCallback get onCancel => actions.onCancel;
+  ValueChanged<LibraryBuildJob> get onResume => actions.onResume;
+  ValueChanged<LibraryBuildJob> get onRecheck => actions.onRecheck;
+  ValueChanged<LibraryBuildJob> get onRetryFailed => actions.onRetryFailed;
+  ValueChanged<LibraryBuildJob> get onAbandon => actions.onAbandon;
+  ValueChanged<IndexNode> get onRename => actions.onRename;
+  ValueChanged<IndexNode> get onDelete => actions.onDelete;
+  ValueChanged<IndexNode> get onUpdateDirectoryIndex =>
+      actions.onUpdateDirectoryIndex;
+  ValueChanged<IndexNode> get onRebuildNodePreviews =>
+      actions.onRebuildNodePreviews;
+  VoidCallback get onCreateCollection => actions.onCreateCollection;
+  VoidCallback get onCreateGraph => actions.onCreateGraph;
+  ValueChanged<IndexNode> get onCreateNodeAtRoot => actions.onCreateNodeAtRoot;
+  ValueChanged<IndexNode> get onOpenRoot => actions.onOpenRoot;
 
   @override
   Widget build(BuildContext context) {
@@ -77,52 +59,25 @@ class IndexManagementPage extends StatelessWidget {
         ),
         const SizedBox(height: 18),
         _IndexCard(
-          title: '建立索引',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(
-                controller: pathController,
-                decoration: const InputDecoration(
-                  labelText: '本地路径',
-                  hintText: r'D:\Media\Library',
-                  border: OutlineInputBorder(),
-                ),
-                onSubmitted: (_) => onScan(),
-              ),
-              const SizedBox(height: 12),
-              FilledButton.icon(
-                onPressed: scanning ? null : onScan,
-                icon: const Icon(Icons.sync_rounded),
-                label: Text(scanning ? '扫描中' : '建立索引'),
-              ),
-              if (onPickDirectory != null) ...[
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: scanning ? null : onPickDirectory,
-                  icon: const Icon(Icons.folder_open_rounded),
-                  label: const Text('选择 Android 目录'),
-                ),
-              ],
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        _IndexCard(
-          title: '虚拟索引',
+          title: '新增索引',
           child: Wrap(
             spacing: 10,
             runSpacing: 10,
             children: [
-              OutlinedButton.icon(
-                onPressed: onCreateCollection,
-                icon: const Icon(Icons.collections_bookmark_outlined),
-                label: const Text('新建自定义索引'),
+              FilledButton.icon(
+                onPressed: scanning ? null : onCreateDirectoryIndex,
+                icon: const Icon(Icons.folder_copy_outlined),
+                label: const Text('目录索引'),
               ),
               OutlinedButton.icon(
-                onPressed: onCreateGraph,
+                onPressed: scanning ? null : onCreateCollection,
+                icon: const Icon(Icons.collections_bookmark_outlined),
+                label: const Text('自定义索引'),
+              ),
+              OutlinedButton.icon(
+                onPressed: scanning ? null : onCreateGraph,
                 icon: const Icon(Icons.hub_outlined),
-                label: const Text('新建图索引'),
+                label: const Text('图索引'),
               ),
             ],
           ),
@@ -131,31 +86,10 @@ class IndexManagementPage extends StatelessWidget {
           const SizedBox(height: 16),
           _IndexTaskCard.active(
             progress: progress!,
+            job: activeBuildJob,
             running: scanning,
             onPause: onPause,
             onAbandon: onCancel,
-          ),
-        ],
-        if (progress == null && taskHistory.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          _IndexCard(
-            title: '最近任务摘要',
-            child: Column(
-              children: [
-                for (final entry in taskHistory)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    title: Text(entry.summary),
-                    subtitle: Text(
-                      entry.sourcePath,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: Text(_jobStatusLabel(entry.status)),
-                  ),
-              ],
-            ),
           ),
         ],
         if (recoverableJobs.isNotEmpty) ...[
@@ -165,11 +99,8 @@ class IndexManagementPage extends StatelessWidget {
           for (final job in recoverableJobs) ...[
             _IndexTaskCard.recoverable(
               job: job,
-              taskPath: recoverableJobPaths[job.id] ?? _rootNameForJob(job),
-              summary: recoverableJobSummaries[job.id],
-              failedCandidates: recoverableJobFailures[job.id] ?? const [],
               disabled: scanning,
-              onDiscard: () => onDiscardRecovery(job),
+              onAbandon: () => onAbandon(job),
               onResume: () => onResume(job),
               onRecheck: () => onRecheck(job),
               onRetryFailed: () => onRetryFailed(job),
@@ -193,6 +124,8 @@ class IndexManagementPage extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 24),
+        Text('索引管理', style: theme.textTheme.titleLarge),
+        const SizedBox(height: 12),
         if (roots.isEmpty)
           const EmptyStateCard(
             title: '还没有建立索引',
@@ -236,17 +169,73 @@ class IndexManagementPage extends StatelessWidget {
             onRebuildPreviews: onRebuildNodePreviews,
           ),
         ],
+        if (progress == null && taskHistory.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          _IndexCard(
+            title: '最近任务摘要',
+            child: Column(
+              children: [
+                for (final entry in taskHistory)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(
+                      '${entry.targetNodeId == null ? '目录索引' : '部分更新'} · ${_buildStageLabel(entry.stage)}',
+                    ),
+                    subtitle: Text(
+                      entry.sourcePath,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: Text(_buildStatusLabel(entry.status)),
+                  ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 100),
       ],
     );
   }
+}
 
-  String _rootNameForJob(IndexBuildJob job) {
-    for (final root in roots) {
-      if (root.id == job.indexRootId) return root.name;
-    }
-    return job.targetNodeId == null ? '目录索引' : '目录节点';
-  }
+/// Callback contract between the application shell and the index-management
+/// page. Keeping actions together prevents the page API from exposing the
+/// shell's internal state machine one callback at a time.
+class IndexManagementActions {
+  const IndexManagementActions({
+    required this.onCreateDirectoryIndex,
+    required this.onPause,
+    required this.onCancel,
+    required this.onResume,
+    required this.onRecheck,
+    required this.onRetryFailed,
+    required this.onAbandon,
+    required this.onRename,
+    required this.onDelete,
+    required this.onUpdateDirectoryIndex,
+    required this.onRebuildNodePreviews,
+    required this.onCreateCollection,
+    required this.onCreateGraph,
+    required this.onCreateNodeAtRoot,
+    required this.onOpenRoot,
+  });
+
+  final VoidCallback onCreateDirectoryIndex;
+  final VoidCallback onPause;
+  final VoidCallback onCancel;
+  final ValueChanged<LibraryBuildJob> onResume;
+  final ValueChanged<LibraryBuildJob> onRecheck;
+  final ValueChanged<LibraryBuildJob> onRetryFailed;
+  final ValueChanged<LibraryBuildJob> onAbandon;
+  final ValueChanged<IndexNode> onRename;
+  final ValueChanged<IndexNode> onDelete;
+  final ValueChanged<IndexNode> onUpdateDirectoryIndex;
+  final ValueChanged<IndexNode> onRebuildNodePreviews;
+  final VoidCallback onCreateCollection;
+  final VoidCallback onCreateGraph;
+  final ValueChanged<IndexNode> onCreateNodeAtRoot;
+  final ValueChanged<IndexNode> onOpenRoot;
 }
 
 class _IndexRootSection extends StatelessWidget {
@@ -363,44 +352,32 @@ class IndexRootPresentation {
 class _IndexTaskCard extends StatelessWidget {
   const _IndexTaskCard.active({
     required this.progress,
+    required this.job,
     required this.running,
     required this.onPause,
     required this.onAbandon,
-  })  : job = null,
-        taskPath = null,
-        summary = null,
-        failedCandidates = const [],
-        disabled = false,
-        onDiscard = null,
+  })  : disabled = false,
         onResume = null,
         onRecheck = null,
         onRetryFailed = null;
 
   const _IndexTaskCard.recoverable({
     required this.job,
-    required this.taskPath,
-    required this.summary,
-    required this.failedCandidates,
     required this.disabled,
-    required this.onDiscard,
+    required this.onAbandon,
     required this.onResume,
     required this.onRecheck,
     required this.onRetryFailed,
   })  : progress = null,
         running = false,
-        onPause = null,
-        onAbandon = null;
+        onPause = null;
 
-  final ScanProgress? progress;
+  final LibraryBuildProgress? progress;
   final bool running;
   final VoidCallback? onPause;
   final VoidCallback? onAbandon;
-  final IndexBuildJob? job;
-  final String? taskPath;
-  final IndexJobCandidateSummary? summary;
-  final List<IndexJobCandidate> failedCandidates;
+  final LibraryBuildJob? job;
   final bool disabled;
-  final VoidCallback? onDiscard;
   final VoidCallback? onResume;
   final VoidCallback? onRecheck;
   final VoidCallback? onRetryFailed;
@@ -414,22 +391,13 @@ class _IndexTaskCard extends StatelessWidget {
   Widget _buildActive() {
     final value = progress!;
     return _IndexCard(
-      title: '任务 · ${_scanPhaseLabel(value.phase)}',
+      title: '任务 · ${_buildStageLabel(value.stage)}',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(value.message),
           const SizedBox(height: 12),
-          LinearProgressIndicator(value: value.entityProgress),
-          const SizedBox(height: 10),
-          Text(
-              '主进度 · 已发现 ${value.discovered} · 已处理 ${value.processed}/${value.total}'),
-          if (value.thumbnailTotal > 0) ...[
-            const SizedBox(height: 14),
-            LinearProgressIndicator(value: value.thumbnailProgress),
-            const SizedBox(height: 10),
-            Text('缩略图 ${value.thumbnailProcessed}/${value.thumbnailTotal}'),
-          ],
+          _BuildStageLadder(job: job, progress: value),
           if (running) ...[
             const SizedBox(height: 14),
             Wrap(spacing: 8, children: [
@@ -440,7 +408,7 @@ class _IndexTaskCard extends StatelessWidget {
               TextButton.icon(
                   onPressed: onAbandon,
                   icon: const Icon(Icons.close_rounded),
-                  label: const Text('放弃')),
+                  label: const Text('放弃任务')),
             ]),
           ],
         ],
@@ -450,86 +418,215 @@ class _IndexTaskCard extends StatelessWidget {
 
   Widget _buildRecoverable(BuildContext context) {
     final value = job!;
-    final candidates = summary;
     final isPartial = value.targetNodeId != null;
-    final progress = candidates == null
-        ? '${value.processed}/${value.total}'
-        : '${candidates.previewed}/${candidates.total}';
+    final progress = switch (value.stage) {
+      LibraryBuildStage.manifest => '${value.manifestTotal} 项',
+      LibraryBuildStage.indexWrite ||
+      LibraryBuildStage.finalize =>
+        '${value.indexedTotal}/${value.manifestTotal}',
+      LibraryBuildStage.entityPreviews =>
+        '${value.entityPreviewDone}/${value.entityPreviewTotal}',
+      LibraryBuildStage.nodePreviews =>
+        '${value.nodePreviewDone}/${value.nodePreviewTotal}',
+      LibraryBuildStage.completed => '完成',
+    };
     final details = <String>[
-      '${_jobStatusLabel(value.status)} · ${_jobPhaseLabel(value.phase)} · $progress',
-      value.scanCompleted ? '清单已保存' : '正在建立清单',
-      if (candidates != null && candidates.remaining > 0)
-        '待继续 ${candidates.remaining}',
-      if (candidates != null && candidates.failed > 0)
-        '失败 ${candidates.failed}',
-      if (value.previewTotal > 0)
-        '预览 ${value.previewProcessed}/${value.previewTotal}',
+      '${_buildStatusLabel(value.status)} · ${_buildStageLabel(value.stage)} · $progress',
+      if (value.entityPreviewFailed > 0) '实体失败 ${value.entityPreviewFailed}',
+      if (value.nodePreviewFailed > 0) '节点失败 ${value.nodePreviewFailed}',
     ];
     return _IndexCard(
-      title: '${isPartial ? '部分更新' : '全量构建'} · $taskPath',
+      title: isPartial ? '部分更新任务' : '目录索引任务',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(details.join(' · ')),
-          if (value.error?.isNotEmpty == true || failedCandidates.isNotEmpty)
+          if (value.error?.isNotEmpty == true)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: ExpansionTile(
                 tilePadding: EdgeInsets.zero,
-                title: Text(
-                  '错误详情${failedCandidates.isEmpty ? '' : ' (${failedCandidates.length})'}',
-                ),
+                title: const Text('错误详情'),
                 children: [
                   if (value.error?.isNotEmpty == true)
                     Align(
                       alignment: Alignment.centerLeft,
                       child: SelectableText(value.error!),
                     ),
-                  for (final candidate in failedCandidates)
-                    ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(candidate.relativePath,
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
-                      subtitle: Text(candidate.error ?? '预览生成失败',
-                          maxLines: 2, overflow: TextOverflow.ellipsis),
-                    ),
                 ],
               ),
             ),
           const SizedBox(height: 12),
-          Row(
-            mainAxisSize: MainAxisSize.min,
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
               FilledButton(
                 onPressed: disabled ? null : onResume,
                 child: const Text('继续任务'),
               ),
-              const SizedBox(width: 8),
-              PopupMenuButton<String>(
-                enabled: !disabled,
-                onSelected: (action) => switch (action) {
-                  'discard' => onDiscard?.call(),
-                  'recheck' => onRecheck?.call(),
-                  'retryFailed' => onRetryFailed?.call(),
-                  _ => null,
-                },
-                itemBuilder: (context) => [
-                  const PopupMenuItem(value: 'recheck', child: Text('重新检查并更新')),
-                  if ((candidates?.failed ?? 0) > 0)
-                    const PopupMenuItem(
-                        value: 'retryFailed', child: Text('仅重试失败项')),
-                  const PopupMenuItem(value: 'discard', child: Text('放弃任务')),
-                ],
-                child: const OutlinedButton(
-                  onPressed: null,
-                  child: Text('更多操作'),
+              OutlinedButton(
+                onPressed: disabled ? null : onRecheck,
+                child: const Text('重新检查并更新'),
+              ),
+              if (value.entityPreviewFailed > 0 || value.nodePreviewFailed > 0)
+                OutlinedButton(
+                  onPressed: disabled ? null : onRetryFailed,
+                  child: const Text('仅重试失败项'),
                 ),
+              TextButton(
+                onPressed: disabled ? null : onAbandon,
+                child: const Text('放弃任务'),
               ),
             ],
           ),
         ],
       ),
+    );
+  }
+}
+
+class _BuildStageLadder extends StatelessWidget {
+  const _BuildStageLadder({required this.job, required this.progress});
+
+  final LibraryBuildJob? job;
+  final LibraryBuildProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = progress.stage.index;
+    final theme = Theme.of(context);
+    const stages = [
+      LibraryBuildStage.manifest,
+      LibraryBuildStage.indexWrite,
+      LibraryBuildStage.finalize,
+      LibraryBuildStage.entityPreviews,
+      LibraryBuildStage.nodePreviews,
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var index = 0; index < stages.length; index++)
+          Padding(
+            padding:
+                EdgeInsets.only(left: index * 18.0, top: index == 0 ? 0 : 4),
+            child: _BuildStageLine(
+              stage: stages[index],
+              state: index < current
+                  ? _BuildStageLineState.completed
+                  : index == current
+                      ? _BuildStageLineState.active
+                      : _BuildStageLineState.pending,
+              completed: index == current
+                  ? progress.completed
+                  : index < current
+                      ? 1
+                      : 0,
+              total: index == current ? progress.total : 1,
+              failed: index == current
+                  ? progress.failed
+                  : _failedFor(stages[index]),
+              activeMessage: index == current ? progress.message : null,
+              theme: theme,
+            ),
+          ),
+      ],
+    );
+  }
+
+  int _failedFor(LibraryBuildStage stage) => switch (stage) {
+        LibraryBuildStage.entityPreviews => job?.entityPreviewFailed ?? 0,
+        LibraryBuildStage.nodePreviews => job?.nodePreviewFailed ?? 0,
+        _ => 0,
+      };
+}
+
+enum _BuildStageLineState { pending, active, completed }
+
+class _BuildStageLine extends StatelessWidget {
+  const _BuildStageLine({
+    required this.stage,
+    required this.state,
+    required this.completed,
+    required this.total,
+    required this.failed,
+    required this.theme,
+    this.activeMessage,
+  });
+
+  final LibraryBuildStage stage;
+  final _BuildStageLineState state;
+  final int completed;
+  final int total;
+  final int failed;
+  final ThemeData theme;
+  final String? activeMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = state == _BuildStageLineState.active;
+    final completedStage = state == _BuildStageLineState.completed;
+    final color = completedStage || active
+        ? theme.colorScheme.primary
+        : theme.colorScheme.outlineVariant;
+    final label = activeMessage ?? _buildStageLabel(stage);
+    final details = total > 0
+        ? '$completed/$total${failed > 0 ? ' · 失败 $failed' : ''}'
+        : completed > 0
+            ? '$completed 项${failed > 0 ? ' · 失败 $failed' : ''}'
+            : '等待中';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            SizedBox(
+              width: 92,
+              child: Text(
+                _buildStageLabel(stage),
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: active || completedStage
+                      ? theme.colorScheme.onSurface
+                      : theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                details,
+                textAlign: TextAlign.right,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        LinearProgressIndicator(
+          minHeight: 4,
+          value: active && total <= 0
+              ? null
+              : completedStage
+                  ? 1
+                  : total <= 0
+                      ? 0
+                      : completed.clamp(0, total) / total,
+          color: color,
+          backgroundColor: theme.colorScheme.surfaceContainerHighest,
+        ),
+        if (active && activeMessage != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -561,26 +658,20 @@ class _IndexCard extends StatelessWidget {
   }
 }
 
-String _jobStatusLabel(IndexJobStatus status) => switch (status) {
-      IndexJobStatus.pending => '等待中',
-      IndexJobStatus.running => '运行中',
-      IndexJobStatus.paused => '已暂停',
-      IndexJobStatus.attentionRequired => '需要处理',
-      IndexJobStatus.completed => '已完成',
-      IndexJobStatus.failed => '失败',
-      IndexJobStatus.abandoned => '已放弃',
+String _buildStatusLabel(LibraryBuildStatus status) => switch (status) {
+      LibraryBuildStatus.pending => '等待中',
+      LibraryBuildStatus.running => '运行中',
+      LibraryBuildStatus.paused => '已暂停',
+      LibraryBuildStatus.completed => '已完成',
+      LibraryBuildStatus.failed => '失败',
+      LibraryBuildStatus.abandoned => '已放弃',
     };
 
-String _jobPhaseLabel(IndexJobPhase phase) => switch (phase) {
-      IndexJobPhase.discovering => '扫描目录',
-      IndexJobPhase.preparing => '提取元数据',
-      IndexJobPhase.writing => '写入索引',
-      IndexJobPhase.previews => '生成预览',
-      IndexJobPhase.completed => '完成',
-    };
-
-String _scanPhaseLabel(ScanPhase phase) => switch (phase) {
-      ScanPhase.discovering => '扫描目录',
-      ScanPhase.processing => '构建索引',
-      ScanPhase.completed => '完成',
+String _buildStageLabel(LibraryBuildStage stage) => switch (stage) {
+      LibraryBuildStage.manifest => '建立清单',
+      LibraryBuildStage.indexWrite => '写入索引',
+      LibraryBuildStage.finalize => '整理并提交',
+      LibraryBuildStage.entityPreviews => '构建实体预览',
+      LibraryBuildStage.nodePreviews => '构建节点预览',
+      LibraryBuildStage.completed => '完成',
     };

@@ -15,6 +15,7 @@ class JustifiedEntityGallerySliver extends StatelessWidget {
     required this.keyFor,
     required this.onOpenEntity,
     this.onShowEntityMenu,
+    required this.onThumbnailNeeded,
     required this.selectedEntityIds,
     this.onToggleEntitySelection,
     this.onStartEntitySelection,
@@ -26,13 +27,14 @@ class JustifiedEntityGallerySliver extends StatelessWidget {
   final Key Function(EntityListItem entity) keyFor;
   final ValueChanged<EntityListItem> onOpenEntity;
   final ValueChanged<EntityListItem>? onShowEntityMenu;
+  final ValueChanged<EntityListItem> onThumbnailNeeded;
   final Set<String> selectedEntityIds;
   final ValueChanged<EntityListItem>? onToggleEntitySelection;
   final ValueChanged<EntityListItem>? onStartEntitySelection;
 
   @override
   Widget build(BuildContext context) {
-    final gap = immersive ? 2.0 : 4.0;
+    final gap = immersive ? 2.0 : 8.0;
     final horizontalPadding = immersive ? 2.0 : 8.0;
     final targetHeight = GalleryMetrics.cardHeight;
     return SliverLayoutBuilder(
@@ -84,6 +86,8 @@ class JustifiedEntityGallerySliver extends StatelessWidget {
                               onShowMenu: onShowEntityMenu == null
                                   ? null
                                   : () => onShowEntityMenu!(row.items[index]),
+                              onThumbnailNeeded: () =>
+                                  onThumbnailNeeded(row.items[index]),
                               onStartSelection: onStartEntitySelection == null
                                   ? null
                                   : () =>
@@ -164,5 +168,8 @@ double _entityAspectRatio(EntityListItem entity) {
   if (width != null && height != null && width > 0 && height > 0) {
     return width / height;
   }
-  return entity.entityType == EntityType.audio ? 16 / 9 : 4 / 3;
+  return switch (entity.entityType) {
+    EntityType.audio || EntityType.text || EntityType.externalLink => 1,
+    _ => 4 / 3,
+  };
 }

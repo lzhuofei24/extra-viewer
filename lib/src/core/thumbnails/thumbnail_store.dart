@@ -32,7 +32,7 @@ class ThumbnailStore {
     // Atomic rename protects readers from partial files; forcing every small
     // thumbnail through a physical flush makes large imports unnecessarily IO-bound.
     await tempFile.writeAsBytes(bytes, flush: false);
-    if (file.existsSync()) {
+    if (await file.exists()) {
       await file.delete();
     }
     await tempFile.rename(file.path);
@@ -48,70 +48,22 @@ class ThumbnailStore {
 
   bool exists(String key, String format) => fileFor(key, format).existsSync();
 
-  Future<void> delete(String key, String format) async {
+  Future<bool> deleteIfExists(String key, String format) async {
     final file = fileFor(key, format);
-    if (file.existsSync()) {
-      await file.delete();
+    try {
+      if (await file.exists()) await file.delete();
+      return true;
+    } on FileSystemException {
+      // A card may be decoding this file. Retain metadata so a later trim can
+      // retry instead of leaving the database and filesystem out of sync.
+      return false;
     }
   }
-
-  /// Evicts least-recently-used thumbnail files until [maxBytes] is met.
-  /// Returns cache keys whose database metadata must be invalidated by the
-  /// caller. The storage layer deliberately does not know about SQLite.
-  Future<List<String>> trimToMaxBytes(int maxBytes) async {
-    final root = Directory(rootPath);
-    if (!await root.exists()) return const <String>[];
-    final entries = <_StoredThumbnail>[];
-    await for (final entity in root.list(recursive: true, followLinks: false)) {
-      if (entity is! File || !entity.path.toLowerCase().endsWith('.webp')) {
-        continue;
-      }
-      final stat = await entity.stat();
-      entries.add(_StoredThumbnail(
-        file: entity,
-        bytes: stat.size,
-        accessed: stat.accessed,
-      ));
-    }
-    var totalBytes = entries.fold<int>(0, (sum, entry) => sum + entry.bytes);
-    if (totalBytes <= maxBytes) return const <String>[];
-    entries.sort((left, right) => left.accessed.compareTo(right.accessed));
-    final evicted = <String>[];
-    for (final entry in entries) {
-      if (totalBytes <= maxBytes) break;
-      try {
-        await entry.file.delete();
-        totalBytes -= entry.bytes;
-        evicted.add(p.basenameWithoutExtension(entry.file.path));
-      } on FileSystemException {
-        // A card may be opening the file while cleanup runs. Keep its metadata
-        // intact and revisit it on the next cleanup pass.
-      }
-    }
-    return evicted;
-  }
-}
-
-class _StoredThumbnail {
-  const _StoredThumbnail({
-    required this.file,
-    required this.bytes,
-    required this.accessed,
-  });
-
-  final File file;
-  final int bytes;
-  final DateTime accessed;
-}
-
-int thumbnailCacheCapacityBytes() {
-  if (Platform.isAndroid) return 1024 * 1024 * 1024;
-  return 5 * 1024 * 1024 * 1024;
 }
 
 String thumbnailCacheKeyFor({
   required String fingerprint,
-  int version = 3,
+  int version = 4,
 }) {
   final input = '$fingerprint|$version';
   var hash = 0xcbf29ce484222325;

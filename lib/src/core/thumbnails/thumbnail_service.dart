@@ -12,6 +12,7 @@ import 'android_image_thumbnail_backend.dart';
 import 'android_video_thumbnail_backend.dart';
 import 'native_image_thumbnail_backend.dart';
 import 'thumbnail_artifact.dart';
+import 'thumbnail_cancellation.dart';
 import 'thumbnail_store.dart';
 import 'windows_wic_webp_thumbnail_backend.dart';
 
@@ -36,8 +37,13 @@ class ThumbnailService {
   final ThumbnailUpdateBuffer? updateBuffer;
   final timings = ThumbnailTimingCollector();
 
-  Future<bool> ensureThumbnail(Entity entity, {bool force = false}) async {
+  Future<bool> ensureThumbnail(
+    Entity entity, {
+    bool force = false,
+    ThumbnailCancellationToken? cancellationToken,
+  }) async {
     final stopwatch = Stopwatch()..start();
+    cancellationToken?.throwIfCancelled();
     final handler = FileFormatRegistry.resolveFormat(entity.format);
     if (handler == null || !handler.supportsGeneratedThumbnail) return false;
     final expectedKey = thumbnailCacheKeyFor(
@@ -56,15 +62,32 @@ class ThumbnailService {
     try {
       final sourceFile = File(entity.localPath ?? entity.path);
       if (handler is ImageFileHandler) {
-        artifact = await androidImageBackend?.encode(entity.path);
-        artifact ??= await windowsWicBackend?.encode(sourceFile);
-        artifact ??= await nativeImageBackend?.encode(sourceFile);
+        artifact = await androidImageBackend?.encode(
+          entity.path,
+          cancellationToken: cancellationToken,
+        );
+        cancellationToken?.throwIfCancelled();
+        artifact ??= await windowsWicBackend?.encode(
+          sourceFile,
+          cancellationToken: cancellationToken,
+        );
+        cancellationToken?.throwIfCancelled();
+        artifact ??= await nativeImageBackend?.encode(
+          sourceFile,
+          cancellationToken: cancellationToken,
+        );
+        cancellationToken?.throwIfCancelled();
         final workerPool = imageWorkerPool;
         if (artifact == null && workerPool != null) {
-          artifact = await workerPool.encode(sourceFile);
+          artifact = await workerPool.encode(
+            sourceFile,
+            cancellationToken: cancellationToken,
+          );
         }
+        cancellationToken?.throwIfCancelled();
         if (artifact == null) {
           final bytes = await handler.buildThumbnailWebp(sourceFile);
+          cancellationToken?.throwIfCancelled();
           final decoded = img.decodeImage(bytes);
           if (decoded == null) {
             throw FileSystemException(
@@ -79,10 +102,17 @@ class ThumbnailService {
           );
         }
       } else if (handler is VideoFileHandler) {
-        artifact = await androidVideoBackend?.encode(entity.path);
+        artifact = await androidVideoBackend?.encode(
+          entity.path,
+          cancellationToken: cancellationToken,
+        );
+        cancellationToken?.throwIfCancelled();
         if (artifact == null) {
-          final result =
-              await handler.backend.buildFirstFrameWebpWithMetadata(sourceFile);
+          final result = await handler.backend.buildFirstFrameWebpWithMetadata(
+            sourceFile,
+            cancellationToken: cancellationToken,
+          );
+          cancellationToken?.throwIfCancelled();
           artifact = ThumbnailArtifact(
             bytes: result.bytes,
             width: result.width,
@@ -92,6 +122,7 @@ class ThumbnailService {
         }
       } else {
         final bytes = await handler.buildThumbnailWebp(sourceFile);
+        cancellationToken?.throwIfCancelled();
         if (bytes != null) {
           final decoded = img.decodeImage(bytes);
           if (decoded == null) {
@@ -111,10 +142,16 @@ class ThumbnailService {
         _recordUpdate(ThumbnailDatabaseUpdate.none(entity.id));
         return true;
       }
+      cancellationToken?.throwIfCancelled();
       await store.writeBytes(
         key: expectedKey,
         format: 'webp',
         bytes: artifact.bytes,
+      );
+      repository.recordThumbnailAsset(
+        key: expectedKey,
+        format: 'webp',
+        byteSize: artifact.bytes.length,
       );
       _recordUpdate(ThumbnailDatabaseUpdate.success(
         entityId: entity.id,
@@ -125,6 +162,8 @@ class ThumbnailService {
         durationMs: artifact.durationMs,
       ));
       return true;
+    } on ThumbnailTaskCanceledException {
+      rethrow;
     } catch (error) {
       _recordUpdate(ThumbnailDatabaseUpdate.failed(entity.id, '$error'));
       return true;
@@ -134,14 +173,8 @@ class ThumbnailService {
     }
   }
 
-  Future<bool> regenerateThumbnail(Entity entity) =>
-      ensureThumbnail(entity, force: true);
-
-  /// Keeps persistent previews bounded without ever touching source files.
-  Future<int> trimCacheToPlatformLimit() async {
-    final evicted = await store.trimToMaxBytes(thumbnailCacheCapacityBytes());
-    if (evicted.isNotEmpty) repository.invalidateThumbnailCacheKeys(evicted);
-    return evicted.length;
+  Future<bool> regenerateThumbnail(Entity entity) async {
+    return ensureThumbnail(entity, force: true);
   }
 
   void _recordUpdate(ThumbnailDatabaseUpdate update) {
@@ -155,15 +188,26 @@ class ThumbnailService {
 }
 
 class ThumbnailUpdateBuffer {
-  ThumbnailUpdateBuffer(this.repository, {this.batchSize = 100});
+  ThumbnailUpdateBuffer(
+    this.repository, {
+    this.batchSize = 100,
+    this.useWriteWorker = false,
+  });
 
   final LibraryRepository repository;
   final int batchSize;
+  final bool useWriteWorker;
   final List<ThumbnailDatabaseUpdate> _pending = <ThumbnailDatabaseUpdate>[];
 
   void add(ThumbnailDatabaseUpdate update) {
     _pending.add(update);
-    if (_pending.length >= batchSize) flush();
+    if (_pending.length >= batchSize) {
+      if (useWriteWorker) {
+        unawaited(flushAsync());
+      } else {
+        flush();
+      }
+    }
   }
 
   void flush() {
@@ -171,6 +215,13 @@ class ThumbnailUpdateBuffer {
     final batch = List<ThumbnailDatabaseUpdate>.of(_pending);
     _pending.clear();
     repository.applyThumbnailUpdates(batch);
+  }
+
+  Future<void> flushAsync() async {
+    if (_pending.isEmpty) return;
+    final batch = List<ThumbnailDatabaseUpdate>.of(_pending);
+    _pending.clear();
+    await repository.applyThumbnailUpdatesAsync(batch);
   }
 }
 
@@ -276,43 +327,107 @@ class ThumbnailQueue {
   ThumbnailQueue({
     required this.service,
     this.maxConcurrent = 2,
+    this.cancellationToken,
   });
 
   final ThumbnailService service;
   final int maxConcurrent;
+  final ThumbnailCancellationToken? cancellationToken;
   final Queue<_ThumbnailJob> _pending = Queue<_ThumbnailJob>();
   final Set<String> _enqueued = <String>{};
+  Completer<void>? _idleCompleter;
   int _running = 0;
+  bool _paused = false;
+  bool _canceled = false;
 
   Future<bool> enqueue(Entity entity) {
+    if (_canceled) {
+      return Future<bool>.error(const ThumbnailTaskCanceledException());
+    }
+    if (_paused) {
+      return Future<bool>.error(const ThumbnailTaskPausedException());
+    }
     if (_enqueued.contains(entity.id)) {
       return Future<bool>.value(false);
     }
     final completer = Completer<bool>();
     _pending.add(_ThumbnailJob(entity, completer));
     _enqueued.add(entity.id);
+    _idleCompleter ??= Completer<void>();
     _drain();
     return completer.future;
   }
 
+  /// Stops dequeueing while keeping the durable candidate state resumable.
+  void pause() {
+    if (_paused || _canceled) return;
+    _paused = true;
+    cancellationToken?.pause();
+    _completePending(const ThumbnailTaskPausedException());
+    _completeIdleIfReady();
+  }
+
+  /// Rejects queued work and asks the service/worker to stop active work.
+  void cancel() {
+    if (_canceled) return;
+    _canceled = true;
+    cancellationToken?.cancel();
+    _completePending(const ThumbnailTaskCanceledException());
+    _completeIdleIfReady();
+  }
+
+  Future<void> drain() {
+    if (_running == 0 && _pending.isEmpty) {
+      return Future<void>.value();
+    }
+    return (_idleCompleter ??= Completer<void>()).future;
+  }
+
+  void _completePending(Object error) {
+    while (_pending.isNotEmpty) {
+      final job = _pending.removeFirst();
+      _enqueued.remove(job.entity.id);
+      if (!job.completer.isCompleted) job.completer.completeError(error);
+    }
+  }
+
   void _drain() {
-    while (_running < maxConcurrent && _pending.isNotEmpty) {
+    while (!_paused &&
+        !_canceled &&
+        _running < maxConcurrent &&
+        _pending.isNotEmpty) {
       final job = _pending.removeFirst();
       _running++;
-      service
-          .ensureThumbnail(job.entity)
-          .then(job.completer.complete)
-          .catchError((
-        Object error,
-        StackTrace stackTrace,
-      ) {
-        job.completer.completeError(error, stackTrace);
-      }).whenComplete(() {
-        _running--;
-        _enqueued.remove(job.entity.id);
-        _drain();
-      });
+      unawaited(_run(job));
     }
+  }
+
+  Future<void> _run(_ThumbnailJob job) async {
+    try {
+      final generated = await service.ensureThumbnail(
+        job.entity,
+        cancellationToken: cancellationToken,
+      );
+      if (_canceled) throw const ThumbnailTaskCanceledException();
+      if (_paused) throw const ThumbnailTaskPausedException();
+      if (!job.completer.isCompleted) job.completer.complete(generated);
+    } catch (error, stackTrace) {
+      if (!job.completer.isCompleted) {
+        job.completer.completeError(error, stackTrace);
+      }
+    } finally {
+      _running--;
+      _enqueued.remove(job.entity.id);
+      _drain();
+      _completeIdleIfReady();
+    }
+  }
+
+  void _completeIdleIfReady() {
+    if (_running != 0 || _pending.isNotEmpty) return;
+    final idle = _idleCompleter;
+    _idleCompleter = null;
+    if (idle != null && !idle.isCompleted) idle.complete();
   }
 }
 

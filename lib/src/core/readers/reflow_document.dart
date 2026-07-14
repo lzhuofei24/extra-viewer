@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'archive_session.dart';
+
 enum ReflowBlockKind { heading, paragraph, quote, bullet, code, image, divider }
 
 class ReflowBlock {
@@ -10,6 +12,7 @@ class ReflowBlock {
     this.imageBytes,
     this.imageEpubPath,
     this.imageArchivePath,
+    this.archiveSession,
     this.altText,
   });
 
@@ -19,6 +22,7 @@ class ReflowBlock {
   final Uint8List? imageBytes;
   final String? imageEpubPath;
   final String? imageArchivePath;
+  final ArchiveSession? archiveSession;
   final String? altText;
 }
 
@@ -30,10 +34,15 @@ class ReflowChapter {
 }
 
 class ReflowDocument {
-  const ReflowDocument({required this.title, required this.chapters});
+  const ReflowDocument({
+    required this.title,
+    required this.chapters,
+    this.archiveSession,
+  });
 
   final String title;
   final List<ReflowChapter> chapters;
+  final ArchiveSession? archiveSession;
 
   String get plainText => chapters
       .expand((chapter) => chapter.blocks)

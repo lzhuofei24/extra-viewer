@@ -1,55 +1,90 @@
-import 'dart:io';
-import 'dart:typed_data';
 import 'dart:convert';
+import 'dart:async';
+import 'dart:io';
 
-import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
 
 import '../domain/models.dart';
-import '../formats/thumbnail_spec.dart';
+import '../diagnostics/app_diagnostic_log.dart';
 import '../thumbnails/thumbnail_store.dart';
 import '../utils/ids.dart';
 import 'app_database.dart';
+import 'library_write_worker.dart';
 
 class LibraryRepository {
-  LibraryRepository(this.database)
+  LibraryRepository(this.database, {this.writeWorker})
       : thumbnailStore = ThumbnailStore(database.storageDirectoryPath);
 
   final AppDatabase database;
+  final LibraryWriteWorker? writeWorker;
   final ThumbnailStore thumbnailStore;
-  int _transactionSequence = 0;
 
-  IndexBuildJob beginIndexJob(
-    String sourcePath, {
-    bool restart = false,
-    String? targetNodeId,
-  }) {
-    final normalizedPath = _normalizeSourcePath(sourcePath);
-    if (!restart) {
-      final existing = database.db.select(
-        '''
-        SELECT * FROM index_jobs
-        WHERE source_path = ? AND status IN (
-          'pending', 'running', 'paused', 'attention_required',
-          'attentionRequired', 'failed'
-        )
-        ORDER BY updated_at DESC
-        LIMIT 1
-        ''',
-        [normalizedPath],
-      );
-      if (existing.isNotEmpty) {
-        final job = _indexBuildJobFromRow(existing.first);
-        updateIndexJob(
-          job.id,
-          status: IndexJobStatus.running,
-          error: null,
-          clearError: true,
-        );
-        return getIndexJob(job.id)!;
+  int _transactionSequence = 0;
+  var _indexStatsBatchDepth = 0;
+  var _indexStatsDirty = false;
+
+  /// Sends non-read-after-write bookkeeping to the dedicated writer. The
+  /// synchronous fallback keeps in-memory tests and recovery mode functional.
+  void _enqueueBackgroundWrite(
+    String operation,
+    String sql, [
+    List<Object?> parameters = const <Object?>[],
+  ]) {
+    final worker = writeWorker;
+    if (worker == null) {
+      database.db.execute(sql, parameters);
+      return;
+    }
+    unawaited(
+      worker.execute(sql, parameters).then<void>(
+        (_) {},
+        onError: (Object error, StackTrace stackTrace) {
+          AppDiagnosticLog.instance.error(
+            'database_background_write_failed',
+            error,
+            stackTrace,
+            fields: {'operation': operation},
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> flushQueuedWrites() async {
+    await writeWorker?.flush();
+  }
+
+  T batchIndexMutations<T>(T Function() action) {
+    _indexStatsBatchDepth++;
+    try {
+      return action();
+    } finally {
+      _indexStatsBatchDepth--;
+      if (_indexStatsBatchDepth == 0 && _indexStatsDirty) {
+        _indexStatsDirty = false;
+        _rebuildIndexNodeStatsNow();
       }
     }
+  }
+
+  /* Retired index-job and standalone-thumbnail-task implementation. The
+   * unified library build state machine owns all durable task persistence.
+   * This block is removed from compilation while its surrounding repository
+   * is progressively split into smaller files. */
+  /*
+  /// Creates a new root scan job. A new invocation always gets a new ID;
+  /// recovery must address the persisted ID explicitly.
+  IndexBuildJob beginIndexJob(String sourcePath, {bool restart = false}) {
+    return createIndexJob(ScanScope.root(
+      sourcePath: _normalizeSourcePath(sourcePath),
+    ));
+  }
+
+  /// Creates a durable job for exactly one source scope. This method never
+  /// searches for an existing job by path.
+  IndexBuildJob createIndexJob(ScanScope scope) {
+    final normalizedPath = _normalizeSourcePath(scope.sourcePath);
     final now = nowMillis();
     final job = IndexBuildJob(
       id: newId(),
@@ -62,24 +97,29 @@ class LibraryRepository {
       previewTotal: 0,
       previewProcessed: 0,
       scanCompleted: false,
-      targetNodeId: targetNodeId,
+      targetNodeId: scope.targetNodeId,
       createdAtMs: now,
       updatedAtMs: now,
+      operationType: scope.operationType,
+      scopePath: (scope.relativePath ?? '').trim(),
     );
     database.db.execute(
       '''
       INSERT INTO index_jobs (
-        id, source_path, status, phase, discovered, total, processed,
+        id, source_path, operation_type, scope_path, status, phase,
+        discovered, total, processed,
         preview_total, preview_processed, scan_completed, target_node_id,
         staging_root_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, 0, ?, NULL, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, ?, NULL, ?, ?)
       ''',
       [
         job.id,
         job.sourcePath,
+        job.operationType.storageValue,
+        job.scopePath,
         job.status.storageValue,
         job.phase.name,
-        targetNodeId,
+        job.targetNodeId,
         now,
         now,
       ],
@@ -95,11 +135,302 @@ class LibraryRepository {
     return rows.isEmpty ? null : _indexBuildJobFromRow(rows.first);
   }
 
+  /// A process can disappear while a task is between checkpoints, leaving
+  /// its last durable state as `running`. Convert only those stale rows at
+  /// startup so the UI exposes the original job ID for explicit recovery.
+  int markInterruptedIndexJobsRecoverable() {
+    database.db.execute('''
+      UPDATE index_jobs
+      SET status = ?,
+          error = COALESCE(error, '应用上次关闭时任务中断，可继续恢复'),
+          updated_at = ?
+      WHERE status = ?
+    ''', [
+      IndexJobStatus.paused.storageValue,
+      nowMillis(),
+      IndexJobStatus.running.storageValue,
+    ]);
+    return database.db.select('SELECT changes() AS count').single['count']
+        as int;
+  }
+
+  /// Converts a process-interrupted thumbnail build into an explicit resumable
+  /// job. Entries claimed by a terminated process are safe to retry because
+  /// thumbnail writes use an atomic rename.
+  int markInterruptedThumbnailBuildJobsRecoverable() {
+    final now = nowMillis();
+    database.db.execute('''
+      UPDATE thumbnail_build_jobs
+      SET status = ?, error = COALESCE(error, '应用上次关闭时缩略图构建中断，可继续恢复'), updated_at = ?
+      WHERE status = ?
+    ''', [
+      ThumbnailBuildStatus.paused.value,
+      now,
+      ThumbnailBuildStatus.running.value,
+    ]);
+    database.db.execute('''
+      UPDATE thumbnail_build_entries
+      SET state = ?, updated_at = ?
+      WHERE state = ?
+    ''', [
+      ThumbnailBuildEntryState.pending.value,
+      now,
+      ThumbnailBuildEntryState.processing.value,
+    ]);
+    return database.db.select('SELECT changes() AS count').single['count']
+        as int;
+  }
+
+  List<ThumbnailBuildJob> listRecoverableThumbnailBuildJobs() {
+    final rows = database.db.select('''
+      SELECT * FROM thumbnail_build_jobs
+      WHERE status IN ('pending', 'running', 'paused', 'failed')
+      ORDER BY updated_at DESC, created_at DESC
+    ''');
+    return rows.map(_thumbnailBuildJobFromRow).toList(growable: false);
+  }
+
+  ThumbnailBuildJob? getThumbnailBuildJob(String jobId) {
+    final rows = database.db.select(
+        'SELECT * FROM thumbnail_build_jobs WHERE id = ? LIMIT 1', [jobId]);
+    return rows.isEmpty ? null : _thumbnailBuildJobFromRow(rows.first);
+  }
+
+  ThumbnailBuildJob createThumbnailBuildJob({String? indexRootId}) {
+    final now = nowMillis();
+    final job = ThumbnailBuildJob(
+      id: newId(),
+      indexRootId: indexRootId,
+      status: ThumbnailBuildStatus.pending,
+      total: 0,
+      processed: 0,
+      failed: 0,
+      createdAtMs: now,
+      updatedAtMs: now,
+    );
+    database.db.execute('''
+      INSERT INTO thumbnail_build_jobs
+      (id, index_root_id, status, total, processed, failed, error, created_at, updated_at)
+      VALUES (?, ?, ?, 0, 0, 0, NULL, ?, ?)
+    ''', [job.id, indexRootId, job.status.value, now, now]);
+    return job;
+  }
+
+  /// Creates a durable manifest for image/video assets. Existing successful
+  /// WebP files are represented as skipped; no source file is read here.
+  ThumbnailBuildJob prepareThumbnailBuildJob(String jobId) {
+    final job = getThumbnailBuildJob(jobId);
+    if (job == null) throw StateError('Thumbnail build job not found: $jobId');
+    final existing = database.db.select(
+        'SELECT 1 FROM thumbnail_build_entries WHERE job_id = ? LIMIT 1',
+        [jobId]);
+    if (existing.isNotEmpty) return _refreshThumbnailBuildCounters(jobId);
+
+    final now = nowMillis();
+    final rootId = job.indexRootId;
+    if (rootId == null) {
+      database.db.execute('''
+        INSERT INTO thumbnail_build_entries
+        (job_id, entity_id, state, error, attempts, updated_at)
+        SELECT ?, id, 'pending', NULL, 0, ?
+        FROM entities
+        WHERE archived = 0 AND media_type IN ('image', 'video')
+      ''', [jobId, now]);
+    } else {
+      database.db.execute('''
+        WITH RECURSIVE subtree(id) AS (
+          SELECT ?
+          UNION ALL
+          SELECT node.id FROM index_nodes node
+          JOIN subtree parent ON node.parent_id = parent.id
+        )
+        INSERT INTO thumbnail_build_entries
+        (job_id, entity_id, state, error, attempts, updated_at)
+        SELECT ?, link.entity_id, 'pending', NULL, 0, ?
+        FROM index_node_entities link
+        JOIN subtree ON subtree.id = link.index_node_id
+        JOIN entities e ON e.id = link.entity_id
+        WHERE e.archived = 0 AND e.media_type IN ('image', 'video')
+        GROUP BY link.entity_id
+      ''', [rootId, jobId, now]);
+    }
+
+    // Page through only the small metadata needed to reuse prior WebPs. A
+    // large Android library must not materialize every entity row at once.
+    String? afterEntityId;
+    while (true) {
+      final rows = database.db.select('''
+        SELECT entry.entity_id, entity.thumbnail_status, entity.thumbnail_key,
+               entity.thumbnail_format
+        FROM thumbnail_build_entries entry
+        JOIN entities entity ON entity.id = entry.entity_id
+        WHERE entry.job_id = ?
+          AND (? IS NULL OR entry.entity_id > ?)
+        ORDER BY entry.entity_id ASC
+        LIMIT 1000
+      ''', [jobId, afterEntityId, afterEntityId]);
+      if (rows.isEmpty) break;
+      final reusableIds = <String>[];
+      for (final row in rows) {
+        final status = ThumbnailStatus.fromValue(
+          row['thumbnail_status'] as String? ?? ThumbnailStatus.none.value,
+        );
+        final key = row['thumbnail_key'] as String?;
+        final format = row['thumbnail_format'] as String?;
+        if (status == ThumbnailStatus.success &&
+            key != null &&
+            format != null &&
+            thumbnailStore.exists(key, format)) {
+          reusableIds.add(row['entity_id'] as String);
+        }
+      }
+      if (reusableIds.isNotEmpty) {
+        final placeholders = List.filled(reusableIds.length, '?').join(', ');
+        database.db.execute('''
+          UPDATE thumbnail_build_entries
+          SET state = ?, updated_at = ?
+          WHERE job_id = ? AND entity_id IN ($placeholders)
+        ''', [
+          ThumbnailBuildEntryState.skipped.value,
+          now,
+          jobId,
+          ...reusableIds,
+        ]);
+      }
+      afterEntityId = rows.last['entity_id'] as String;
+    }
+    return _refreshThumbnailBuildCounters(jobId);
+  }
+
+  List<ThumbnailBuildEntry> listPendingThumbnailBuildEntries(
+    String jobId, {
+    int limit = 100,
+  }) {
+    final rows = database.db.select('''
+      SELECT * FROM thumbnail_build_entries
+      WHERE job_id = ? AND state = ?
+      ORDER BY entity_id ASC
+      LIMIT ?
+    ''', [jobId, ThumbnailBuildEntryState.pending.value, limit.clamp(1, 500)]);
+    return rows.map(_thumbnailBuildEntryFromRow).toList(growable: false);
+  }
+
+  void markThumbnailBuildEntriesProcessing(
+    String jobId,
+    Iterable<String> entityIds,
+  ) {
+    final ids = entityIds.toSet().toList(growable: false);
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(', ');
+    database.db.execute('''
+      UPDATE thumbnail_build_entries
+      SET state = ?, attempts = attempts + 1, error = NULL, updated_at = ?
+      WHERE job_id = ? AND entity_id IN ($placeholders) AND state = ?
+    ''', [
+      ThumbnailBuildEntryState.processing.value,
+      nowMillis(),
+      jobId,
+      ...ids,
+      ThumbnailBuildEntryState.pending.value,
+    ]);
+  }
+
+  ThumbnailBuildJob completeThumbnailBuildEntries(
+    String jobId,
+    Map<String, ({ThumbnailBuildEntryState state, String? error})> results,
+  ) {
+    if (results.isEmpty) return _refreshThumbnailBuildCounters(jobId);
+    final now = nowMillis();
+    writeTransaction(() {
+      for (final MapEntry(:key, :value) in results.entries) {
+        database.db.execute('''
+          UPDATE thumbnail_build_entries
+          SET state = ?, error = ?, updated_at = ?
+          WHERE job_id = ? AND entity_id = ?
+        ''', [value.state.value, value.error, now, jobId, key]);
+      }
+    });
+    return _refreshThumbnailBuildCounters(jobId);
+  }
+
+  ThumbnailBuildJob pauseThumbnailBuildJob(String jobId, {String? error}) =>
+      _setThumbnailBuildJobStatus(jobId, ThumbnailBuildStatus.paused,
+          error: error);
+
+  ThumbnailBuildJob updateThumbnailBuildJobStatus(
+    String jobId,
+    ThumbnailBuildStatus status, {
+    String? error,
+  }) =>
+      _setThumbnailBuildJobStatus(jobId, status, error: error);
+
+  ThumbnailBuildJob abandonThumbnailBuildJob(String jobId) =>
+      _setThumbnailBuildJobStatus(jobId, ThumbnailBuildStatus.abandoned);
+
+  ThumbnailBuildJob resetFailedThumbnailBuildEntries(String jobId) {
+    final now = nowMillis();
+    database.db.execute('''
+      UPDATE thumbnail_build_entries
+      SET state = ?, error = NULL, updated_at = ?
+      WHERE job_id = ? AND state = ?
+    ''', [
+      ThumbnailBuildEntryState.pending.value,
+      now,
+      jobId,
+      ThumbnailBuildEntryState.failed.value,
+    ]);
+    return _setThumbnailBuildJobStatus(jobId, ThumbnailBuildStatus.pending);
+  }
+
+  ThumbnailBuildJob _setThumbnailBuildJobStatus(
+    String jobId,
+    ThumbnailBuildStatus status, {
+    String? error,
+  }) {
+    database.db.execute('''
+      UPDATE thumbnail_build_jobs
+      SET status = ?, error = ?, updated_at = ? WHERE id = ?
+    ''', [status.value, error, nowMillis(), jobId]);
+    return _refreshThumbnailBuildCounters(jobId);
+  }
+
+  ThumbnailBuildJob _refreshThumbnailBuildCounters(String jobId) {
+    final row = database.db.select('''
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN state IN ('completed', 'skipped') THEN 1 ELSE 0 END) AS processed,
+        SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END) AS failed
+      FROM thumbnail_build_entries WHERE job_id = ?
+    ''', [jobId]).single;
+    final total = row['total'] as int;
+    final processed = row['processed'] as int? ?? 0;
+    final failed = row['failed'] as int? ?? 0;
+    final job = getThumbnailBuildJob(jobId);
+    if (job == null) throw StateError('Thumbnail build job not found: $jobId');
+    database.db.execute('''
+      UPDATE thumbnail_build_jobs
+      SET total = ?, processed = ?, failed = ?, updated_at = ?
+      WHERE id = ?
+    ''', [total, processed, failed, nowMillis(), jobId]);
+    return ThumbnailBuildJob(
+      id: job.id,
+      indexRootId: job.indexRootId,
+      status: job.status,
+      total: total,
+      processed: processed,
+      failed: failed,
+      error: job.error,
+      createdAtMs: job.createdAtMs,
+      updatedAtMs: nowMillis(),
+    );
+  }
+
   List<IndexBuildJob> listRecoverableIndexJobs() {
     final rows = database.db.select('''
       SELECT * FROM index_jobs
       WHERE status IN (
-        'pending', 'paused', 'attention_required', 'attentionRequired', 'failed'
+        'pending', 'running', 'paused', 'attention_required',
+        'attentionRequired', 'failed'
       )
       ORDER BY updated_at DESC
     ''');
@@ -145,20 +476,32 @@ class LibraryRepository {
     database.db.execute('DELETE FROM index_jobs WHERE id = ?', [jobId]);
   }
 
-  /// Abandons a partially applied task. Rollback always precedes deletion so
-  /// no candidate entity, link, thumbnail cache or staging root survives the
-  /// disappearance of its recovery manifest.
+  /// Stops recovery while preserving every entity, node, relation and cache
+  /// artifact already committed by the task. A user-initiated abandon is not
+  /// a rollback: partial directory indexes remain available for browsing.
+  /// Rollback is reserved for scanner failures that cannot safely continue.
   void abandonIndexJob(String jobId) {
     final job = getIndexJob(jobId);
     if (job == null) return;
     updateIndexJob(jobId, status: IndexJobStatus.abandoned);
-    rollbackIndexJobStagingRoot(jobId);
+    final stagingRootId = job.stagingRootId;
+    if (stagingRootId != null) {
+      database.db.execute(
+        '''
+        UPDATE index_nodes
+        SET is_staging = 0, updated_at = ?
+        WHERE id = ?
+        ''',
+        [nowMillis(), stagingRootId],
+      );
+    }
     recordIndexJobHistory(
       job: job,
       status: IndexJobStatus.abandoned,
-      summary: '任务已放弃 · 已处理 ${job.processed}/${job.total}',
+      summary: '任务已停止 · 保留 ${job.processed}/${job.total} 项已处理数据',
     );
     discardIndexJob(jobId);
+    checkpointWriteAheadLog();
   }
 
   void checkpointWriteAheadLog() => database.checkpointWriteAheadLog();
@@ -449,6 +792,79 @@ class LibraryRepository {
     }
   }
 
+  /// Persists a manifest batch on the dedicated writer. The optional progress
+  /// cursor is committed in the same transaction as the candidate rows.
+  Future<void> upsertIndexJobCandidatesAsync(
+    Iterable<IndexJobCandidate> candidates, {
+    int? processed,
+  }) async {
+    final values = candidates.toList(growable: false);
+    if (values.isEmpty && processed == null) return;
+    final worker = writeWorker;
+    if (worker == null) {
+      writeTransaction(() {
+        upsertIndexJobCandidates(values);
+        if (processed != null) {
+          updateIndexJob(values.first.jobId, processed: processed);
+        }
+      });
+      return;
+    }
+    final statements = <LibraryWriteStatement>[];
+    for (final candidate in values) {
+      statements.add(LibraryWriteStatement(
+        '''
+        INSERT INTO index_job_candidates (
+          job_id, source_path, relative_path, sequence, state, format,
+          media_type, fingerprint, size, metadata_preview, duration_ms, error,
+          source_created_at_ms, source_modified_at_ms, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(job_id, source_path) DO UPDATE SET
+          relative_path = excluded.relative_path,
+          sequence = excluded.sequence,
+          state = excluded.state,
+          format = excluded.format,
+          media_type = excluded.media_type,
+          fingerprint = excluded.fingerprint,
+          size = excluded.size,
+          metadata_preview = excluded.metadata_preview,
+          duration_ms = excluded.duration_ms,
+          source_created_at_ms = excluded.source_created_at_ms,
+          source_modified_at_ms = excluded.source_modified_at_ms,
+          error = excluded.error,
+          updated_at = excluded.updated_at
+        ''',
+        [
+          candidate.jobId,
+          candidate.sourcePath,
+          candidate.relativePath,
+          candidate.sequence,
+          candidate.state.name,
+          candidate.format,
+          candidate.entityType?.value,
+          candidate.fingerprint,
+          candidate.size,
+          candidate.metadataPreview,
+          candidate.durationMs,
+          candidate.error,
+          candidate.sourceCreatedAtMs,
+          candidate.sourceModifiedAtMs,
+          candidate.updatedAtMs,
+        ],
+      ));
+    }
+    if (processed != null) {
+      final jobId = values.isEmpty ? null : values.first.jobId;
+      if (jobId != null) {
+        statements.add(LibraryWriteStatement(
+          'UPDATE index_jobs SET processed = ?, updated_at = ? WHERE id = ?',
+          [processed, nowMillis(), jobId],
+        ));
+      }
+    }
+    await worker.executeBatch(statements);
+  }
+
   List<IndexJobCandidate> listIndexJobCandidates(
     String jobId, {
     Set<IndexJobCandidateState>? states,
@@ -563,6 +979,57 @@ class LibraryRepository {
     }
   }
 
+  /// Applies per-candidate preview states through the writer isolate. A
+  /// scanner can therefore persist a whole preview completion wave without
+  /// issuing one synchronous SQLite update per file on the UI isolate.
+  Future<void> applyIndexJobCandidateStatesAsync(
+    String jobId,
+    Iterable<
+            ({
+              String sourcePath,
+              IndexJobCandidateState state,
+              String? error,
+            })>
+        updates,
+  ) async {
+    final values = updates.toList(growable: false);
+    if (values.isEmpty) return;
+    final worker = writeWorker;
+    if (worker == null) {
+      for (final update in values) {
+        updateIndexJobCandidateState(
+          jobId,
+          update.sourcePath,
+          update.state,
+          error: update.error,
+        );
+      }
+      return;
+    }
+    final now = nowMillis();
+    await worker.executeBatch(
+      values
+          .map(
+            (update) => LibraryWriteStatement(
+              '''
+              UPDATE index_job_candidates
+              SET state = ?, error = ?, updated_at = ?
+              WHERE job_id = ? AND source_path = ?
+              ''',
+              [
+                update.state.name,
+                update.error,
+                now,
+                jobId,
+                update.sourcePath,
+              ],
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  */
   T writeTransaction<T>(T Function() action) {
     final name = 'best_viewer_tx_${_transactionSequence++}';
     database.db.execute('SAVEPOINT $name');
@@ -626,12 +1093,18 @@ class LibraryRepository {
     required String name,
     int sortOrder = 0,
   }) {
-    final node = ensureIndexNode(
-      parentId: parentId,
-      name: name,
-      nodeType: NodeType.graphNode,
-      viewType: ViewType.graph,
-      sortOrder: sortOrder,
+    final node = writeTransaction(
+      () {
+        final created = ensureIndexNode(
+          parentId: parentId,
+          name: name,
+          nodeType: NodeType.graphNode,
+          viewType: ViewType.graph,
+          sortOrder: sortOrder,
+        );
+        markIndexNodePreviewDirty(parentId, reason: 'graph_node_created');
+        return created;
+      },
     );
     rebuildIndexNodeStats();
     return node;
@@ -640,8 +1113,10 @@ class LibraryRepository {
   IndexNode ensureDirectoryIndexRoot(
     String sourcePath, {
     bool staging = false,
+    String? displayName,
   }) {
     final normalized = _normalizeSourcePath(sourcePath);
+    final rootName = _indexNameForRoot(normalized, displayName: displayName);
     final root = _ensureGlobalRoot();
     final oldRoots = database.db.select(
       '''
@@ -653,8 +1128,17 @@ class LibraryRepository {
     for (final row in oldRoots) {
       final oldPath = row['source_path'] as String;
       if (oldPath == normalized) {
+        final existing = _nodeFromRow(row);
+        if (displayName != null &&
+            displayName.trim().isNotEmpty &&
+            existing.name != rootName) {
+          database.db.execute(
+            'UPDATE index_nodes SET name = ?, updated_at = ? WHERE id = ?',
+            [rootName, nowMillis(), existing.id],
+          );
+        }
         return _resetDirectoryIndexRootForRescan(
-          _nodeFromRow(row),
+          existing,
           normalized,
           staging,
         );
@@ -667,7 +1151,7 @@ class LibraryRepository {
     final node = IndexNode(
       id: newId(),
       parentId: root.id,
-      name: _indexNameForRoot(normalized),
+      name: rootName,
       nodeType: NodeType.directoryIndexRoot,
       viewType: ViewType.tree,
       sourcePath: normalized,
@@ -692,14 +1176,120 @@ class LibraryRepository {
         node.sourcePath,
         node.sortOrder,
         now,
+        now,
+        now,
         boolToInt(staging),
-        now,
-        now,
       ],
     );
     return node;
   }
 
+  /* Retired interrupted-index-job recovery. Unified build recovery is owned
+   * by [LibraryBuildRepository].
+  /// Repairs interrupted index-only builds without touching source files or
+  /// rescanning their manifests. A job is finalized only when every persisted
+  /// candidate has already reached a durable terminal state.
+  Set<String> repairInterruptedIndexOnlyBuilds() {
+    final now = nowMillis();
+    final repairedRoots = <String>{};
+    writeTransaction(() {
+      // A retired parameter-order bug wrote a timestamp into is_staging.
+      database.db.execute(
+        '''
+        UPDATE index_nodes
+        SET is_staging = 1,
+            updated_at = CASE
+              WHEN updated_at IN (0, 1) THEN created_at
+              ELSE updated_at
+            END
+        WHERE node_type = ? AND is_staging NOT IN (0, 1)
+        ''',
+        [NodeType.directoryIndexRoot.value],
+      );
+
+      final completedRows = database.db.select(
+        '''
+        SELECT job.*
+        FROM index_jobs job
+        WHERE job.scan_completed = 1
+          AND job.index_root_id IS NOT NULL
+          AND job.status IN (?, ?, ?, ?)
+          AND NOT EXISTS (
+            SELECT 1
+            FROM index_job_candidates candidate
+            WHERE candidate.job_id = job.id
+              AND candidate.state IN ('pending', 'prepared', 'written')
+          )
+        ''',
+        [
+          IndexJobStatus.pending.storageValue,
+          IndexJobStatus.running.storageValue,
+          IndexJobStatus.paused.storageValue,
+          IndexJobStatus.attentionRequired.storageValue,
+        ],
+      );
+      for (final row in completedRows) {
+        final job = _indexBuildJobFromRow(row);
+        final rootId = job.indexRootId!;
+        repairedRoots.add(rootId);
+        database.db.execute(
+          'UPDATE index_nodes SET is_staging = 0, updated_at = ? WHERE id = ?',
+          [now, rootId],
+        );
+        database.db.execute(
+          '''
+          UPDATE index_jobs
+          SET status = ?, phase = ?, processed = total,
+              preview_total = 0, preview_processed = 0,
+              error = NULL, updated_at = ?
+          WHERE id = ?
+          ''',
+          [
+            IndexJobStatus.completed.storageValue,
+            IndexJobPhase.completed.name,
+            now,
+            job.id,
+          ],
+        );
+        database.db.execute(
+          '''
+          INSERT OR IGNORE INTO index_job_history(
+            id, source_path, index_root_id, target_node_id, status, summary,
+            created_at, completed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ''',
+          [
+            'recovered-${job.id}',
+            job.sourcePath,
+            rootId,
+            job.targetNodeId,
+            IndexJobStatus.completed.storageValue,
+            '异常中断后恢复 · 已保留 ${job.total} 项索引数据',
+            job.createdAtMs,
+            now,
+          ],
+        );
+      }
+
+      database.db.execute(
+        '''
+        UPDATE index_jobs
+        SET status = ?,
+            error = COALESCE(error, '应用异常关闭，任务已保存，可继续'),
+            updated_at = ?
+        WHERE status = ?
+        ''',
+        [
+          IndexJobStatus.paused.storageValue,
+          now,
+          IndexJobStatus.running.storageValue,
+        ],
+      );
+    });
+    return repairedRoots;
+  }
+
+  */
   /// Commits a successfully rebuilt directory root by retiring older roots
   /// that overlap its source. This is intentionally separate from creation.
   void replaceOverlappingDirectoryIndexRoots({
@@ -924,6 +1514,93 @@ class LibraryRepository {
       'UPDATE index_nodes SET relative_source_path = ? WHERE id = ?',
       [relativePath.replaceAll('\\', '/'), nodeId],
     );
+  }
+
+  /// Creates a generated directory node without running the insert on the
+  /// caller isolate. The caller still performs a small read afterwards so it
+  /// receives the winner when concurrent SAF batches discover the same folder.
+  Future<IndexNode> ensureDirectoryFolderAsync({
+    required String parentId,
+    required String name,
+    required String relativePath,
+  }) async {
+    final normalizedName = _normalizeIndexNodeName(name);
+    final existingRows = database.db.select(
+      '''
+      SELECT * FROM index_nodes
+      WHERE parent_id = ? AND name = ? AND node_type = ?
+      LIMIT 1
+      ''',
+      [parentId, normalizedName, NodeType.folder.value],
+    );
+    if (existingRows.isNotEmpty) {
+      final existing = _nodeFromRow(existingRows.first);
+      final normalizedRelativePath = relativePath.replaceAll('\\', '/');
+      if (existingRows.first['relative_source_path'] !=
+          normalizedRelativePath) {
+        final worker = writeWorker;
+        if (worker == null) {
+          setDirectoryNodeRelativePath(existing.id, normalizedRelativePath);
+        } else {
+          await worker.execute(
+            'UPDATE index_nodes SET relative_source_path = ? WHERE id = ?',
+            [normalizedRelativePath, existing.id],
+          );
+        }
+      }
+      return existing;
+    }
+    _requireValidParentForNodeType(
+      nodeType: NodeType.folder,
+      parentId: parentId,
+    );
+    final now = nowMillis();
+    final id = newId();
+    final normalizedRelativePath = relativePath.replaceAll('\\', '/');
+    final statements = <LibraryWriteStatement>[
+      LibraryWriteStatement(
+        '''
+        INSERT OR IGNORE INTO index_nodes
+        (id, parent_id, name, node_type, view_type, relative_source_path,
+         sort_order, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+        ''',
+        [
+          id,
+          parentId,
+          normalizedName,
+          NodeType.folder.value,
+          ViewType.tree.value,
+          normalizedRelativePath,
+          now,
+          now,
+        ],
+      ),
+    ];
+    final worker = writeWorker;
+    if (worker == null) {
+      final node = ensureIndexNode(
+        parentId: parentId,
+        name: normalizedName,
+        nodeType: NodeType.folder,
+        viewType: ViewType.tree,
+      );
+      setDirectoryNodeRelativePath(node.id, normalizedRelativePath);
+      return _nodeById(node.id)!;
+    }
+    await worker.executeBatch(statements);
+    final rows = database.db.select(
+      '''
+      SELECT * FROM index_nodes
+      WHERE parent_id = ? AND name = ? AND node_type = ?
+      LIMIT 1
+      ''',
+      [parentId, normalizedName, NodeType.folder.value],
+    );
+    if (rows.isEmpty) {
+      throw StateError('目录节点写入后无法读取：$normalizedRelativePath');
+    }
+    return _nodeFromRow(rows.first);
   }
 
   String? directoryNodeRelativePath(String nodeId) {
@@ -1195,6 +1872,18 @@ class LibraryRepository {
     );
   }
 
+  Future<void> clearEntityLocalPathAsync(String id) async {
+    final worker = writeWorker;
+    if (worker == null) {
+      clearEntityLocalPath(id);
+      return;
+    }
+    await worker.execute(
+      'UPDATE entities SET local_path = NULL WHERE id = ?',
+      [id],
+    );
+  }
+
   Entity? getEntityByPath(String path) {
     final rows = database.db.select(
       'SELECT * FROM entities WHERE path = ? LIMIT 1',
@@ -1321,6 +2010,74 @@ class LibraryRepository {
     });
   }
 
+  /// Worker-backed counterpart used by long-running scanner queues. The
+  /// synchronous method above remains the explicit read-after-write API for
+  /// interactive actions.
+  Future<void> applyThumbnailUpdatesAsync(
+    Iterable<ThumbnailDatabaseUpdate> updates,
+  ) async {
+    final batch = updates.toList(growable: false);
+    if (batch.isEmpty) return;
+    final worker = writeWorker;
+    if (worker == null) {
+      applyThumbnailUpdates(batch);
+      return;
+    }
+    final now = nowMillis();
+    final statements = <LibraryWriteStatement>[];
+    for (final update in batch) {
+      switch (update.type) {
+        case ThumbnailUpdateType.pending:
+          statements.add(LibraryWriteStatement(
+            'UPDATE entities SET thumbnail_status = ?, thumbnail_error = NULL, updated_at = ? WHERE id = ?',
+            [ThumbnailStatus.pending.value, now, update.entityId],
+          ));
+        case ThumbnailUpdateType.success:
+          statements.add(LibraryWriteStatement(
+            '''
+            UPDATE entities SET thumbnail_status = ?, thumbnail_key = ?, thumbnail_format = ?,
+              thumbnail_width = ?, thumbnail_height = ?, thumbnail_error = NULL,
+              duration_ms = COALESCE(?, duration_ms), updated_at = ? WHERE id = ?
+            ''',
+            [
+              ThumbnailStatus.success.value,
+              update.key,
+              update.format,
+              update.width,
+              update.height,
+              update.durationMs,
+              now,
+              update.entityId,
+            ],
+          ));
+        case ThumbnailUpdateType.failed:
+          statements.add(LibraryWriteStatement(
+            '''
+            UPDATE entities SET thumbnail_status = ?, thumbnail_error = ?, thumbnail_key = NULL,
+              thumbnail_format = NULL, thumbnail_width = NULL, thumbnail_height = NULL,
+              updated_at = ? WHERE id = ?
+            ''',
+            [
+              ThumbnailStatus.failed.value,
+              update.error?.trim(),
+              now,
+              update.entityId,
+            ],
+          ));
+        case ThumbnailUpdateType.none:
+          statements.add(LibraryWriteStatement(
+            '''
+            UPDATE entities SET thumbnail_status = ?, thumbnail_key = NULL, thumbnail_format = NULL,
+              thumbnail_width = NULL, thumbnail_height = NULL, thumbnail_error = NULL,
+              updated_at = ? WHERE id = ?
+            ''',
+            [ThumbnailStatus.none.value, now, update.entityId],
+          ));
+      }
+    }
+    await worker.executeBatch(statements);
+  }
+
   void updateEntityThumbnailSuccess({
     required String entityId,
     required String key,
@@ -1406,16 +2163,19 @@ class LibraryRepository {
         'Entity does not exist',
       );
     }
-    database.db.execute(
-      '''
-      INSERT OR IGNORE INTO index_node_entities
-      (index_node_id, entity_id, sort_name, created_at)
-      SELECT ?, id, lower(name), ? FROM entities WHERE id = ?
-      ''',
-      [indexNodeId, nowMillis(), entityId],
-    );
-    _touchIndexNode(indexNodeId);
-    rebuildIndexNodeStats();
+    writeTransaction(() {
+      database.db.execute(
+        '''
+        INSERT OR IGNORE INTO index_node_entities
+        (index_node_id, entity_id, sort_name, created_at)
+        SELECT ?, id, lower(name), ? FROM entities WHERE id = ?
+        ''',
+        [indexNodeId, nowMillis(), entityId],
+      );
+      _touchIndexNode(indexNodeId);
+      markIndexNodePreviewDirty(indexNodeId, reason: 'entity_linked');
+    });
+    rebuildIndexNodeStatsForNode(indexNodeId);
   }
 
   /// Scanner-oriented bulk link insertion. Entity and node existence is
@@ -1423,6 +2183,7 @@ class LibraryRepository {
   void linkEntitiesToIndexNodes(
     Iterable<({String entityId, String indexNodeId})> links, {
     bool rebuildStats = true,
+    bool markPreviewDirty = true,
   }) {
     final uniqueLinks = links.toSet().toList(growable: false);
     if (uniqueLinks.isEmpty) return;
@@ -1452,7 +2213,16 @@ class LibraryRepository {
     } finally {
       touchStatement.dispose();
     }
-    if (rebuildStats) rebuildIndexNodeStats();
+    if (rebuildStats) {
+      for (final nodeId in touchedNodes) {
+        rebuildIndexNodeStatsForNode(nodeId);
+      }
+    }
+    if (markPreviewDirty) {
+      for (final nodeId in touchedNodes) {
+        markIndexNodePreviewDirty(nodeId, reason: 'entities_linked');
+      }
+    }
   }
 
   /// Adds all valid entities in one transaction. Repeated selections are
@@ -1484,21 +2254,24 @@ class LibraryRepository {
         statement.dispose();
       }
       _touchIndexNode(indexNodeId);
+      markIndexNodePreviewDirty(indexNodeId, reason: 'entities_linked');
     });
-    rebuildIndexNodeStats();
+    rebuildIndexNodeStatsForNode(indexNodeId);
   }
 
   IndexNode createCollectionWithEntities({
     required String name,
     required Iterable<String> entityIds,
   }) {
-    return writeTransaction(() {
-      final collection = ensureCollectionIndexRoot(name);
-      linkEntitiesToIndexNode(
-        entityIds: entityIds,
-        indexNodeId: collection.id,
-      );
-      return collection;
+    return batchIndexMutations(() {
+      return writeTransaction(() {
+        final collection = ensureCollectionIndexRoot(name);
+        linkEntitiesToIndexNode(
+          entityIds: entityIds,
+          indexNodeId: collection.id,
+        );
+        return collection;
+      });
     });
   }
 
@@ -1506,14 +2279,20 @@ class LibraryRepository {
     required String parentId,
     required String name,
   }) {
-    final node = ensureIndexNode(
-      parentId: parentId,
-      name: name,
-      nodeType: NodeType.category,
-      viewType: ViewType.tree,
+    final node = writeTransaction(
+      () {
+        final created = ensureIndexNode(
+          parentId: parentId,
+          name: name,
+          nodeType: NodeType.category,
+          viewType: ViewType.tree,
+        );
+        _touchIndexNode(parentId);
+        markIndexNodePreviewDirty(parentId, reason: 'child_node_created');
+        return created;
+      },
     );
-    _touchIndexNode(parentId);
-    rebuildIndexNodeStats();
+    rebuildIndexNodeStatsForNode(parentId);
     return node;
   }
 
@@ -1644,12 +2423,17 @@ class LibraryRepository {
       try {
         clonedRoot = copyNode(source, targetParent.id);
         _touchIndexNode(targetParent.id);
+        markIndexNodePreviewDirty(
+          clonedRoot.id,
+          scope: IndexPreviewRebuildScope.subtree,
+          reason: 'node_tree_cloned',
+        );
       } finally {
         entityLinkInsert.dispose();
         nodeInsert.dispose();
       }
     });
-    rebuildIndexNodeStats();
+    rebuildIndexNodeStatsForNode(targetParentId);
     return clonedRoot;
   }
 
@@ -1878,7 +2662,7 @@ class LibraryRepository {
     final childRows = database.db.select(
       '''
       SELECT id, parent_id, name, node_type, view_type, source_path,
-             thumbnail_png, preview_json, sort_order, created_at, updated_at, last_built_at_ms
+             preview_json, sort_order, created_at, updated_at, last_built_at_ms
       FROM index_nodes
       WHERE parent_id IN ($placeholders)
       ORDER BY parent_id, name COLLATE NOCASE, id
@@ -1968,18 +2752,20 @@ class LibraryRepository {
     for (final nodeId in ids) {
       final override = overrides[nodeId];
       if (override != null && override.isNotEmpty) {
-        previews[nodeId] = _buildIndexNodePreview(
+        previews[nodeId] = IndexNodePreview(
           nodeId: nodeId,
-          childTiles: override
+          kind: IndexNodePreviewKind.visualGrid,
+          tiles: override
               .map(
                 (tile) => _resolvePreviewOverrideTile(
                   tile,
                   overrideEntities,
                   overrideNodes,
+                  thumbnailStore,
                 ),
               )
               .toList(growable: false),
-          entities: const [],
+          customOrderTopToBottom: true,
         );
         continue;
       }
@@ -1987,7 +2773,7 @@ class LibraryRepository {
       final childTiles = children
           .map(
             (child) =>
-                _representativePreviewTileFromCache(child) ??
+                _representativePreviewTileFromCache(child, thumbnailStore) ??
                 _representativePreviewTile(
                   child,
                   entitiesByNode[child.id] ?? const <EntityListItem>[],
@@ -2000,8 +2786,72 @@ class LibraryRepository {
         entities: entitiesByNode[nodeId] ?? const <EntityListItem>[],
       );
     }
-    return Map<String, IndexNodePreview>.unmodifiable(previews);
+    final assetRows = database.db.select(
+      'SELECT node_id, asset_key, format FROM node_preview_assets WHERE node_id IN ($placeholders)',
+      ids,
+    );
+    final assetPaths = <String, String>{};
+    for (final row in assetRows) {
+      final nodeId = row['node_id'] as String;
+      final assetKey = row['asset_key'] as String;
+      final format = row['format'] as String;
+      final path = _nodePreviewAssetPath(assetKey, format);
+      if (File(path).existsSync()) assetPaths[nodeId] = path;
+    }
+    return Map<String, IndexNodePreview>.unmodifiable({
+      for (final entry in previews.entries)
+        entry.key: _withNodePreviewAsset(entry.value, assetPaths[entry.key]),
+    });
   }
+
+  String nodePreviewAssetPath(String assetKey, String format) =>
+      _nodePreviewAssetPath(assetKey, format);
+
+  void recordNodePreviewAsset({
+    required String nodeId,
+    required String signature,
+    required String assetKey,
+    required String format,
+    required int width,
+    required int height,
+  }) {
+    database.db.execute('''
+      INSERT INTO node_preview_assets(
+        node_id, signature, asset_key, format, width, height, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(node_id) DO UPDATE SET
+        signature = excluded.signature,
+        asset_key = excluded.asset_key,
+        format = excluded.format,
+        width = excluded.width,
+        height = excluded.height,
+        updated_at = excluded.updated_at
+    ''', [nodeId, signature, assetKey, format, width, height, nowMillis()]);
+  }
+
+  void removeNodePreviewAsset(String nodeId) {
+    final rows = database.db.select(
+      'SELECT asset_key, format FROM node_preview_assets WHERE node_id = ?',
+      [nodeId],
+    );
+    for (final row in rows) {
+      final file = File(
+        _nodePreviewAssetPath(
+          row['asset_key'] as String,
+          row['format'] as String,
+        ),
+      );
+      if (file.existsSync()) file.deleteSync();
+    }
+    database.db
+        .execute('DELETE FROM node_preview_assets WHERE node_id = ?', [nodeId]);
+  }
+
+  String _nodePreviewAssetPath(String assetKey, String format) => p.join(
+        database.storageDirectoryPath,
+        'node_previews',
+        '$assetKey.$format',
+      );
 
   /// Rebuilds one lightweight representative per node, bottom-up. The cache
   /// contains only metadata and thumbnail cache keys, never image bytes.
@@ -2127,6 +2977,31 @@ class LibraryRepository {
     );
   }
 
+  IndexNode? owningIndexRootForNode(String nodeId) {
+    final node = _nodeById(nodeId);
+    return node == null ? null : _owningIndexRoot(node);
+  }
+
+  List<String> listIndexNodeIdsForEntity(String entityId) {
+    final rows = database.db.select(
+      'SELECT index_node_id FROM index_node_entities WHERE entity_id = ?',
+      [entityId],
+    );
+    return rows
+        .map((row) => row['index_node_id'] as String)
+        .toSet()
+        .toList(growable: false);
+  }
+
+  /// Preview assets are now scheduled explicitly by [LibraryBuildTaskController].
+  /// This compatibility hook intentionally has no database side effects while
+  /// older mutation helpers are being consolidated around that task boundary.
+  void markIndexNodePreviewDirty(
+    String nodeId, {
+    IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,
+    String? reason,
+  }) {}
+
   List<IndexNode> listIndexNodeAncestors(String nodeId) {
     final rows = database.db.select('''
       WITH RECURSIVE ancestors(id, parent_id, depth) AS (
@@ -2141,6 +3016,20 @@ class LibraryRepository {
       ORDER BY ancestors.depth ASC
     ''', [nodeId, NodeType.root.value]);
     return rows.map(_nodeFromRow).toList(growable: false);
+  }
+
+  Set<String> listIndexNodeDescendantIds(String nodeId) {
+    final rows = database.db.select('''
+      WITH RECURSIVE subtree(id) AS (
+        SELECT id FROM index_nodes WHERE id = ?
+        UNION ALL
+        SELECT child.id
+        FROM index_nodes child
+        JOIN subtree ON child.parent_id = subtree.id
+      )
+      SELECT id FROM subtree
+    ''', [nodeId]);
+    return rows.map((row) => row['id'] as String).toSet();
   }
 
   Map<String, List<String>> listDirectThumbnailPathsUnderRoot(String rootId) {
@@ -2362,6 +3251,31 @@ class LibraryRepository {
   }
 
   void rebuildIndexNodeStats() {
+    if (_indexStatsBatchDepth > 0) {
+      _indexStatsDirty = true;
+      return;
+    }
+    _rebuildIndexNodeStatsNow();
+  }
+
+  /// Rebuilds statistics only for the owning index tree. This is the common
+  /// path for manual links, node creation and tree copies; scans retain the
+  /// full rebuild because they can replace overlapping directory roots.
+  void rebuildIndexNodeStatsForNode(String nodeId) {
+    if (_indexStatsBatchDepth > 0) {
+      _indexStatsDirty = true;
+      return;
+    }
+    final node = _nodeById(nodeId);
+    final root = node == null ? null : _owningIndexRoot(node);
+    if (root == null || root.nodeType == NodeType.root) {
+      _rebuildIndexNodeStatsNow();
+      return;
+    }
+    _rebuildIndexNodeStatsForRootNow(root.id);
+  }
+
+  void _rebuildIndexNodeStatsNow() {
     final now = nowMillis();
     writeTransaction(() {
       database.db.execute('DELETE FROM index_node_stats');
@@ -2407,6 +3321,93 @@ LEFT JOIN direct_counts ON direct_counts.id = node.id
 LEFT JOIN descendant_counts ON descendant_counts.id = node.id
 LEFT JOIN child_counts ON child_counts.id = node.id
 ''', [now]);
+    });
+  }
+
+  void _rebuildIndexNodeStatsForRootNow(String rootId) {
+    final now = nowMillis();
+    writeTransaction(() {
+      database.db.execute('''
+WITH RECURSIVE subtree(id) AS (
+  SELECT id FROM index_nodes WHERE id = ?
+  UNION ALL
+  SELECT child.id
+  FROM index_nodes child
+  JOIN subtree parent ON child.parent_id = parent.id
+), closure(ancestor_id, id) AS (
+  SELECT id, id FROM subtree
+  UNION ALL
+  SELECT closure.ancestor_id, child.id
+  FROM closure
+  JOIN index_nodes child ON child.parent_id = closure.id
+), direct_counts AS (
+  SELECT link.index_node_id AS id, COUNT(DISTINCT entity.id) AS count
+  FROM index_node_entities link
+  JOIN entities entity ON entity.id = link.entity_id AND entity.archived = 0
+  WHERE link.index_node_id IN (SELECT id FROM subtree)
+  GROUP BY link.index_node_id
+), descendant_counts AS (
+  SELECT closure.ancestor_id AS id, COUNT(DISTINCT entity.id) AS count
+  FROM closure
+  LEFT JOIN index_node_entities link ON link.index_node_id = closure.id
+  LEFT JOIN entities entity
+    ON entity.id = link.entity_id AND entity.archived = 0
+  GROUP BY closure.ancestor_id
+), child_counts AS (
+  SELECT parent_id AS id, COUNT(*) AS count
+  FROM index_nodes
+  WHERE parent_id IN (SELECT id FROM subtree)
+  GROUP BY parent_id
+)
+DELETE FROM index_node_stats WHERE node_id IN (SELECT id FROM subtree);
+''', [rootId]);
+      database.db.execute('''
+WITH RECURSIVE subtree(id) AS (
+  SELECT id FROM index_nodes WHERE id = ?
+  UNION ALL
+  SELECT child.id
+  FROM index_nodes child
+  JOIN subtree parent ON child.parent_id = parent.id
+), closure(ancestor_id, id) AS (
+  SELECT id, id FROM subtree
+  UNION ALL
+  SELECT closure.ancestor_id, child.id
+  FROM closure
+  JOIN index_nodes child ON child.parent_id = closure.id
+), direct_counts AS (
+  SELECT link.index_node_id AS id, COUNT(DISTINCT entity.id) AS count
+  FROM index_node_entities link
+  JOIN entities entity ON entity.id = link.entity_id AND entity.archived = 0
+  WHERE link.index_node_id IN (SELECT id FROM subtree)
+  GROUP BY link.index_node_id
+), descendant_counts AS (
+  SELECT closure.ancestor_id AS id, COUNT(DISTINCT entity.id) AS count
+  FROM closure
+  LEFT JOIN index_node_entities link ON link.index_node_id = closure.id
+  LEFT JOIN entities entity
+    ON entity.id = link.entity_id AND entity.archived = 0
+  GROUP BY closure.ancestor_id
+), child_counts AS (
+  SELECT parent_id AS id, COUNT(*) AS count
+  FROM index_nodes
+  WHERE parent_id IN (SELECT id FROM subtree)
+  GROUP BY parent_id
+)
+INSERT INTO index_node_stats (
+  node_id, direct_entity_count, descendant_entity_count,
+  child_node_count, updated_at
+)
+SELECT node.id,
+       COALESCE(direct_counts.count, 0),
+       COALESCE(descendant_counts.count, 0),
+       COALESCE(child_counts.count, 0),
+       ?
+FROM index_nodes node
+JOIN subtree ON subtree.id = node.id
+LEFT JOIN direct_counts ON direct_counts.id = node.id
+LEFT JOIN descendant_counts ON descendant_counts.id = node.id
+LEFT JOIN child_counts ON child_counts.id = node.id
+''', [rootId, now]);
     });
   }
 
@@ -2544,6 +3545,66 @@ LEFT JOIN child_counts ON child_counts.id = node.id
       indexNodeId,
       sortMode: sortMode,
     ).items;
+  }
+
+  ThumbnailPreloadPage listThumbnailPreloadPageUnderNode(
+    String? indexNodeId, {
+    String? afterEntityId,
+    bool recursive = false,
+    int limit = 240,
+  }) {
+    if (indexNodeId == null) {
+      return const ThumbnailPreloadPage(paths: []);
+    }
+    final safeLimit = limit.clamp(1, 500).toInt();
+    final rows = recursive
+        ? database.db.select('''
+            WITH RECURSIVE subtree(id) AS (
+              SELECT ?
+              UNION ALL
+              SELECT node.id FROM index_nodes node
+              JOIN subtree parent ON node.parent_id = parent.id
+            ), entity_ids AS (
+              SELECT link.entity_id AS id
+              FROM index_node_entities link
+              JOIN subtree ON subtree.id = link.index_node_id
+              GROUP BY link.entity_id
+            )
+            SELECT entity.id, entity.thumbnail_key, entity.thumbnail_format
+            FROM entity_ids
+            JOIN entities entity ON entity.id = entity_ids.id
+            WHERE entity.archived = 0
+              AND entity.thumbnail_status = 'success'
+              AND entity.thumbnail_key IS NOT NULL
+              AND entity.thumbnail_format IS NOT NULL
+              AND (? IS NULL OR entity.id > ?)
+            ORDER BY entity.id ASC
+            LIMIT ?
+          ''', [indexNodeId, afterEntityId, afterEntityId, safeLimit + 1])
+        : database.db.select('''
+            SELECT entity.id, entity.thumbnail_key, entity.thumbnail_format
+            FROM index_node_entities link
+            JOIN entities entity ON entity.id = link.entity_id
+            WHERE link.index_node_id = ?
+              AND entity.archived = 0
+              AND entity.thumbnail_status = 'success'
+              AND entity.thumbnail_key IS NOT NULL
+              AND entity.thumbnail_format IS NOT NULL
+              AND (? IS NULL OR entity.id > ?)
+            ORDER BY entity.id ASC
+            LIMIT ?
+          ''', [indexNodeId, afterEntityId, afterEntityId, safeLimit + 1]);
+    final hasMore = rows.length > safeLimit;
+    final visible = hasMore ? rows.sublist(0, safeLimit) : rows;
+    return ThumbnailPreloadPage(
+      paths: visible
+          .map((row) => thumbnailStore.pathFor(
+                row['thumbnail_key'] as String,
+                row['thumbnail_format'] as String,
+              ))
+          .toList(growable: false),
+      nextEntityId: hasMore ? visible.last['id'] as String : null,
+    );
   }
 
   EntityPage listEntityPageByTypes(
@@ -2795,75 +3856,13 @@ LEFT JOIN child_counts ON child_counts.id = node.id
         'Sibling index node with the same name and type already exists',
       );
     }
-    database.db.execute(
-      'UPDATE index_nodes SET name = ?, updated_at = ? WHERE id = ?',
-      [normalizedName, nowMillis(), nodeId],
-    );
-  }
-
-  void setIndexNodeThumbnailPng(String nodeId, Uint8List thumbnailPng) {
-    _validateThumbnailPng(thumbnailPng);
-    database.db.execute(
-      'UPDATE index_nodes SET thumbnail_png = ?, updated_at = ? WHERE id = ?',
-      [thumbnailPng, nowMillis(), nodeId],
-    );
-  }
-
-  void setIndexNodeThumbnailsPng(Map<String, Uint8List> thumbnails) {
-    if (thumbnails.isEmpty) return;
-    for (final thumbnail in thumbnails.values) {
-      _validateThumbnailPng(thumbnail);
-    }
-    final statement = database.db.prepare('''
-      UPDATE index_nodes
-      SET thumbnail_png = ?, updated_at = ?
-      WHERE id = ?
-    ''');
-    final now = nowMillis();
     writeTransaction(() {
-      try {
-        for (final entry in thumbnails.entries) {
-          statement.execute([entry.value, now, entry.key]);
-        }
-      } finally {
-        statement.dispose();
-      }
+      database.db.execute(
+        'UPDATE index_nodes SET name = ?, updated_at = ? WHERE id = ?',
+        [normalizedName, nowMillis(), nodeId],
+      );
+      markIndexNodePreviewDirty(nodeId, reason: 'node_renamed');
     });
-  }
-
-  void setIndexNodeThumbnailPngIfEmpty(
-    String nodeId,
-    Uint8List thumbnailPng,
-  ) {
-    _validateThumbnailPng(thumbnailPng);
-    database.db.execute(
-      '''
-      UPDATE index_nodes
-      SET thumbnail_png = ?, updated_at = ?
-      WHERE id = ? AND thumbnail_png IS NULL
-      ''',
-      [thumbnailPng, nowMillis(), nodeId],
-    );
-  }
-
-  /// Removes artwork produced by the retired recursive PNG compositor. Node
-  /// previews are now rendered from direct content metadata and cache files.
-  void clearLegacyIndexNodeThumbnails(String rootId) {
-    database.db.execute(
-      '''
-      WITH RECURSIVE subtree(id) AS (
-        SELECT ?
-        UNION ALL
-        SELECT node.id
-        FROM index_nodes node
-        JOIN subtree ON node.parent_id = subtree.id
-      )
-      UPDATE index_nodes
-      SET thumbnail_png = NULL
-      WHERE id IN (SELECT id FROM subtree)
-      ''',
-      [rootId],
-    );
   }
 
   /// Inspects a directory index deletion without changing source files.
@@ -2984,7 +3983,25 @@ LEFT JOIN child_counts ON child_counts.id = node.id
       ''',
       [rootId],
     );
+    final externallyAffectedNodes = database.db.select('''
+      WITH RECURSIVE subtree(id) AS (
+        SELECT ?
+        UNION ALL
+        SELECT child.id FROM index_nodes child JOIN subtree ON child.parent_id = subtree.id
+      )
+      SELECT DISTINCT link.index_node_id AS node_id
+      FROM index_node_entities link
+      JOIN entities entity ON entity.id = link.entity_id
+      WHERE entity.directory_root_id = ?
+        AND link.index_node_id NOT IN (SELECT id FROM subtree)
+    ''', [rootId, rootId]);
     writeTransaction(() {
+      for (final row in externallyAffectedNodes) {
+        markIndexNodePreviewDirty(
+          row['node_id'] as String,
+          reason: 'directory_entities_deleted',
+        );
+      }
       database.db.execute(
         '''
         WITH RECURSIVE subtree(id) AS (
@@ -3006,12 +4023,9 @@ LEFT JOIN child_counts ON child_counts.id = node.id
       );
       database.db.execute('DELETE FROM index_nodes WHERE id = ?', [rootId]);
     });
-    for (final row in thumbnailRows) {
-      final key = row['thumbnail_key'] as String;
-      final format = row['thumbnail_format'] as String;
-      final file = thumbnailStore.fileFor(key, format);
-      if (file.existsSync()) file.deleteSync();
-    }
+    _deleteUnreferencedThumbnailFiles(
+      thumbnailRows.map((row) => row['thumbnail_key'] as String),
+    );
     rebuildIndexNodeStats();
     return DirectoryIndexDeletionResult(deletedEntityCount: report.entityCount);
   }
@@ -3023,8 +4037,13 @@ LEFT JOIN child_counts ON child_counts.id = node.id
     final owner = _owningIndexRoot(node);
     final deleteEntities = owner?.nodeType == NodeType.directoryIndexRoot;
     final entityIds = deleteEntities ? _entityIdsUnderNode(nodeId) : <String>[];
+    final parentId = node.parentId;
 
     writeTransaction(() {
+      // Mark before the cascade removes the deleted node's own dirty row.
+      if (parentId != null) {
+        markIndexNodePreviewDirty(parentId, reason: 'child_node_deleted');
+      }
       database.db.execute('DELETE FROM index_nodes WHERE id = ?', [nodeId]);
       for (final entityId in entityIds) {
         final stillReferenced = database.db.select(
@@ -3036,7 +4055,11 @@ LEFT JOIN child_counts ON child_counts.id = node.id
         }
       }
     });
-    rebuildIndexNodeStats();
+    if (owner == null || owner.id == nodeId) {
+      rebuildIndexNodeStats();
+    } else {
+      rebuildIndexNodeStatsForNode(owner.id);
+    }
   }
 
   Set<String> _thumbnailKeysUnderNodes(Set<String> nodeIds) {
@@ -3062,22 +4085,8 @@ LEFT JOIN child_counts ON child_counts.id = node.id
         .toSet();
   }
 
-  Set<String> _thumbnailKeysForEntities(Iterable<String> entityIds) {
-    final ids = entityIds.toSet().toList(growable: false);
-    if (ids.isEmpty) return const <String>{};
-    final placeholders = List.filled(ids.length, '?').join(', ');
-    final rows = database.db.select(
-      'SELECT thumbnail_key FROM entities WHERE id IN ($placeholders) AND thumbnail_key IS NOT NULL',
-      ids,
-    );
-    return rows
-        .map((row) => row['thumbnail_key'] as String?)
-        .whereType<String>()
-        .where((key) => key.isNotEmpty)
-        .toSet();
-  }
-
   void _deleteUnreferencedThumbnailFiles(Iterable<String> keys) {
+    final removed = <String>[];
     for (final key in keys.toSet()) {
       final referenced = database.db.select(
         'SELECT thumbnail_format FROM entities WHERE thumbnail_key = ? LIMIT 1',
@@ -3088,103 +4097,37 @@ LEFT JOIN child_counts ON child_counts.id = node.id
         final file = thumbnailStore.fileFor(key, format);
         if (file.existsSync()) file.deleteSync();
       }
+      removed.add(key);
     }
+    removeThumbnailAssets(removed);
   }
 
-  Map<String, Object?> _entitySnapshotJson(Entity entity) => {
-        'path': entity.path,
-        'localPath': entity.localPath,
-        'name': entity.name,
-        'format': entity.format,
-        'mediaType': entity.entityType.value,
-        'hash': entity.hash,
-        'metadataPreview': entity.metadataPreview,
-        'thumbnailStatus': entity.thumbnailStatus.value,
-        'thumbnailKey': entity.thumbnailKey,
-        'thumbnailFormat': entity.thumbnailFormat,
-        'thumbnailWidth': entity.thumbnailWidth,
-        'thumbnailHeight': entity.thumbnailHeight,
-        'thumbnailError': entity.thumbnailError,
-        'size': entity.size,
-        'sourceCreatedAtMs': entity.sourceCreatedAtMs,
-        'sourceModifiedAtMs': entity.sourceModifiedAtMs,
-        'archived': boolToInt(entity.archived),
-        'lastOpenedAtMs': entity.lastOpenedAtMs,
-        'lastPositionMs': entity.lastPositionMs,
-        'durationMs': entity.durationMs,
-        'readerScrollOffset': entity.readerScrollOffset,
-        'zoomScale': entity.zoomScale,
-        'extraStateJson': entity.extraStateJson,
-        'directoryRootId': entity.directoryRootId,
-        'createdAtMs': entity.createdAtMs,
-        'updatedAtMs': entity.updatedAtMs,
-      };
-
-  void _restoreEntitySnapshot(String entityId, String encoded) {
-    final value = jsonDecode(encoded);
-    if (value is! Map) return;
-    final snapshot = Map<String, dynamic>.from(value);
-    database.db.execute('''
-      UPDATE entities
-      SET path = ?, local_path = ?, name = ?, format = ?, media_type = ?,
-          hash = ?, metadata_preview = ?, thumbnail_status = ?,
-          thumbnail_key = ?, thumbnail_format = ?, thumbnail_width = ?,
-          thumbnail_height = ?, thumbnail_error = ?, size = ?,
-          source_created_at_ms = ?, source_modified_at_ms = ?, archived = ?,
-          last_opened_at = ?, last_position_ms = ?, duration_ms = ?,
-          reader_scroll_offset = ?, zoom_scale = ?, extra_state_json = ?,
-          directory_root_id = ?, created_at = ?, updated_at = ?
-      WHERE id = ?
-    ''', [
-      snapshot['path'],
-      snapshot['localPath'],
-      snapshot['name'],
-      snapshot['format'],
-      snapshot['mediaType'],
-      snapshot['hash'],
-      snapshot['metadataPreview'],
-      snapshot['thumbnailStatus'],
-      snapshot['thumbnailKey'],
-      snapshot['thumbnailFormat'],
-      snapshot['thumbnailWidth'],
-      snapshot['thumbnailHeight'],
-      snapshot['thumbnailError'],
-      snapshot['size'],
-      snapshot['sourceCreatedAtMs'],
-      snapshot['sourceModifiedAtMs'],
-      snapshot['archived'],
-      snapshot['lastOpenedAtMs'],
-      snapshot['lastPositionMs'],
-      snapshot['durationMs'],
-      snapshot['readerScrollOffset'],
-      snapshot['zoomScale'],
-      snapshot['extraStateJson'],
-      snapshot['directoryRootId'],
-      snapshot['createdAtMs'],
-      snapshot['updatedAtMs'],
-      entityId,
-    ]);
-  }
-
-  /// Clears metadata for files evicted by [ThumbnailStore]'s LRU policy.
-  /// The source entity remains untouched and will receive a new preview during
-  /// its next index build or an explicit regeneration.
-  void invalidateThumbnailCacheKeys(Iterable<String> keys) {
-    final uniqueKeys = keys.toSet();
-    if (uniqueKeys.isEmpty) return;
-    final placeholders = List.filled(uniqueKeys.length, '?').join(', ');
-    database.db.execute(
+  void recordThumbnailAsset({
+    required String key,
+    required String format,
+    required int byteSize,
+  }) {
+    _enqueueBackgroundWrite(
+      'record_thumbnail_asset',
       '''
-      UPDATE entities
-      SET thumbnail_status = 'none',
-          thumbnail_key = NULL,
-          thumbnail_format = NULL,
-          thumbnail_width = NULL,
-          thumbnail_height = NULL,
-          thumbnail_error = NULL
-      WHERE thumbnail_key IN ($placeholders)
+      INSERT INTO thumbnail_assets(asset_key, format, byte_size, created_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(asset_key) DO UPDATE SET
+        format = excluded.format,
+        byte_size = excluded.byte_size,
+        created_at = excluded.created_at
       ''',
-      uniqueKeys.toList(growable: false),
+      [key, format, byteSize < 0 ? 0 : byteSize, nowMillis()],
+    );
+  }
+
+  void removeThumbnailAssets(Iterable<String> keys) {
+    final unique = keys.where((key) => key.isNotEmpty).toSet().toList();
+    if (unique.isEmpty) return;
+    final placeholders = List.filled(unique.length, '?').join(', ');
+    database.db.execute(
+      'DELETE FROM thumbnail_assets WHERE asset_key IN ($placeholders)',
+      unique,
     );
   }
 
@@ -3217,9 +4160,11 @@ LEFT JOIN child_counts ON child_counts.id = node.id
 
   void markOpened(String entityId) {
     _requireEntityExists(entityId);
-    database.db.execute(
+    final now = nowMillis();
+    _enqueueBackgroundWrite(
+      'mark_opened',
       'UPDATE entities SET last_opened_at = ?, updated_at = ? WHERE id = ?',
-      [nowMillis(), nowMillis(), entityId],
+      [now, now, entityId],
     );
   }
 
@@ -3236,7 +4181,8 @@ LEFT JOIN child_counts ON child_counts.id = node.id
           safeDurationMs > 0 ? safeDurationMs : 0x7fffffffffffffff,
         )
         .toInt();
-    database.db.execute(
+    _enqueueBackgroundWrite(
+      'save_playback_state',
       '''
       UPDATE entities
       SET last_position_ms = ?, duration_ms = ?, updated_at = ?
@@ -3372,7 +4318,8 @@ LEFT JOIN child_counts ON child_counts.id = node.id
         scrollOffset == null ? null : (scrollOffset < 0 ? 0.0 : scrollOffset);
     final safeZoomScale =
         zoomScale == null || zoomScale <= 0 ? null : zoomScale;
-    database.db.execute(
+    _enqueueBackgroundWrite(
+      'save_reader_state',
       '''
       UPDATE entities
       SET reader_scroll_offset = COALESCE(?, reader_scroll_offset),
@@ -3417,10 +4364,13 @@ LEFT JOIN child_counts ON child_counts.id = node.id
 
   void setArchived(String entityId, bool archived) {
     _requireEntityExists(entityId);
-    database.db.execute(
-      'UPDATE entities SET archived = ?, updated_at = ? WHERE id = ?',
-      [boolToInt(archived), nowMillis(), entityId],
-    );
+    writeTransaction(() {
+      database.db.execute(
+        'UPDATE entities SET archived = ?, updated_at = ? WHERE id = ?',
+        [boolToInt(archived), nowMillis(), entityId],
+      );
+      _markEntityPreviewDirty(entityId, reason: 'entity_archive_changed');
+    });
     rebuildIndexNodeStats();
   }
 
@@ -3428,19 +4378,25 @@ LEFT JOIN child_counts ON child_counts.id = node.id
     required String entityId,
     required String indexNodeId,
   }) {
-    database.db.execute(
-      '''
-      DELETE FROM index_node_entities
-      WHERE entity_id = ? AND index_node_id = ?
-      ''',
-      [entityId, indexNodeId],
-    );
-    _touchIndexNode(indexNodeId);
-    rebuildIndexNodeStats();
+    writeTransaction(() {
+      database.db.execute(
+        '''
+        DELETE FROM index_node_entities
+        WHERE entity_id = ? AND index_node_id = ?
+        ''',
+        [entityId, indexNodeId],
+      );
+      _touchIndexNode(indexNodeId);
+      markIndexNodePreviewDirty(indexNodeId, reason: 'entity_unlinked');
+    });
+    rebuildIndexNodeStatsForNode(indexNodeId);
   }
 
   void removeEntityFromLibrary(String entityId) {
-    database.db.execute('DELETE FROM entities WHERE id = ?', [entityId]);
+    writeTransaction(() {
+      _markEntityPreviewDirty(entityId, reason: 'entity_deleted');
+      database.db.execute('DELETE FROM entities WHERE id = ?', [entityId]);
+    });
     rebuildIndexNodeStats();
   }
 
@@ -3449,6 +4405,7 @@ LEFT JOIN child_counts ON child_counts.id = node.id
     if (ids.isEmpty) return;
     writeTransaction(() {
       for (final entityId in ids) {
+        _markEntityPreviewDirty(entityId, reason: 'entities_deleted');
         database.db.execute('DELETE FROM entities WHERE id = ?', [entityId]);
       }
     });
@@ -3621,28 +4578,34 @@ LEFT JOIN child_counts ON child_counts.id = node.id
   }
 
   void setNodePreviewOverride(String nodeId, String itemsJson) {
-    database.db.execute(
-      '''
-      INSERT INTO node_preview_overrides(node_id, items_json, updated_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(node_id) DO UPDATE SET
-        items_json = excluded.items_json,
-        updated_at = excluded.updated_at
-      ''',
-      [nodeId, itemsJson, nowMillis()],
-    );
-    _rebuildPreviewCacheThroughAncestors(nodeId);
+    writeTransaction(() {
+      database.db.execute(
+        '''
+        INSERT INTO node_preview_overrides(node_id, items_json, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(node_id) DO UPDATE SET
+          items_json = excluded.items_json,
+          updated_at = excluded.updated_at
+        ''',
+        [nodeId, itemsJson, nowMillis()],
+      );
+      markIndexNodePreviewDirty(nodeId, reason: 'preview_override_set');
+    });
   }
 
   void clearNodePreviewOverride(String nodeId) {
-    database.db.execute(
-        'DELETE FROM node_preview_overrides WHERE node_id = ?', [nodeId]);
-    _rebuildPreviewCacheThroughAncestors(nodeId);
+    writeTransaction(() {
+      database.db.execute(
+        'DELETE FROM node_preview_overrides WHERE node_id = ?',
+        [nodeId],
+      );
+      markIndexNodePreviewDirty(nodeId, reason: 'preview_override_cleared');
+    });
   }
 
-  void _rebuildPreviewCacheThroughAncestors(String nodeId) {
-    for (final node in listIndexNodeAncestors(nodeId)) {
-      rebuildIndexNodePreviewCacheForNode(node.id);
+  void _markEntityPreviewDirty(String entityId, {required String reason}) {
+    for (final nodeId in listIndexNodeIdsForEntity(entityId)) {
+      markIndexNodePreviewDirty(nodeId, reason: reason);
     }
   }
 
@@ -3655,8 +4618,9 @@ LEFT JOIN child_counts ON child_counts.id = node.id
       if (tile.kind == IndexNodePreviewTileKind.visual) return tile;
       if (tile.nodeId != null) {
         final child = _nodeById(tile.nodeId!);
-        final representative =
-            child == null ? null : _representativePreviewTileFromCache(child);
+        final representative = child == null
+            ? null
+            : _representativePreviewTileFromCache(child, thumbnailStore);
         if (representative != null) return representative;
       }
     }
@@ -3984,9 +4948,15 @@ Entity _entityFromRow(Row row, [ThumbnailStore? thumbnailStore]) {
   );
 }
 
+/* Retired row mappers for the pre-unified task schema.
 IndexBuildJob _indexBuildJobFromRow(Row row) => IndexBuildJob(
       id: row['id'] as String,
       sourcePath: row['source_path'] as String,
+      operationType: IndexJobOperationType.fromStorageValue(
+        row['operation_type'] as String? ??
+            IndexJobOperationType.rootScan.storageValue,
+      ),
+      scopePath: row['scope_path'] as String? ?? '',
       indexRootId: row['index_root_id'] as String?,
       status: IndexJobStatus.fromStorageValue(row['status'] as String),
       phase: IndexJobPhase.values.byName(row['phase'] as String),
@@ -4000,6 +4970,27 @@ IndexBuildJob _indexBuildJobFromRow(Row row) => IndexBuildJob(
       targetNodeId: row['target_node_id'] as String?,
       stagingRootId: row['staging_root_id'] as String?,
       createdAtMs: row['created_at'] as int,
+      updatedAtMs: row['updated_at'] as int,
+    );
+
+ThumbnailBuildJob _thumbnailBuildJobFromRow(Row row) => ThumbnailBuildJob(
+      id: row['id'] as String,
+      indexRootId: row['index_root_id'] as String?,
+      status: ThumbnailBuildStatus.fromValue(row['status'] as String),
+      total: row['total'] as int,
+      processed: row['processed'] as int,
+      failed: row['failed'] as int,
+      error: row['error'] as String?,
+      createdAtMs: row['created_at'] as int,
+      updatedAtMs: row['updated_at'] as int,
+    );
+
+ThumbnailBuildEntry _thumbnailBuildEntryFromRow(Row row) => ThumbnailBuildEntry(
+      jobId: row['job_id'] as String,
+      entityId: row['entity_id'] as String,
+      state: ThumbnailBuildEntryState.fromValue(row['state'] as String),
+      error: row['error'] as String?,
+      attempts: row['attempts'] as int,
       updatedAtMs: row['updated_at'] as int,
     );
 
@@ -4034,6 +5025,7 @@ IndexJobHistoryEntry _indexJobHistoryEntryFromRow(Row row) =>
       createdAtMs: row['created_at'] as int,
       completedAtMs: row['completed_at'] as int,
     );
+*/
 
 IndexNode _nodeFromRow(Row row) {
   return IndexNode(
@@ -4043,7 +5035,6 @@ IndexNode _nodeFromRow(Row row) {
     nodeType: NodeType.fromValue(row['node_type'] as String),
     viewType: ViewType.fromValue(row['view_type'] as String),
     sourcePath: row['source_path'] as String?,
-    thumbnailPng: row['thumbnail_png'] as Uint8List?,
     previewJson: row['preview_json'] as String?,
     sortOrder: row['sort_order'] as int,
     createdAtMs: row['created_at'] as int,
@@ -4097,7 +5088,10 @@ IndexNodePreviewTile _representativePreviewTile(
       kind: IndexNodePreviewTileKind.node, title: node.name);
 }
 
-IndexNodePreviewTile? _representativePreviewTileFromCache(IndexNode node) {
+IndexNodePreviewTile? _representativePreviewTileFromCache(
+  IndexNode node, [
+  ThumbnailStore? thumbnailStore,
+]) {
   final json = node.previewJson;
   if (json == null || json.isEmpty) return null;
   try {
@@ -4105,11 +5099,19 @@ IndexNodePreviewTile? _representativePreviewTileFromCache(IndexNode node) {
     if (value is! Map<String, dynamic>) return null;
     final kind =
         IndexNodePreviewTileKind.values.byName(value['kind'] as String);
-    final path = value['thumbnailPath'] as String?;
+    final key = value['thumbnailKey'] as String?;
+    final format = value['thumbnailFormat'] as String?;
+    final path = key != null && format != null && thumbnailStore != null
+        ? thumbnailStore.pathFor(key, format)
+        : null;
     return IndexNodePreviewTile(
       kind: kind,
       title: value['title'] as String? ?? node.name,
       thumbnailPath: path,
+      thumbnailKey: key,
+      thumbnailFormat: format,
+      entityId: value['entityId'] as String?,
+      nodeId: value['nodeId'] as String?,
       aspectRatio: (value['aspectRatio'] as num?)?.toDouble() ?? 1,
       audioNames:
           (value['audioNames'] as List?)?.whereType<String>().toList() ??
@@ -4132,7 +5134,8 @@ List<IndexNodePreviewTile> _previewOverrideTiles(String value) {
       return IndexNodePreviewTile(
         kind: IndexNodePreviewTileKind.values.byName(item['kind'] as String),
         title: item['title'] as String? ?? '',
-        thumbnailPath: item['thumbnailPath'] as String?,
+        thumbnailKey: item['thumbnailKey'] as String?,
+        thumbnailFormat: item['thumbnailFormat'] as String?,
         entityId: item['entityId'] as String?,
         nodeId: item['nodeId'] as String?,
         aspectRatio: (item['aspectRatio'] as num?)?.toDouble() ?? 1,
@@ -4154,7 +5157,8 @@ String? _previewTileToJson(IndexNodePreviewTile? tile) {
   return jsonEncode({
     'kind': tile.kind.name,
     'title': tile.title,
-    'thumbnailPath': tile.thumbnailPath,
+    'thumbnailKey': tile.thumbnailKey,
+    'thumbnailFormat': tile.thumbnailFormat,
     'entityId': tile.entityId,
     'nodeId': tile.nodeId,
     'aspectRatio': tile.aspectRatio,
@@ -4203,7 +5207,11 @@ IndexNodePreview _buildIndexNodePreview({
       .toList(growable: false);
   final hasSemanticData = audioNames.isNotEmpty || documentNames.isNotEmpty;
   final visualCandidates = <IndexNodePreviewTile>[...childTiles, ...visuals]
-    ..sort((left, right) => left.title.compareTo(right.title));
+    ..sort(
+      childTiles.isEmpty
+          ? (left, right) => left.title.compareTo(right.title)
+          : _compareNodePreviewVisualTiles,
+    );
 
   if (visualCandidates.isEmpty) {
     if (audioNames.isEmpty && documentNames.isEmpty) {
@@ -4235,10 +5243,10 @@ IndexNodePreview _buildIndexNodePreview({
       tiles: [visualCandidates.first],
     );
   }
-  final tiles = <IndexNodePreviewTile>[
-    ...visualCandidates.take(hasSemanticData ? 3 : 4)
-  ];
+  final tiles = <IndexNodePreviewTile>[];
   if (hasSemanticData) {
+    // Semantic data forms the left-most book spine, leaving visual covers
+    // prominent while still exposing music and document content.
     tiles.add(IndexNodePreviewTile(
       kind: audioNames.isNotEmpty && documentNames.isNotEmpty
           ? IndexNodePreviewTileKind.mixedData
@@ -4250,6 +5258,9 @@ IndexNodePreview _buildIndexNodePreview({
       documentNames: documentNames,
     ));
   }
+  final selectedVisuals =
+      visualCandidates.take(hasSemanticData ? 3 : 4).toList(growable: false);
+  tiles.addAll(selectedVisuals);
   return IndexNodePreview(
     nodeId: nodeId,
     kind: IndexNodePreviewKind.visualGrid,
@@ -4257,11 +5268,48 @@ IndexNodePreview _buildIndexNodePreview({
   );
 }
 
+IndexNodePreview _withNodePreviewAsset(
+  IndexNodePreview preview,
+  String? assetPath,
+) {
+  if (preview.kind != IndexNodePreviewKind.singleVisual &&
+      preview.kind != IndexNodePreviewKind.visualGrid) {
+    return preview;
+  }
+  return IndexNodePreview(
+    nodeId: preview.nodeId,
+    kind: preview.kind,
+    tiles: preview.tiles,
+    audioNames: preview.audioNames,
+    documentNames: preview.documentNames,
+    customOrderTopToBottom: preview.customOrderTopToBottom,
+    visualAssetPath: assetPath,
+  );
+}
+
+int _compareNodePreviewVisualTiles(
+  IndexNodePreviewTile left,
+  IndexNodePreviewTile right,
+) {
+  final leftRank = _nodePreviewVisualAspectRank(left.aspectRatio);
+  final rightRank = _nodePreviewVisualAspectRank(right.aspectRatio);
+  if (leftRank != rightRank) return leftRank.compareTo(rightRank);
+  return left.title.compareTo(right.title);
+}
+
+int _nodePreviewVisualAspectRank(double aspectRatio) {
+  if (aspectRatio < .95) return 0;
+  if (aspectRatio <= 1.05) return 1;
+  return 2;
+}
+
 IndexNodePreviewTile _visualPreviewTile(EntityListItem entity) =>
     IndexNodePreviewTile(
       kind: IndexNodePreviewTileKind.visual,
       title: entity.title,
       thumbnailPath: entity.thumbnailPath,
+      thumbnailKey: entity.thumbnailKey,
+      thumbnailFormat: entity.thumbnailFormat,
       entityId: entity.id,
       aspectRatio: _nodePreviewAspectRatio(entity),
     );
@@ -4270,6 +5318,7 @@ IndexNodePreviewTile _resolvePreviewOverrideTile(
   IndexNodePreviewTile tile,
   Map<String, EntityListItem> entities,
   Map<String, IndexNode> nodes,
+  ThumbnailStore thumbnailStore,
 ) {
   final entityId = tile.entityId;
   if (entityId != null) {
@@ -4280,12 +5329,15 @@ IndexNodePreviewTile _resolvePreviewOverrideTile(
   if (nodeId != null) {
     final node = nodes[nodeId];
     if (node != null) {
-      final representative = _representativePreviewTileFromCache(node);
+      final representative =
+          _representativePreviewTileFromCache(node, thumbnailStore);
       if (representative != null) {
         return IndexNodePreviewTile(
           kind: representative.kind,
           title: representative.title,
           thumbnailPath: representative.thumbnailPath,
+          thumbnailKey: representative.thumbnailKey,
+          thumbnailFormat: representative.thumbnailFormat,
           entityId: representative.entityId,
           nodeId: nodeId,
           aspectRatio: representative.aspectRatio,
@@ -4349,6 +5401,8 @@ EntityListItem _listItemFromRow(Row row, ThumbnailStore thumbnailStore) {
     metadataPreview: entity.metadataPreview,
     thumbnailStatus: entity.thumbnailStatus,
     thumbnailPath: entity.thumbnailPath,
+    thumbnailKey: entity.thumbnailKey,
+    thumbnailFormat: entity.thumbnailFormat,
     thumbnailWidth: entity.thumbnailWidth,
     thumbnailHeight: entity.thumbnailHeight,
     modifiedAtMs: entity.sourceModifiedAtMs,
@@ -4448,7 +5502,10 @@ bool _isTopLevelIndexRootType(NodeType nodeType) {
       nodeType == NodeType.graphIndexRoot;
 }
 
-String _indexNameForRoot(String rootPath) {
+String _indexNameForRoot(String rootPath, {String? displayName}) {
+  final explicitName = displayName?.trim();
+  if (explicitName != null && explicitName.isNotEmpty) return explicitName;
+  if (rootPath.startsWith('content://')) return '已选目录';
   final normalized = p.normalize(rootPath);
   final name = p.basename(normalized).trim();
   return name.isEmpty ? '未命名索引' : name;
@@ -4531,15 +5588,4 @@ ThumbnailStatus _defaultThumbnailStatusFor(EntityType type) {
 
 bool _hasGeneratedThumbnail(EntityType type) {
   return type == EntityType.image || type == EntityType.video;
-}
-
-void _validateThumbnailPng(Uint8List thumbnailPng) {
-  final image = img.decodePng(thumbnailPng);
-  if (image == null ||
-      image.width != indexThumbnailWidth ||
-      image.height != indexThumbnailHeight) {
-    throw ArgumentError(
-      'thumbnail_png must be a $indexThumbnailWidth x $indexThumbnailHeight PNG',
-    );
-  }
 }

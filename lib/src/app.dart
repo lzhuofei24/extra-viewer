@@ -5,18 +5,23 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:path/path.dart' as p;
 import 'package:window_manager/window_manager.dart';
 
 import 'core/database/app_database.dart';
+import 'core/database/library_write_worker.dart';
 import 'core/database/library_repository.dart';
 import 'core/database/library_read_worker.dart';
 import 'core/diagnostics/app_diagnostic_log.dart';
+import 'core/controllers/library_build_task_controller.dart';
+import 'core/controllers/selection_controller.dart';
 import 'core/domain/models.dart';
 import 'core/formats/file_format_handlers.dart';
 import 'core/media/audio_waveform_service.dart';
+import 'core/pet/pet_controller.dart';
+import 'core/pet/pet_voice_player.dart';
 import 'core/media/app_audio_controller.dart';
-import 'core/scanner/library_scanner.dart';
 import 'core/sources/platform_directory_picker.dart';
 import 'core/tasks/task_scheduler.dart';
 import 'core/thumbnails/thumbnail_service.dart';
@@ -24,10 +29,11 @@ import 'core/thumbnails/android_image_thumbnail_backend.dart';
 import 'core/thumbnails/android_video_thumbnail_backend.dart';
 import 'core/thumbnails/native_image_thumbnail_backend.dart';
 import 'core/thumbnails/windows_wic_webp_thumbnail_backend.dart';
-import 'core/thumbnails/index_node_thumbnail_service.dart';
+import 'core/thumbnails/browsing_thumbnail_controller.dart';
 import 'ui/browser_state.dart';
 import 'ui/browser_node_cache.dart';
 import 'ui/app_sidebar.dart';
+import 'ui/app_pet.dart';
 import 'ui/builtin_media_page.dart';
 import 'ui/collection_browser_page.dart';
 import 'ui/collapse_grip_icon.dart';
@@ -39,8 +45,10 @@ import 'ui/library_dashboard_page.dart';
 import 'ui/music_page.dart';
 import 'ui/media_shelf_page.dart';
 import 'ui/now_playing_page.dart';
+import 'ui/pet_page.dart';
 import 'ui/node_preview_picker.dart';
 import 'ui/settings_page.dart';
+import 'ui/diagnostics_page.dart';
 
 class BestViewerApp extends StatefulWidget {
   const BestViewerApp({super.key, this.databaseFactory});
@@ -112,19 +120,16 @@ class _AppShellState extends State<AppShell> {
   late final TextEditingController _indexPathController;
 
   AppDatabase? _database;
+  LibraryWriteWorker? _writeWorker;
   LibraryRepository? _repository;
   LibraryReadWorker? _readWorker;
+  BrowsingThumbnailController? _browsingThumbnails;
   AppAudioController? _audioController;
+  LibraryBuildTaskController? _buildTasks;
   bool _loading = true;
-  bool _scanning = false;
+  int? _incompatibleSchemaVersion;
+  bool _resettingLocalIndex = false;
   String? _indexError;
-  List<IndexJobHistoryEntry> _indexTaskHistory = const [];
-  ScanProgress? _scanProgress;
-  IndexScanControl? _scanControl;
-  List<IndexBuildJob> _recoverableIndexJobs = const [];
-  Map<String, IndexJobCandidateSummary> _recoverableJobSummaries = const {};
-  Map<String, List<IndexJobCandidate>> _recoverableJobFailures = const {};
-  Map<String, String> _recoverableJobPaths = const {};
   AppSection _section = AppSection.home;
   BrowserState _browserState = const BrowserState();
   IndexNode? _selectedIndexRoot;
@@ -138,14 +143,14 @@ class _AppShellState extends State<AppShell> {
   bool _loadingMoreEntities = false;
   bool _sidebarCollapsed = false;
   bool _miniPlayerCollapsed = false;
-  final Set<String> _selectedEntityIds = <String>{};
-  final Set<String> _selectedNodeIds = <String>{};
-  bool _selectionMode = false;
-  String? _selectionAnchorId;
-  String? _selectionFocusId;
-  String? _nodeSelectionAnchorId;
-  String? _nodeSelectionFocusId;
+  bool _petWasAudioPlaying = false;
+  late final SelectionController _selection;
+  late final PetController _petController;
+  final PetVoicePlayer _petVoicePlayer = PetVoicePlayer();
+  bool _petWasScanning = false;
+  int _handledPetVoiceToken = 0;
   final Set<String> _regeneratingThumbnailIds = <String>{};
+  Timer? _thumbnailRefreshTimer;
   final BrowserNodeCache _browserNodeCache = BrowserNodeCache();
   final TaskScheduler _taskScheduler = TaskScheduler(maxConcurrent: 1);
   int _cacheWarmupGeneration = 0;
@@ -159,6 +164,24 @@ class _AppShellState extends State<AppShell> {
   late final AppLifecycleListener _lifecycleListener;
 
   IndexNode? get _currentIndexNode => _selectedItem ?? _selectedIndexRoot;
+  bool get _scanning => _buildTasks?.isRunning ?? false;
+  LibraryBuildProgress? get _scanProgress => _buildTasks?.progress;
+  LibraryBuildJob? get _activeBuildJob => _buildTasks?.activeJob;
+  List<LibraryBuildJob> get _recoverableIndexJobs =>
+      _buildTasks?.recoverableJobs ?? const [];
+  List<LibraryBuildJob> get _indexTaskHistory =>
+      _buildTasks?.history ?? const [];
+  Set<String> get _selectedEntityIds => _selection.entityIds;
+  Set<String> get _selectedNodeIds => _selection.nodeIds;
+  bool get _selectionMode => _selection.enabled;
+
+  Future<void> _refreshNodePreview(
+    String nodeId, {
+    IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,
+    String? reason,
+  }) async {
+    await _buildTasks?.rebuildNodePreview(nodeId);
+  }
 
   bool get _isInsideCustomIndex =>
       _selectedIndexRoot?.nodeType == NodeType.categoryIndexRoot &&
@@ -184,6 +207,9 @@ class _AppShellState extends State<AppShell> {
   void initState() {
     super.initState();
     _indexPathController = TextEditingController();
+    _selection = SelectionController();
+    _petController = PetController()..addListener(_handlePetChanged);
+    unawaited(_petController.restore());
     _lifecycleListener = AppLifecycleListener(
       onStateChange: (state) {
         AppDiagnosticLog.instance.info('app_lifecycle_changed', fields: {
@@ -199,24 +225,94 @@ class _AppShellState extends State<AppShell> {
   void dispose() {
     AppDiagnosticLog.instance.info('app_shell_dispose_started');
     _indexPathController.dispose();
-    _readWorker?.close();
-    _audioController?.dispose();
-    _database?.close();
+    _buildTasks?.removeListener(_handleBuildTaskChanged);
+    _buildTasks?.dispose();
+    _petController
+      ..removeListener(_handlePetChanged)
+      ..dispose();
+    unawaited(_petVoicePlayer.dispose());
     _taskScheduler.close();
+    _thumbnailRefreshTimer?.cancel();
     _lifecycleListener.dispose();
+    unawaited(_closeRuntimeResources());
     unawaited(AppDiagnosticLog.instance.close());
     super.dispose();
   }
 
+  Future<void> _closeRuntimeResources() async {
+    final audioController = _audioController;
+    audioController?.removeListener(_handlePetAudioChanged);
+    if (audioController != null) await audioController.close();
+    await _browsingThumbnails?.close();
+    final readWorker = _readWorker;
+    if (readWorker != null) await readWorker.close();
+    final writeWorker = _writeWorker;
+    if (writeWorker != null) await writeWorker.close();
+    _database?.close();
+  }
+
   Future<void> _bootstrap() async {
     AppDiagnosticLog.instance.info('app_bootstrap_started');
-    final database =
-        await (widget.databaseFactory?.call() ?? AppDatabase.open());
+    final AppDatabase database;
+    try {
+      database = await (widget.databaseFactory?.call() ?? AppDatabase.open());
+    } on AppDatabaseResetRequired catch (error) {
+      AppDiagnosticLog.instance.warning('database_reset_required', fields: {
+        'foundSchemaVersion': error.foundVersion,
+      });
+      if (!mounted) return;
+      setState(() {
+        _incompatibleSchemaVersion = error.foundVersion;
+        _loading = false;
+      });
+      return;
+    } catch (error, stackTrace) {
+      AppDiagnosticLog.instance.error(
+        'database_open_failed',
+        error,
+        stackTrace,
+      );
+      if (!mounted) return;
+      setState(() {
+        _indexError = '无法打开本地索引：$error';
+        _loading = false;
+      });
+      return;
+    }
     AppDiagnosticLog.instance.info('database_opened', fields: {
       'databasePath': database.databasePath,
       'storageDirectoryPath': database.storageDirectoryPath,
     });
-    final repository = LibraryRepository(database);
+    LibraryWriteWorker? writeWorker;
+    if (database.databasePath != null) {
+      try {
+        writeWorker = await LibraryWriteWorker.start(
+          databasePath: database.databasePath!,
+        );
+      } catch (error, stackTrace) {
+        AppDiagnosticLog.instance.warning(
+          'database_write_worker_unavailable',
+          fields: {'error': '$error', 'stackTrace': '$stackTrace'},
+        );
+      }
+    }
+    final repository = LibraryRepository(
+      database,
+      writeWorker: writeWorker,
+    );
+    final browsingThumbnails = BrowsingThumbnailController(
+      repository,
+      onCacheChanged: (_) => _scheduleThumbnailRefresh(),
+    );
+    final buildTasks = LibraryBuildTaskController(repository);
+    buildTasks.addListener(_handleBuildTaskChanged);
+    final imageCache = PaintingBinding.instance.imageCache;
+    imageCache.maximumSizeBytes =
+        Platform.isAndroid ? 512 * 1024 * 1024 : 1024 * 1024 * 1024;
+    // The byte limit remains authoritative. A higher item count prevents
+    // small WebP thumbnails from being evicted merely because a gallery has
+    // crossed an arbitrary card count.
+    imageCache.maximumSize = Platform.isAndroid ? 5000 : 1200;
     final audioController = AppAudioController(
       onProgressSaved: (entityId, positionMs, durationMs) {
         repository.savePlaybackState(
@@ -269,11 +365,15 @@ class _AppShellState extends State<AppShell> {
     }
     setState(() {
       _database = database;
+      _writeWorker = writeWorker;
       _repository = repository;
       _audioController = audioController;
       _readWorker = readWorker;
+      _browsingThumbnails = browsingThumbnails;
+      _buildTasks = buildTasks;
       _loading = false;
     });
+    audioController.addListener(_handlePetAudioChanged);
     final activeSessions = repository.listAudioPlaybackSessions();
     final activeSession =
         activeSessions.where((session) => session.active).firstOrNull;
@@ -281,6 +381,140 @@ class _AppShellState extends State<AppShell> {
       await audioController.restoreSession(activeSession);
     }
     _reload();
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _petController.trigger(PetTrigger.appStarted),
+    );
+  }
+
+  void _handleBuildTaskChanged() {
+    final tasks = _buildTasks;
+    final scanning = tasks?.isRunning ?? false;
+    if (scanning && !_petWasScanning) {
+      _petController.trigger(PetTrigger.indexStarted);
+    } else if (!scanning && _petWasScanning) {
+      _petController.trigger(
+        tasks?.errorMessage == null
+            ? PetTrigger.indexCompleted
+            : PetTrigger.indexFailed,
+      );
+    }
+    _petWasScanning = scanning;
+    if (mounted) setState(() {});
+  }
+
+  void _scheduleThumbnailRefresh() {
+    if (!mounted) return;
+    _thumbnailRefreshTimer?.cancel();
+    _thumbnailRefreshTimer = Timer(const Duration(milliseconds: 250), () {
+      if (!mounted) return;
+      _reload(
+        indexNodeId: _currentIndexNode?.id,
+        invalidateBrowserCache: true,
+      );
+    });
+  }
+
+  void _requestBrowseThumbnail(EntityListItem entity) {
+    _browsingThumbnails?.request(entity);
+  }
+
+  void _requestBrowseThumbnailById(String entityId) {
+    _browsingThumbnails?.requestEntityId(entityId);
+  }
+
+  Future<ThumbnailPreloadPage> _loadCurrentNodeThumbnailPreloadPage(
+    String? afterEntityId,
+  ) async {
+    final repository = _repository;
+    final node = _currentIndexNode;
+    if (repository == null || node == null) {
+      return const ThumbnailPreloadPage(paths: []);
+    }
+    return repository.listThumbnailPreloadPageUnderNode(
+      node.id,
+      afterEntityId: afterEntityId,
+      recursive: _browserState.contentScope == BrowserContentScope.recursive,
+    );
+  }
+
+  void _handlePetChanged() {
+    final request = _petController.voiceRequest;
+    if (_petController.muted) {
+      unawaited(_petVoicePlayer.stop());
+    } else if (request != null && request.token != _handledPetVoiceToken) {
+      _handledPetVoiceToken = request.token;
+      unawaited(_petVoicePlayer.play(request.asset));
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _handlePetAudioChanged() {
+    final playing = _audioController?.isPlaying ?? false;
+    if (playing != _petWasAudioPlaying) {
+      _petController.trigger(
+        playing ? PetTrigger.musicStarted : PetTrigger.musicPaused,
+      );
+      _petWasAudioPlaying = playing;
+    }
+  }
+
+  Future<void> _resetLocalIndexStorage() async {
+    if (_resettingLocalIndex) return;
+    if (_scanning) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先暂停或放弃正在进行的索引任务。')),
+      );
+      return;
+    }
+    final confirmed = await _confirm(
+      title: '重置本地索引数据',
+      message: '将删除本应用保存的索引、任务、缩略图和播放缓存。不会删除、移动或修改任何真实资料文件。',
+    );
+    if (!confirmed || !mounted) return;
+    setState(() {
+      _loading = true;
+      _resettingLocalIndex = true;
+      _indexError = null;
+    });
+    try {
+      _audioController?.removeListener(_handlePetAudioChanged);
+      final audioController = _audioController;
+      if (audioController != null) await audioController.close();
+      await _browsingThumbnails?.close();
+      _browsingThumbnails = null;
+      final worker = _readWorker;
+      _readWorker = null;
+      if (worker != null) await worker.close();
+      final writeWorker = _writeWorker;
+      _writeWorker = null;
+      if (writeWorker != null) await writeWorker.close();
+      _audioController = null;
+      _buildTasks?.removeListener(_handleBuildTaskChanged);
+      _buildTasks?.dispose();
+      _buildTasks = null;
+      _database?.close();
+      _database = null;
+      _repository = null;
+      await AppDatabase.resetLocalIndexStorage();
+      if (!mounted) return;
+      setState(() {
+        _incompatibleSchemaVersion = null;
+        _resettingLocalIndex = false;
+      });
+      await _bootstrap();
+    } catch (error, stackTrace) {
+      AppDiagnosticLog.instance.error(
+        'local_index_reset_failed',
+        error,
+        stackTrace,
+      );
+      if (!mounted) return;
+      setState(() {
+        _indexError = '重置本地索引失败：$error';
+        _loading = false;
+        _resettingLocalIndex = false;
+      });
+    }
   }
 
   void _reload({String? indexNodeId, bool invalidateBrowserCache = false}) {
@@ -326,11 +560,34 @@ class _AppShellState extends State<AppShell> {
     if (recursiveBrowsing) {
       childNodes = const <IndexNode>[];
       if (selectedRoot != null && cached == null) {
-        uncachedPage = repository.listEntityPageRecursivelyUnderNode(
-          currentNode?.id ?? selectedRoot.id,
-          sortMode: _browserState.sortMode,
-          limit: _entityPageSize,
-        );
+        final readWorker = _readWorker;
+        if (readWorker != null) {
+          try {
+            final page = await readWorker.loadRecursivePage(
+              nodeId: currentNode?.id ?? selectedRoot.id,
+              sortMode: _browserState.sortMode,
+              limit: _entityPageSize,
+            );
+            if (!mounted || generation != _reloadGeneration) return;
+            uncachedPage = EntityPage(
+              items: page.entities,
+              hasMore: page.hasMore,
+              recursiveCursor: page.recursiveCursor,
+            );
+          } catch (_) {
+            uncachedPage = repository.listEntityPageRecursivelyUnderNode(
+              currentNode?.id ?? selectedRoot.id,
+              sortMode: _browserState.sortMode,
+              limit: _entityPageSize,
+            );
+          }
+        } else {
+          uncachedPage = repository.listEntityPageRecursivelyUnderNode(
+            currentNode?.id ?? selectedRoot.id,
+            sortMode: _browserState.sortMode,
+            limit: _entityPageSize,
+          );
+        }
       }
     } else if (currentNode == null) {
       childNodes = roots;
@@ -447,26 +704,7 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _refreshRecoverableIndexTasks() {
-    final repository = _repository;
-    if (repository == null) return;
-    final jobs = repository.listRecoverableIndexJobs();
-    _recoverableIndexJobs = jobs;
-    _recoverableJobSummaries = {
-      for (final job in jobs)
-        job.id: repository.summarizeIndexJobCandidates(job.id),
-    };
-    _recoverableJobFailures = {
-      for (final job in jobs)
-        job.id: repository.listIndexJobCandidates(
-          job.id,
-          states: {IndexJobCandidateState.failed},
-          limit: 20,
-        ),
-    };
-    _recoverableJobPaths = {
-      for (final job in jobs) job.id: _recoveryJobPath(job),
-    };
-    _indexTaskHistory = repository.listIndexJobHistory();
+    _buildTasks?.refresh();
   }
 
   void _updateNavigationCacheScope({
@@ -652,14 +890,28 @@ class _AppShellState extends State<AppShell> {
     try {
       EntityPage page;
       final readWorker = _readWorker;
-      if (readWorker != null && !recursiveBrowsing) {
-        final result = await readWorker.loadDirectPage(
-          parentNodeId: node.id,
-          sortMode: sortMode,
-          after: after,
-          limit: _entityPageSize,
-        );
-        page = EntityPage(items: result.entities, hasMore: result.hasMore);
+      if (readWorker != null) {
+        if (recursiveBrowsing) {
+          final result = await readWorker.loadRecursivePage(
+            nodeId: node.id,
+            sortMode: sortMode,
+            after: _recursiveEntityCursor,
+            limit: _entityPageSize,
+          );
+          page = EntityPage(
+            items: result.entities,
+            hasMore: result.hasMore,
+            recursiveCursor: result.recursiveCursor,
+          );
+        } else {
+          final result = await readWorker.loadDirectPage(
+            parentNodeId: node.id,
+            sortMode: sortMode,
+            after: after,
+            limit: _entityPageSize,
+          );
+          page = EntityPage(items: result.entities, hasMore: result.hasMore);
+        }
       } else {
         page = recursiveBrowsing
             ? repository.listEntityPageRecursivelyUnderNode(
@@ -880,13 +1132,7 @@ class _AppShellState extends State<AppShell> {
       );
       if (enteringImmersive) {
         _sidebarCollapsed = true;
-        _selectionMode = false;
-        _selectedEntityIds.clear();
-        _selectedNodeIds.clear();
-        _selectionAnchorId = null;
-        _selectionFocusId = null;
-        _nodeSelectionAnchorId = null;
-        _nodeSelectionFocusId = null;
+        _selection.exit();
       }
     });
     try {
@@ -913,145 +1159,54 @@ class _AppShellState extends State<AppShell> {
     });
   }
 
-  Future<void> _scan() async {
-    final repository = _repository;
-    if (repository == null || _scanning) return;
+  void _setShelfImmersive(bool enabled) {
+    if (!mounted) return;
+    setState(() => _sidebarCollapsed = enabled);
+  }
+
+  Future<void> _scan({String? rootDisplayName}) async {
     final rootPath = _indexPathController.text.trim();
-    if (rootPath.isEmpty) {
-      setState(() => _indexError = '请先输入要建立索引的路径。');
-      return;
-    }
-    setState(() {
-      _scanning = true;
-      _scanControl = IndexScanControl();
-      _indexError = null;
-      _scanProgress = ScanProgress(
-        phase: ScanPhase.discovering,
-        discovered: 0,
-        total: 0,
-        processed: 0,
-        thumbnailTotal: 0,
-        thumbnailProcessed: 0,
-        message:
-            rootPath.startsWith('content://') ? '正在读取 Android 目录' : '正在准备扫描',
-      );
-    });
-    try {
-      final summary = await LibraryScanner(repository).scanPath(
-        rootPath,
-        control: _scanControl,
-        onProgress: (progress) {
-          if (!mounted) return;
-          setState(() {
-            _scanProgress = progress;
-          });
-        },
-      );
-      IndexNode? createdIndex;
-      for (final index in repository.listIndexRoots()) {
-        if (index.id == summary.indexRootId) {
-          createdIndex = index;
-          break;
-        }
-      }
-      if (createdIndex != null) {
+    final tasks = _buildTasks;
+    if (tasks == null || tasks.isRunning) return;
+    setState(() => _indexError = null);
+    final result = await tasks.startRoot(
+      rootPath,
+      displayName: rootDisplayName,
+    );
+    if (!mounted) return;
+    final createdIndex = result?.indexRootId == null
+        ? null
+        : _repository?.getIndexNode(result!.indexRootId!);
+    if (result?.status == LibraryBuildStatus.completed &&
+        createdIndex != null) {
+      setState(() {
         _selectedIndexRoot = createdIndex;
         _selectedItem = null;
-      }
-      _reload(
-        indexNodeId: createdIndex?.id,
-        invalidateBrowserCache: true,
-      );
-      _refreshRecoverableIndexTasks();
-      setState(() {
-        _scanProgress = null;
         _section = AppSection.indexes;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('索引完成 · ${summary.timings.compactReport}')),
-        );
-      }
-    } on IndexScanPausedException {
-      _refreshRecoverableIndexTasks();
-      setState(() {
-        _indexError = null;
-        _scanProgress = null;
-      });
-    } on IndexScanCanceledException {
-      _refreshRecoverableIndexTasks();
-      setState(() {
-        _indexError = null;
-        _scanProgress = null;
-      });
-    } catch (error) {
-      _refreshRecoverableIndexTasks();
-      setState(() {
-        _indexError = '扫描失败：$error';
-        _scanProgress = null;
-      });
-    } finally {
-      setState(() {
-        _scanning = false;
-        _scanControl = null;
-      });
+      _reload(indexNodeId: createdIndex.id, invalidateBrowserCache: true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('索引完成，实体与节点预览已写入本地资产库。'),
+        ),
+      );
     }
   }
 
   Future<void> _updateDirectoryNode(IndexNode node) async {
-    final repository = _repository;
-    if (repository == null || _scanning) return;
-    final root = repository.directoryIndexRootForNode(node.id);
-    if (root == null) return;
-    setState(() {
-      _scanning = true;
-      _scanControl = IndexScanControl();
-      _indexError = null;
-      _scanProgress = const ScanProgress(
-        phase: ScanPhase.discovering,
-        discovered: 0,
-        total: 0,
-        processed: 0,
-        thumbnailTotal: 0,
-        thumbnailProcessed: 0,
-        message: '正在准备更新当前目录节点',
-      );
-    });
-    try {
-      final summary = await LibraryScanner(repository).scanDirectoryNode(
-        node.id,
-        control: _scanControl,
-        onProgress: (progress) {
-          if (mounted) setState(() => _scanProgress = progress);
-        },
-      );
-      _reload(indexNodeId: node.id, invalidateBrowserCache: true);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '已更新“${node.name}”及其下级 · '
-              '${summary.imported} 新增，${summary.updated} 更新，${summary.skipped} 未变化',
-            ),
-          ),
-        );
-      }
-    } on IndexScanPausedException {
-      if (mounted) setState(() => _indexError = null);
-    } on IndexScanCanceledException {
-      if (mounted) setState(() => _indexError = null);
-    } catch (error) {
-      if (mounted) setState(() => _indexError = '更新失败：$error');
-    } finally {
-      if (mounted) {
-        _refreshRecoverableIndexTasks();
-        setState(() {
-          _scanning = false;
-          _scanControl = null;
-          _scanProgress = null;
-        });
-      }
-    }
+    final tasks = _buildTasks;
+    if (tasks == null || tasks.isRunning) return;
+    setState(() => _indexError = null);
+    final result = await tasks.updateNode(node);
+    if (!mounted || result?.status != LibraryBuildStatus.completed) return;
+    _reload(indexNodeId: node.id, invalidateBrowserCache: true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '已更新“${node.name}”及其下级，并完成预览资产构建。',
+        ),
+      ),
+    );
   }
 
   Future<void> _updateCurrentDirectoryNode() async {
@@ -1106,7 +1261,7 @@ class _AppShellState extends State<AppShell> {
       message: '将重新生成“${root.name}”及全部下级节点的预览图描述。',
     );
     if (!confirmed) return;
-    await IndexNodeThumbnailService(repository).rebuildForRoot(root);
+    await _refreshNodePreview(root.id, reason: 'manual_rebuild');
     _reload(invalidateBrowserCache: true);
     if (mounted) {
       ScaffoldMessenger.of(context)
@@ -1125,7 +1280,7 @@ class _AppShellState extends State<AppShell> {
     if (node == null) {
       return;
     }
-    await IndexNodeThumbnailService(repository).rebuildForNode(node);
+    await _refreshNodePreview(node.id, reason: 'manual_rebuild');
     _reload(indexNodeId: _currentIndexNode?.id, invalidateBrowserCache: true);
   }
 
@@ -1149,112 +1304,106 @@ class _AppShellState extends State<AppShell> {
           .map((tile) => {
                 'kind': tile.kind.name,
                 'title': tile.title,
-                'thumbnailPath': tile.thumbnailPath,
+                'thumbnailKey': tile.thumbnailKey,
+                'thumbnailFormat': tile.thumbnailFormat,
                 'entityId': tile.entityId,
                 'nodeId': tile.nodeId,
                 'aspectRatio': tile.aspectRatio,
               })
           .toList()),
     );
+    await _refreshNodePreview(nodeId, reason: 'override_set');
     _reload(indexNodeId: _currentIndexNode?.id, invalidateBrowserCache: true);
   }
 
-  void _clearSelectedNodePreviewOverride() {
+  Future<void> _clearSelectedNodePreviewOverride() async {
     final repository = _repository;
     if (repository == null ||
         _selectedEntityIds.isNotEmpty ||
         _selectedNodeIds.length != 1) {
       return;
     }
-    repository.clearNodePreviewOverride(_selectedNodeIds.single);
+    final nodeId = _selectedNodeIds.single;
+    repository.clearNodePreviewOverride(nodeId);
+    await _refreshNodePreview(nodeId, reason: 'override_cleared');
     _reload(indexNodeId: _currentIndexNode?.id, invalidateBrowserCache: true);
   }
 
-  Future<void> _pickAndroidDirectoryAndScan() async {
-    final selection = await PlatformDirectoryPicker.pickDirectory();
-    if (selection == null || !mounted) return;
-    _indexPathController.text = selection.source;
-    await _scan();
-  }
-
-  void _pauseScan() => _scanControl?.pause();
-
-  void _cancelScan() => _scanControl?.cancel();
-
-  String _recoveryJobPath(IndexBuildJob job) {
-    final repository = _repository;
-    if (repository == null) return '目录索引';
-    final targetId = job.targetNodeId ??
-        LibraryScanner.directoryNodeIdFromJobSource(job.sourcePath);
-    if (targetId != null && job.indexRootId != null) {
-      final nodes = repository.listNodePath(job.indexRootId!, targetId);
-      if (nodes.isNotEmpty) {
-        return nodes.map((node) => node.name).join(' / ');
-      }
+  Future<void> _showCreateDirectoryIndex() async {
+    DirectorySelection? androidSelection;
+    String? desktopPath;
+    if (PlatformDirectoryPicker.isSupported) {
+      androidSelection = await PlatformDirectoryPicker.pickDirectory();
+      if (androidSelection == null || !mounted) return;
+    } else {
+      desktopPath = await getDirectoryPath();
+      if (desktopPath == null || desktopPath.isEmpty || !mounted) return;
     }
-    if (job.indexRootId != null) {
-      return repository.getIndexNode(job.indexRootId!)?.name ?? '目录索引';
-    }
-    return '目录索引';
+
+    final source = androidSelection?.source ?? desktopPath!;
+    final fallbackName = androidSelection?.displayName ?? p.basename(source);
+    // Android returns from the system DocumentsUI route asynchronously. Wait
+    // until its inherited widgets are reattached before pushing our dialog.
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    final displayName = await showDialog<String>(
+      context: context,
+      builder: (_) => _DirectoryIndexDialog(
+        source: source,
+        initialName: fallbackName,
+      ),
+    );
+    if (displayName == null || !mounted) return;
+    _indexPathController.text = source;
+    await _scan(
+      rootDisplayName:
+          displayName.trim().isEmpty ? fallbackName : displayName.trim(),
+    );
   }
 
-  void _resumeIndexJob(IndexBuildJob job) {
-    final targetNodeId =
-        LibraryScanner.directoryNodeIdFromJobSource(job.sourcePath);
-    if (targetNodeId != null) {
-      final target = _repository?.getIndexNode(targetNodeId);
-      if (target != null) {
-        _openIndexNode(target);
-        unawaited(_updateCurrentDirectoryNode());
-        return;
-      }
-      _repository?.abandonIndexJob(job.id);
-      _refreshRecoverableIndexTasks();
-      setState(() {
-        _indexError = '无法继续：原目录节点已不存在。';
-      });
-      return;
-    }
-    _indexPathController.text = job.sourcePath;
-    _scan();
+  void _pauseScan() => _buildTasks?.pause();
+
+  void _cancelScan() => _buildTasks?.abandonActive();
+
+  void _resumeIndexJob(LibraryBuildJob job) =>
+      unawaited(_executeRecoverableIndexJob(job, resume: true));
+
+  void _retryFailedIndexJob(LibraryBuildJob job) =>
+      unawaited(_executeRecoverableIndexJob(job, retryFailed: true));
+
+  void _recheckIndexJob(LibraryBuildJob job) =>
+      unawaited(_executeRecoverableIndexJob(job, recheck: true));
+
+  Future<void> _executeRecoverableIndexJob(
+    LibraryBuildJob job, {
+    bool resume = false,
+    bool retryFailed = false,
+    bool recheck = false,
+  }) async {
+    final tasks = _buildTasks;
+    if (tasks == null || tasks.isRunning) return;
+    setState(() => _indexError = null);
+    final result = recheck
+        ? await tasks.recheck(job)
+        : retryFailed
+            ? await tasks.retryFailed(job)
+            : await tasks.resume(job);
+    if (!mounted) return;
+    if (result?.status != LibraryBuildStatus.completed) return;
+    final targetNode = result?.indexRootId == null
+        ? null
+        : _repository?.getIndexNode(result!.indexRootId!);
+    if (targetNode != null) _openIndexNode(targetNode);
+    _reload(indexNodeId: targetNode?.id, invalidateBrowserCache: true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('索引任务完成。'),
+      ),
+    );
   }
 
-  void _retryFailedIndexJob(IndexBuildJob job) {
-    final repository = _repository;
-    if (repository == null || _scanning) return;
-    if (!repository.prepareFailedIndexJobCandidatesForRetry(job.id)) return;
-    _resumeIndexJob(repository.getIndexJob(job.id) ?? job);
-  }
-
-  void _recheckIndexJob(IndexBuildJob job) {
-    final repository = _repository;
-    if (repository == null || _scanning) return;
-    repository.abandonIndexJob(job.id);
-    final targetNodeId = job.targetNodeId ??
-        LibraryScanner.directoryNodeIdFromJobSource(job.sourcePath);
-    if (targetNodeId != null) {
-      final target = repository.getIndexNode(targetNodeId);
-      if (target != null) {
-        _openIndexNode(target);
-        unawaited(_updateCurrentDirectoryNode());
-        return;
-      }
-      _refreshRecoverableIndexTasks();
-      setState(() {
-        _indexError = '无法重新检查：原目录节点已删除。';
-      });
-      return;
-    }
-    _indexPathController.text = job.sourcePath;
-    _scan();
-  }
-
-  void _discardRecoverableIndexJob(IndexBuildJob job) {
-    final repository = _repository;
-    if (repository == null) return;
-    repository.abandonIndexJob(job.id);
-    _refreshRecoverableIndexTasks();
-    setState(() {});
+  void _discardRecoverableIndexJob(LibraryBuildJob job) {
+    _buildTasks?.abandon(job);
   }
 
   Future<String?> _askText({
@@ -1480,74 +1629,36 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _toggleEntitySelection(EntityListItem entity) {
-    setState(() {
-      if (!_selectedEntityIds.add(entity.id)) {
-        _selectedEntityIds.remove(entity.id);
-        if (_selectionFocusId == entity.id) _selectionFocusId = null;
-      } else {
-        _selectionAnchorId ??= entity.id;
-        _selectionFocusId = entity.id;
-        _nodeSelectionAnchorId = null;
-        _nodeSelectionFocusId = null;
-      }
-    });
+    setState(() => _selection.toggleEntity(entity.id));
   }
 
   void _toggleNodeSelection(IndexNode node) {
-    setState(() {
-      if (!_selectedNodeIds.add(node.id)) {
-        _selectedNodeIds.remove(node.id);
-        if (_nodeSelectionFocusId == node.id) _nodeSelectionFocusId = null;
-      } else {
-        _nodeSelectionAnchorId ??= node.id;
-        _nodeSelectionFocusId = node.id;
-        _selectionAnchorId = null;
-        _selectionFocusId = null;
-      }
-    });
+    setState(() => _selection.toggleNode(node.id));
   }
 
   void _toggleSelectionMode() {
     setState(() {
-      _selectionMode = !_selectionMode;
-      if (_selectionMode) {
+      _selection.toggleMode();
+      if (_selection.enabled) {
         _browserState = _browserState.copyWith(
           displayMode: BrowserDisplayMode.grid,
         );
-      }
-      if (!_selectionMode) {
-        _selectedEntityIds.clear();
-        _selectedNodeIds.clear();
-        _selectionAnchorId = null;
-        _selectionFocusId = null;
-        _nodeSelectionAnchorId = null;
-        _nodeSelectionFocusId = null;
       }
     });
   }
 
   void _startEntitySelection(EntityListItem entity) {
     setState(() {
-      _selectionMode = true;
       _browserState = _browserState.copyWith(
         displayMode: BrowserDisplayMode.grid,
       );
-      _selectedEntityIds.add(entity.id);
-      _selectionAnchorId ??= entity.id;
-      _selectionFocusId = entity.id;
-      _nodeSelectionAnchorId = null;
-      _nodeSelectionFocusId = null;
+      _selection.startEntity(entity.id);
     });
   }
 
   void _startNodeSelection(IndexNode node) {
     setState(() {
-      _selectionMode = true;
-      _selectedNodeIds.add(node.id);
-      _nodeSelectionAnchorId ??= node.id;
-      _nodeSelectionFocusId = node.id;
-      _selectionAnchorId = null;
-      _selectionFocusId = null;
+      _selection.startNode(node.id);
     });
   }
 
@@ -1555,75 +1666,38 @@ class _AppShellState extends State<AppShell> {
     final items = entities.toList(growable: false);
     if (items.isEmpty) return;
     setState(() {
-      _selectionMode = true;
       _browserState = _browserState.copyWith(
         displayMode: BrowserDisplayMode.grid,
       );
-      _selectedEntityIds.addAll(items.map((entity) => entity.id));
-      _selectionAnchorId ??= items.first.id;
-      _selectionFocusId = items.last.id;
+      _selection.addDraggedEntities(items.map((entity) => entity.id));
     });
   }
 
   void _selectAllVisibleEntities() {
-    setState(() {
-      _selectedEntityIds.addAll(_entities.map((entity) => entity.id));
-      _selectedNodeIds.addAll(_childNodes.map((node) => node.id));
-      if (_entities.isNotEmpty) {
-        _selectionAnchorId ??= _entities.first.id;
-        _selectionFocusId = _entities.last.id;
-      }
-    });
+    setState(
+      () => _selection.selectAll(
+        visibleEntityIds: _entities.map((entity) => entity.id),
+        visibleNodeIds: _childNodes.map((node) => node.id),
+      ),
+    );
   }
 
   void _invertVisibleEntitySelection() {
-    setState(() {
-      for (final entity in _entities) {
-        if (!_selectedEntityIds.remove(entity.id)) {
-          _selectedEntityIds.add(entity.id);
-          _selectionAnchorId ??= entity.id;
-          _selectionFocusId = entity.id;
-        }
-      }
-      for (final node in _childNodes) {
-        if (!_selectedNodeIds.remove(node.id)) {
-          _selectedNodeIds.add(node.id);
-          _nodeSelectionAnchorId ??= node.id;
-          _nodeSelectionFocusId = node.id;
-        }
-      }
-    });
+    setState(
+      () => _selection.invert(
+        visibleEntityIds: _entities.map((entity) => entity.id),
+        visibleNodeIds: _childNodes.map((node) => node.id),
+      ),
+    );
   }
 
   void _selectEntityRange() {
-    final nodeAnchor = _nodeSelectionAnchorId;
-    final nodeFocus = _nodeSelectionFocusId;
-    if (nodeAnchor != null && nodeFocus != null) {
-      final start = _childNodes.indexWhere((node) => node.id == nodeAnchor);
-      final end = _childNodes.indexWhere((node) => node.id == nodeFocus);
-      if (start < 0 || end < 0) return;
-      final lower = start < end ? start : end;
-      final upper = start < end ? end : start;
-      setState(() {
-        _selectedNodeIds.addAll(
-          _childNodes.sublist(lower, upper + 1).map((node) => node.id),
-        );
-      });
-      return;
-    }
-    final anchor = _selectionAnchorId;
-    final focus = _selectionFocusId;
-    if (anchor == null || focus == null) return;
-    final start = _entities.indexWhere((entity) => entity.id == anchor);
-    final end = _entities.indexWhere((entity) => entity.id == focus);
-    if (start < 0 || end < 0) return;
-    final lower = start < end ? start : end;
-    final upper = start < end ? end : start;
-    setState(() {
-      _selectedEntityIds.addAll(
-        _entities.sublist(lower, upper + 1).map((entity) => entity.id),
-      );
-    });
+    setState(
+      () => _selection.selectRange(
+        visibleEntityIds: _entities.map((entity) => entity.id).toList(),
+        visibleNodeIds: _childNodes.map((node) => node.id).toList(),
+      ),
+    );
   }
 
   Future<void> _showEntityContextMenu(EntityListItem entity) async {
@@ -1683,6 +1757,9 @@ class _AppShellState extends State<AppShell> {
         nativeImageBackend: NativeImageThumbnailBackend(),
         windowsWicBackend: WindowsWicWebpThumbnailBackend(),
       ).regenerateThumbnail(entity);
+      for (final nodeId in repository.listIndexNodeIdsForEntity(entity.id)) {
+        await _refreshNodePreview(nodeId, reason: 'thumbnail_regenerated');
+      }
       final refreshed = repository.getEntity(item.id);
       if (!mounted) return;
       final message = refreshed?.thumbnailStatus == ThumbnailStatus.success
@@ -1701,24 +1778,9 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
-  void _clearEntitySelection() => setState(() {
-        _selectedEntityIds.clear();
-        _selectedNodeIds.clear();
-        _selectionAnchorId = null;
-        _selectionFocusId = null;
-        _nodeSelectionAnchorId = null;
-        _nodeSelectionFocusId = null;
-      });
+  void _clearEntitySelection() => setState(_selection.clear);
 
-  void _exitSelectionMode() => setState(() {
-        _selectionMode = false;
-        _selectedEntityIds.clear();
-        _selectedNodeIds.clear();
-        _selectionAnchorId = null;
-        _selectionFocusId = null;
-        _nodeSelectionAnchorId = null;
-        _nodeSelectionFocusId = null;
-      });
+  void _exitSelectionMode() => setState(_selection.exit);
 
   Future<void> _showCreateCollectionFromSelection() async {
     if (_isInsideCustomIndex && _currentIndexNode != null) {
@@ -1758,16 +1820,8 @@ class _AppShellState extends State<AppShell> {
         repository.linkEntitiesToIndexNode(
             entityIds: entityIds, indexNodeId: node.id);
       }
-      final root = parentOverride ?? _selectedIndexRoot;
-      if (root != null) {
-        await IndexNodeThumbnailService(repository).rebuildForRoot(root);
-      }
-      setState(() {
-        _selectionMode = false;
-        _selectedEntityIds.clear();
-        _selectionAnchorId = null;
-        _selectionFocusId = null;
-      });
+      await _refreshNodePreview(node.id, reason: 'custom_node_created');
+      setState(_selection.exit);
       _browserNodeCache.clear();
       _cacheWarmupGeneration++;
       if (parentOverride != null) {
@@ -1804,13 +1858,12 @@ class _AppShellState extends State<AppShell> {
         name: trimmed,
         entityIds: entityIds,
       );
-      await IndexNodeThumbnailService(repository).rebuildForRoot(collection);
-      setState(() {
-        _selectionMode = false;
-        _selectedEntityIds.clear();
-        _selectionAnchorId = null;
-        _selectionFocusId = null;
-      });
+      await _refreshNodePreview(
+        collection.id,
+        scope: IndexPreviewRebuildScope.subtree,
+        reason: 'collection_created',
+      );
+      setState(_selection.exit);
       _browserNodeCache.clear();
       _cacheWarmupGeneration++;
       _openIndexRoot(collection);
@@ -1858,13 +1911,26 @@ class _AppShellState extends State<AppShell> {
         name: name.trim(),
         entityIds: _selectedEntityIds,
       );
+      final previewRefreshes = <Future<void>>[
+        _refreshNodePreview(
+          collection.id,
+          reason: 'collection_entities_added',
+        ),
+      ];
       for (final nodeId in _selectedNodeIds) {
-        repository.cloneIndexNodeTree(
+        final cloned = repository.cloneIndexNodeTree(
           sourceNodeId: nodeId,
           targetParentId: collection.id,
         );
+        previewRefreshes.add(
+          _refreshNodePreview(
+            cloned.id,
+            scope: IndexPreviewRebuildScope.subtree,
+            reason: 'node_tree_cloned',
+          ),
+        );
       }
-      await IndexNodeThumbnailService(repository).rebuildForRoot(collection);
+      await Future.wait(previewRefreshes);
       _exitSelectionMode();
       _browserNodeCache.clear();
       _cacheWarmupGeneration++;
@@ -1948,6 +2014,7 @@ class _AppShellState extends State<AppShell> {
     );
     if (targets == null || targets.isEmpty) return;
     try {
+      final previewRefreshes = <Future<void>>[];
       for (final targetId in targets) {
         if (_selectedEntityIds.isNotEmpty) {
           repository.linkEntitiesToIndexNode(
@@ -1956,20 +2023,23 @@ class _AppShellState extends State<AppShell> {
           );
         }
         for (final nodeId in _selectedNodeIds) {
-          repository.cloneIndexNodeTree(
+          final cloned = repository.cloneIndexNodeTree(
             sourceNodeId: nodeId,
             targetParentId: targetId,
           );
-        }
-        final target = repository.getIndexNode(targetId);
-        if (target != null) {
-          final owner = collections.firstWhere(
-            (root) => repository.listNodePath(root.id, target.id).isNotEmpty,
-            orElse: () => target,
+          previewRefreshes.add(
+            _refreshNodePreview(
+              cloned.id,
+              scope: IndexPreviewRebuildScope.subtree,
+              reason: 'node_tree_added_to_collection',
+            ),
           );
-          await IndexNodeThumbnailService(repository).rebuildForRoot(owner);
         }
+        previewRefreshes.add(
+          _refreshNodePreview(targetId, reason: 'collection_content_added'),
+        );
       }
+      await Future.wait(previewRefreshes);
     } on ArgumentError catch (error) {
       if (mounted) setState(() => _indexError = '加入索引失败：${error.message}');
       return;
@@ -2074,7 +2144,11 @@ class _AppShellState extends State<AppShell> {
         targetParentId: targetId,
       );
       final target = repository.getIndexNode(targetId)!;
-      await IndexNodeThumbnailService(repository).rebuildForRoot(target);
+      await _refreshNodePreview(
+        cloned.id,
+        scope: IndexPreviewRebuildScope.subtree,
+        reason: 'node_tree_cloned',
+      );
       _browserNodeCache.clear();
       _cacheWarmupGeneration++;
       _reloadDashboardData();
@@ -2114,10 +2188,7 @@ class _AppShellState extends State<AppShell> {
     for (final nodeId in _selectedNodeIds) {
       repository.deleteIndexNode(nodeId);
     }
-    if (_selectedIndexRoot != null) {
-      await IndexNodeThumbnailService(repository)
-          .rebuildForRoot(_selectedIndexRoot!);
-    }
+    await _refreshNodePreview(node.id, reason: 'references_removed');
     _clearEntitySelection();
     _reload(indexNodeId: node.id, invalidateBrowserCache: true);
   }
@@ -2160,6 +2231,7 @@ class _AppShellState extends State<AppShell> {
     if (trimmed == null || trimmed.isEmpty || trimmed == index.name) return;
     try {
       repository.renameIndexNode(index.id, trimmed);
+      await _refreshNodePreview(index.id, reason: 'node_renamed');
       _reload(
         indexNodeId: _currentIndexNode?.id,
         invalidateBrowserCache: true,
@@ -2199,6 +2271,9 @@ class _AppShellState extends State<AppShell> {
         ? null
         : repository.getIndexNode(index.parentId!);
     repository.deleteIndexNode(index.id);
+    if (fallbackParent != null) {
+      await _refreshNodePreview(fallbackParent.id, reason: 'node_deleted');
+    }
     setState(() {
       if (_selectedIndexRoot?.id == index.id) {
         _selectedIndexRoot = null;
@@ -2323,12 +2398,57 @@ class _AppShellState extends State<AppShell> {
         body: Center(child: CircularProgressIndicator()),
       );
     }
+    final incompatibleSchemaVersion = _incompatibleSchemaVersion;
+    if (incompatibleSchemaVersion != null) {
+      final theme = Theme.of(context);
+      return Scaffold(
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.storage_rounded,
+                    size: 36,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(height: 18),
+                  Text('需要重置本地索引', style: theme.textTheme.headlineSmall),
+                  const SizedBox(height: 10),
+                  Text(
+                    '当前本地索引的数据结构（版本 $incompatibleSchemaVersion）与当前版本不兼容，需要重新建立应用索引。',
+                    style: theme.textTheme.bodyLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '此操作仅清理应用数据库与生成缓存，不会删除、移动或修改硬盘、TF 卡中的真实资料文件。',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  FilledButton.icon(
+                    onPressed:
+                        _resettingLocalIndex ? null : _resetLocalIndexStorage,
+                    icon: const Icon(Icons.delete_sweep_outlined),
+                    label: const Text('重置并重新开始'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
 
     final body = switch (_section) {
       AppSection.home => LibraryDashboardPage(
-          roots: _indexRoots,
-          rootCounts: _rootCounts,
-          onOpenRoot: _openIndexRoot,
+          rootsCount: _indexRoots.length,
+          itemsCount: _rootCounts.values.fold<int>(0, (a, b) => a + b),
           onOpenSettings: () => setState(() => _section = AppSection.settings),
         ),
       AppSection.data
@@ -2338,6 +2458,8 @@ class _AppShellState extends State<AppShell> {
           graphRoot: _currentIndexNode!,
           onOpenNode: _openIndexNode,
           onReturnToRootIndex: _openRootIndex,
+          onPreviewDirty: _refreshNodePreview,
+          onThumbnailEntityNeeded: _requestBrowseThumbnailById,
         ),
       AppSection.data => CollectionBrowserPage(
           currentNode: _currentIndexNode,
@@ -2379,6 +2501,9 @@ class _AppShellState extends State<AppShell> {
           onPathNodeSelected: _handlePathSelection,
           onOpenEntity: (entity) => _openEntity(entity),
           onShowEntityMenu: _showEntityContextMenu,
+          onThumbnailNeeded: _requestBrowseThumbnail,
+          onThumbnailEntityNeeded: _requestBrowseThumbnailById,
+          onLoadThumbnailPreloadPage: _loadCurrentNodeThumbnailPreloadPage,
           onLoadMoreEntities: _loadMoreEntities,
           selectedEntityIds: _selectedEntityIds,
           onToggleEntitySelection: _toggleEntitySelection,
@@ -2404,16 +2529,21 @@ class _AppShellState extends State<AppShell> {
           kind: MediaShelfKind.video,
           repository: _repository!,
           onOpenEntity: _openEntity,
+          onThumbnailNeeded: _requestBrowseThumbnail,
+          onImmersiveChanged: _setShelfImmersive,
         ),
       AppSection.gallery => MediaShelfPage(
           kind: MediaShelfKind.gallery,
           repository: _repository!,
           onOpenEntity: _openEntity,
+          onThumbnailNeeded: _requestBrowseThumbnail,
+          onImmersiveChanged: _setShelfImmersive,
         ),
       AppSection.reading => MediaShelfPage(
           kind: MediaShelfKind.reading,
           repository: _repository!,
           onOpenEntity: _openEntity,
+          onThumbnailNeeded: _requestBrowseThumbnail,
         ),
       AppSection.music => MusicPage(
           sessions: _repository!.listAudioPlaybackSessions(),
@@ -2432,47 +2562,52 @@ class _AppShellState extends State<AppShell> {
           },
         ),
       AppSection.indexes => IndexManagementPage(
-          pathController: _indexPathController,
           roots: _indexRoots,
           rootCounts: _rootCounts,
           scanning: _scanning,
           progress: _scanProgress,
+          activeBuildJob: _activeBuildJob,
           recoverableJobs: _recoverableIndexJobs,
-          recoverableJobSummaries: _recoverableJobSummaries,
-          recoverableJobFailures: _recoverableJobFailures,
-          recoverableJobPaths: _recoverableJobPaths,
-          errorMessage: _indexError,
+          errorMessage: _indexError ?? _buildTasks?.errorMessage,
           taskHistory: _indexTaskHistory,
-          onScan: _scan,
-          onPickDirectory: PlatformDirectoryPicker.isSupported
-              ? _pickAndroidDirectoryAndScan
-              : null,
-          onPause: _pauseScan,
-          onCancel: _cancelScan,
-          onResume: _resumeIndexJob,
-          onRecheck: _recheckIndexJob,
-          onRetryFailed: _retryFailedIndexJob,
-          onDiscardRecovery: _discardRecoverableIndexJob,
-          onRename: _renameIndexNode,
-          onDelete: _deleteIndexNode,
-          onUpdateDirectoryIndex: _chooseDirectoryUpdateNode,
-          onRebuildNodePreviews: _showRebuildNodePreviews,
-          onCreateCollection: () => _showCreateCollection(),
-          onCreateGraph: _showCreateGraphIndex,
-          onCreateNodeAtRoot: (root) =>
-              _showCreateCustomNode(parentOverride: root),
-          onOpenRoot: _openIndexRoot,
+          actions: IndexManagementActions(
+            onCreateDirectoryIndex: _showCreateDirectoryIndex,
+            onPause: _pauseScan,
+            onCancel: _cancelScan,
+            onResume: _resumeIndexJob,
+            onRecheck: _recheckIndexJob,
+            onRetryFailed: _retryFailedIndexJob,
+            onAbandon: _discardRecoverableIndexJob,
+            onRename: _renameIndexNode,
+            onDelete: _deleteIndexNode,
+            onUpdateDirectoryIndex: _chooseDirectoryUpdateNode,
+            onRebuildNodePreviews: _showRebuildNodePreviews,
+            onCreateCollection: () => _showCreateCollection(),
+            onCreateGraph: _showCreateGraphIndex,
+            onCreateNodeAtRoot: (root) =>
+                _showCreateCustomNode(parentOverride: root),
+            onOpenRoot: _openIndexRoot,
+          ),
         ),
       AppSection.settings => SettingsPage(
           themeChoice: widget.themeChoice,
           sortMode: _browserState.sortMode,
           onThemeChanged: widget.onThemeChanged,
+          onResetLocalIndex: _resetLocalIndexStorage,
           onSortChanged: (value) {
             setState(
                 () => _browserState = _browserState.copyWith(sortMode: value));
             _reload(indexNodeId: _currentIndexNode?.id);
           },
         ),
+      AppSection.logs => DiagnosticsPage(
+          database: _database!,
+          log: AppDiagnosticLog.instance,
+          recoverableJobs: _recoverableIndexJobs,
+          history: _indexTaskHistory,
+          progress: _scanProgress,
+        ),
+      AppSection.pet => PetPage(controller: _petController),
     };
 
     const navItems = <_FloatingNavItem>[
@@ -2517,6 +2652,18 @@ class _AppShellState extends State<AppShell> {
         icon: Icons.account_tree_outlined,
         selectedIcon: Icons.account_tree_rounded,
         label: '索引',
+      ),
+      _FloatingNavItem(
+        section: AppSection.logs,
+        icon: Icons.bug_report_outlined,
+        selectedIcon: Icons.bug_report_rounded,
+        label: '日志',
+      ),
+      _FloatingNavItem(
+        section: AppSection.pet,
+        icon: Icons.smart_toy_outlined,
+        selectedIcon: Icons.smart_toy_rounded,
+        label: '宠物',
       ),
       _FloatingNavItem(
         section: AppSection.settings,
@@ -2608,6 +2755,10 @@ class _AppShellState extends State<AppShell> {
                 ),
               if (_mediaOverlay case final overlay?)
                 Positioned.fill(child: overlay),
+              if (_petController.visible && _mediaOverlay == null)
+                Positioned.fill(
+                  child: AppPet(controller: _petController),
+                ),
               Positioned(
                 right: 0,
                 bottom: desktopLayout ? 12 : 88,
@@ -2639,6 +2790,71 @@ class _TextPromptDialog extends StatefulWidget {
 
   @override
   State<_TextPromptDialog> createState() => _TextPromptDialogState();
+}
+
+class _DirectoryIndexDialog extends StatefulWidget {
+  const _DirectoryIndexDialog({
+    required this.source,
+    required this.initialName,
+  });
+
+  final String source;
+  final String initialName;
+
+  @override
+  State<_DirectoryIndexDialog> createState() => _DirectoryIndexDialogState();
+}
+
+class _DirectoryIndexDialogState extends State<_DirectoryIndexDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initialName);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_controller.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('新建目录索引'),
+      content: SizedBox(
+        width: 460,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.source,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: '索引名称（可选）',
+                hintText: '默认使用目录最后一级名称',
+              ),
+              onSubmitted: (_) => _submit(),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('建立索引')),
+      ],
+    );
+  }
 }
 
 class _TextPromptDialogState extends State<_TextPromptDialog> {
@@ -3005,7 +3221,9 @@ class _FloatingGlassNavBar extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final width = constraints.maxWidth.clamp(1.0, 760.0).toDouble();
-          final showSelectedLabel = width / items.length >= 82;
+          // Keep the selected label visible on tablet-width windows even
+          // after adding the debug entry to the bottom navigation.
+          final showSelectedLabel = width / items.length >= 72;
           return Center(
             child: SizedBox(
               width: width,
@@ -3079,7 +3297,7 @@ class _FloatingGlassNavButton extends StatelessWidget {
         margin: const EdgeInsets.symmetric(horizontal: 2),
         padding: EdgeInsets.symmetric(
           vertical: 9,
-          horizontal: selected && showLabel ? 14 : 6,
+          horizontal: selected && showLabel ? 5 : 6,
         ),
         decoration: BoxDecoration(
           color: selected

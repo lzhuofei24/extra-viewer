@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -10,13 +9,14 @@ double indexNodePreviewAspectRatio(IndexNodePreview? preview) {
   return switch (preview.kind) {
     IndexNodePreviewKind.singleVisual ||
     IndexNodePreviewKind.visualGrid =>
-      _JustifiedMosaicLayout.fromTiles(preview.tiles).aspectRatio,
-    // Compact list previews reserve less vertical space than visual mosaics.
-    // Keep audio and book-only nodes visually aligned.
+      _BookStackLayout.fromTiles(
+        preview.tiles,
+        customOrderTopToBottom: preview.customOrderTopToBottom,
+      ).aspectRatio,
     IndexNodePreviewKind.audioList ||
-    IndexNodePreviewKind.documentList =>
-      1.875,
-    IndexNodePreviewKind.splitLists => .85,
+    IndexNodePreviewKind.documentList ||
+    IndexNodePreviewKind.splitLists =>
+      1,
     IndexNodePreviewKind.empty => 1,
   };
 }
@@ -37,56 +37,49 @@ class IndexNodeThumbnail extends StatelessWidget {
   Widget build(BuildContext context) {
     final data = preview;
     if (data == null) {
-      return _NodeThumbnailFailure(
-        message: '节点预览描述缺失\n节点：$nodeName',
-      );
+      return _NodeNameTile(title: nodeName);
     }
     if (data.kind == IndexNodePreviewKind.empty) {
       if (hasContent) {
-        return _NodeThumbnailFailure(
-          message: '节点有内容但预览为空\n节点：$nodeName',
-        );
+        return _NodeNameTile(title: nodeName);
       }
       return const SizedBox.expand();
     }
     return ClipRRect(
-      borderRadius: BorderRadius.circular(7),
+      borderRadius: BorderRadius.circular(16),
       child: ColoredBox(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
         child: switch (data.kind) {
-          IndexNodePreviewKind.singleVisual =>
-            _PreviewTile(tile: data.tiles.single),
-          IndexNodePreviewKind.visualGrid => _PreviewGrid(
-              tiles: data.tiles,
-              nodeName: nodeName,
+          IndexNodePreviewKind.singleVisual ||
+          IndexNodePreviewKind.visualGrid =>
+            _VisualNodeAsset(
+              path: data.visualAssetPath,
             ),
-          IndexNodePreviewKind.audioList => _DataListTile(
-              audioNames: data.audioNames,
-              documentNames: const [],
-            ),
-          IndexNodePreviewKind.documentList => _DataListTile(
-              audioNames: const [],
-              documentNames: data.documentNames,
-              useAudioPalette: true,
-            ),
-          IndexNodePreviewKind.splitLists => Column(
-              children: [
-                Expanded(
-                  child: _DataListTile(
-                    audioNames: const [],
-                    documentNames: data.documentNames,
-                    useAudioPalette: true,
-                  ),
+          IndexNodePreviewKind.audioList => _BookStack(
+              tiles: [
+                IndexNodePreviewTile(
+                  kind: IndexNodePreviewTileKind.audio,
+                  title: nodeName,
+                  audioNames: data.audioNames,
                 ),
-                Divider(
-                  height: 1,
-                  color: Theme.of(context).colorScheme.outlineVariant,
+              ],
+            ),
+          IndexNodePreviewKind.documentList => _BookStack(
+              tiles: [
+                IndexNodePreviewTile(
+                  kind: IndexNodePreviewTileKind.document,
+                  title: nodeName,
+                  documentNames: data.documentNames,
                 ),
-                Expanded(
-                  child: _DataListTile(
-                    audioNames: data.audioNames,
-                    documentNames: const [],
-                  ),
+              ],
+            ),
+          IndexNodePreviewKind.splitLists => _BookStack(
+              tiles: [
+                IndexNodePreviewTile(
+                  kind: IndexNodePreviewTileKind.mixedData,
+                  title: nodeName,
+                  audioNames: data.audioNames,
+                  documentNames: data.documentNames,
                 ),
               ],
             ),
@@ -97,42 +90,96 @@ class IndexNodeThumbnail extends StatelessWidget {
   }
 }
 
-class _PreviewGrid extends StatelessWidget {
-  const _PreviewGrid({required this.tiles, required this.nodeName});
+class _VisualNodeAsset extends StatelessWidget {
+  const _VisualNodeAsset({this.path});
 
-  final List<IndexNodePreviewTile> tiles;
-  final String nodeName;
+  final String? path;
 
   @override
   Widget build(BuildContext context) {
-    if (tiles.isEmpty) {
-      return _NodeThumbnailFailure(
-        message: '拼图预览没有候选项\n节点：$nodeName',
-      );
+    final value = path;
+    if (value == null || value.isEmpty || !File(value).existsSync()) {
+      // Visual node previews are persistent build artifacts. Do not recreate
+      // a multi-image layout while scrolling when the asset is unavailable.
+      return const SizedBox.expand();
     }
-    return _JustifiedMosaic(tiles: tiles);
+    return Image.file(
+      File(value),
+      fit: BoxFit.fill,
+      filterQuality: FilterQuality.medium,
+    );
   }
 }
 
-class _JustifiedMosaic extends StatelessWidget {
-  const _JustifiedMosaic({required this.tiles});
+class _BookStack extends StatelessWidget {
+  const _BookStack({required this.tiles});
 
   final List<IndexNodePreviewTile> tiles;
 
   @override
   Widget build(BuildContext context) {
-    final layout = _JustifiedMosaicLayout.fromTiles(tiles);
+    final layout = _BookStackLayout.fromTiles(tiles);
     return LayoutBuilder(
       builder: (context, constraints) => Stack(
-        fit: StackFit.expand,
         children: [
-          for (final cell in layout.cells)
+          for (var index = 0; index < layout.tiles.length; index++)
             Positioned(
-              left: cell.left * constraints.maxWidth,
-              top: cell.top * constraints.maxHeight,
-              width: cell.width * constraints.maxWidth,
-              height: cell.height * constraints.maxHeight,
-              child: ClipRect(child: _PreviewTile(tile: cell.tile)),
+              left: layout.leftOffsets[index] * constraints.maxHeight,
+              top: 0,
+              width: layout.coverWidths[index] * constraints.maxHeight,
+              height: constraints.maxHeight,
+              child: DecoratedBox(
+                decoration: const BoxDecoration(
+                  color: Color(0x66000000),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Color(0x59000000),
+                      blurRadius: 5,
+                      offset: Offset(1, 0),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: const BorderRadius.horizontal(
+                    left: Radius.circular(16),
+                  ),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .outlineVariant
+                            .withValues(alpha: .75),
+                      ),
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _PreviewTile(tile: layout.tiles[index]),
+                        if (index < layout.tiles.length - 1)
+                          Positioned(
+                            left: constraints.maxHeight * .25,
+                            top: 0,
+                            width: constraints.maxHeight * .15,
+                            height: constraints.maxHeight,
+                            child: const DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.centerLeft,
+                                  end: Alignment.centerRight,
+                                  colors: [
+                                    Color(0x00000000),
+                                    Color(0x66000000),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ),
         ],
       ),
@@ -140,100 +187,86 @@ class _JustifiedMosaic extends StatelessWidget {
   }
 }
 
-class _JustifiedMosaicLayout {
-  const _JustifiedMosaicLayout({
+class _BookStackLayout {
+  const _BookStackLayout({
     required this.aspectRatio,
-    required this.cells,
+    required this.tiles,
+    required this.coverWidths,
+    required this.leftOffsets,
   });
 
   final double aspectRatio;
-  final List<_MosaicCell> cells;
+  final List<IndexNodePreviewTile> tiles;
+  final List<double> coverWidths;
+  final List<double> leftOffsets;
 
-  factory _JustifiedMosaicLayout.fromTiles(List<IndexNodePreviewTile> tiles) {
+  factory _BookStackLayout.fromTiles(
+    List<IndexNodePreviewTile> tiles, {
+    bool customOrderTopToBottom = false,
+  }) {
     if (tiles.isEmpty) {
-      return const _JustifiedMosaicLayout(aspectRatio: 1, cells: []);
+      return const _BookStackLayout(
+        aspectRatio: 1,
+        tiles: [],
+        coverWidths: [],
+        leftOffsets: [],
+      );
     }
-    _JustifiedMosaicLayout? best;
-    var bestScore = double.infinity;
-    final boundaryCount = tiles.length - 1;
-    for (var mask = 0; mask < (1 << boundaryCount); mask++) {
-      final rows = <List<IndexNodePreviewTile>>[];
-      var row = <IndexNodePreviewTile>[];
-      for (var index = 0; index < tiles.length; index++) {
-        row.add(tiles[index]);
-        if (index == tiles.length - 1 || (mask & (1 << index)) != 0) {
-          rows.add(row);
-          row = <IndexNodePreviewTile>[];
+    if (customOrderTopToBottom) {
+      return _BookStackLayout._fromBottomToTop(
+        tiles.reversed.toList(growable: false),
+      );
+    }
+    final dataTiles = tiles.where(_isBookDataTile).toList(growable: false);
+    final visualTiles =
+        tiles.where((tile) => !_isBookDataTile(tile)).toList(growable: true);
+    if (visualTiles.length > 1) {
+      var topIndex = 0;
+      for (var index = 1; index < visualTiles.length; index++) {
+        final candidate = visualTiles[index];
+        final top = visualTiles[topIndex];
+        // Larger height/width means a more portrait-oriented cover.
+        if (candidate.aspectRatio < top.aspectRatio ||
+            (candidate.aspectRatio == top.aspectRatio &&
+                candidate.title.compareTo(top.title) < 0)) {
+          topIndex = index;
         }
       }
-      final candidate = _JustifiedMosaicLayout._fromRows(rows);
-      final counts = rows.map((items) => items.length).toList(growable: false);
-      final imbalance = counts.reduce(math.max) - counts.reduce(math.min);
-      final score = math.log(candidate.aspectRatio).abs() + imbalance * .28;
-      if (score < bestScore) {
-        best = candidate;
-        bestScore = score;
-      }
+      final top = visualTiles.removeAt(topIndex);
+      visualTiles.add(top);
     }
-    return best!;
+    return _BookStackLayout._fromBottomToTop([...dataTiles, ...visualTiles]);
   }
 
-  factory _JustifiedMosaicLayout._fromRows(
-    List<List<IndexNodePreviewTile>> rows,
+  factory _BookStackLayout._fromBottomToTop(
+    List<IndexNodePreviewTile> ordered,
   ) {
-    final rowHeights = <double>[];
-    for (final row in rows) {
-      final sum = row.fold<double>(
-        0,
-        (value, tile) => value + tile.aspectRatio.clamp(.18, 5),
-      );
-      rowHeights.add(1 / sum);
+    final widths = ordered.map(_bookCoverWidth).toList(growable: false);
+    final offsets = <double>[];
+    var offset = 0.0;
+    for (var index = 0; index < ordered.length; index++) {
+      offsets.add(offset);
+      offset += index == ordered.length - 1
+          ? widths[index]
+          : widths[index].clamp(0.0, .4).toDouble();
     }
-    final totalHeight = rowHeights.reduce((a, b) => a + b);
-    final cells = <_MosaicCell>[];
-    var y = 0.0;
-    for (var rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-      final row = rows[rowIndex];
-      final height = rowHeights[rowIndex] / totalHeight;
-      final sum = row.fold<double>(
-        0,
-        (value, tile) => value + tile.aspectRatio.clamp(.18, 5),
-      );
-      var x = 0.0;
-      for (final tile in row) {
-        final width = tile.aspectRatio.clamp(.18, 5) / sum;
-        cells.add(_MosaicCell(
-          tile: tile,
-          left: x,
-          top: y,
-          width: width,
-          height: height,
-        ));
-        x += width;
-      }
-      y += height;
-    }
-    return _JustifiedMosaicLayout(
-      aspectRatio: 1 / totalHeight,
-      cells: cells,
+    return _BookStackLayout(
+      aspectRatio: offset,
+      tiles: ordered,
+      coverWidths: widths,
+      leftOffsets: offsets,
     );
   }
 }
 
-class _MosaicCell {
-  const _MosaicCell({
-    required this.tile,
-    required this.left,
-    required this.top,
-    required this.width,
-    required this.height,
-  });
+bool _isBookDataTile(IndexNodePreviewTile tile) =>
+    tile.kind == IndexNodePreviewTileKind.audio ||
+    tile.kind == IndexNodePreviewTileKind.document ||
+    tile.kind == IndexNodePreviewTileKind.mixedData;
 
-  final IndexNodePreviewTile tile;
-  final double left;
-  final double top;
-  final double width;
-  final double height;
+double _bookCoverWidth(IndexNodePreviewTile tile) {
+  if (_isBookDataTile(tile)) return 1;
+  return tile.aspectRatio.clamp(.12, 1.0).toDouble();
 }
 
 class _PreviewTile extends StatelessWidget {
@@ -246,20 +279,19 @@ class _PreviewTile extends StatelessWidget {
     if (tile.kind == IndexNodePreviewTileKind.visual &&
         tile.thumbnailPath != null &&
         tile.thumbnailPath!.isNotEmpty) {
-      return Image.file(
-        File(tile.thumbnailPath!),
-        fit: BoxFit.cover,
-        alignment: Alignment.center,
-        filterQuality: FilterQuality.medium,
-        errorBuilder: (_, error, __) => _NodeThumbnailFailure(
-          message: '实体缩略图解码失败\n${tile.title}\n$error',
+      return ColoredBox(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: Image.file(
+          File(tile.thumbnailPath!),
+          fit: BoxFit.cover,
+          alignment: Alignment.center,
+          filterQuality: FilterQuality.medium,
+          errorBuilder: (_, __, ___) => _NodeNameTile(title: tile.title),
         ),
       );
     }
     if (tile.kind == IndexNodePreviewTileKind.visual) {
-      return _NodeThumbnailFailure(
-        message: '实体缩略图路径为空\n${tile.title}',
-      );
+      return _NodeNameTile(title: tile.title);
     }
     return switch (tile.kind) {
       IndexNodePreviewTileKind.visual ||
@@ -278,31 +310,6 @@ class _PreviewTile extends StatelessWidget {
         ),
     };
   }
-}
-
-class _NodeThumbnailFailure extends StatelessWidget {
-  const _NodeThumbnailFailure({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => ColoredBox(
-        color:
-            Theme.of(context).colorScheme.errorContainer.withValues(alpha: .72),
-        child: Padding(
-          padding: const EdgeInsets.all(7),
-          child: SelectableText(
-            message,
-            maxLines: 7,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onErrorContainer,
-                  fontFamily: 'Consolas',
-                  fontSize: 9,
-                  height: 1.15,
-                ),
-          ),
-        ),
-      );
 }
 
 class _NodeNameTile extends StatelessWidget {

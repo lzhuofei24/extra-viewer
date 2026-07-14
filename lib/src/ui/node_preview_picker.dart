@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import '../core/database/library_repository.dart';
 import '../core/domain/models.dart';
 
-/// Database-paged picker for manually composing an index-node preview.
+/// Lazily expanded tree picker for manually composing an index-node preview.
 class NodePreviewPicker extends StatefulWidget {
   const NodePreviewPicker({
     super.key,
@@ -40,65 +40,67 @@ class NodePreviewPicker extends StatefulWidget {
 class _NodePreviewPickerState extends State<NodePreviewPicker> {
   static const _pageSize = 80;
 
-  final _scrollController = ScrollController();
-  final _searchController = TextEditingController();
-  final _items = <NodePreviewCandidate>[];
   final _selected = <String, NodePreviewCandidate>{};
-  var _hasMore = true;
-  var _loading = false;
-  var _query = '';
-  var _requestVersion = 0;
+  final _expandedNodeIds = <String>{};
+  final _loadingNodeIds = <String>{};
+  final _childrenByNodeId = <String, _PreviewTreeChildren>{};
 
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_loadMoreOnScroll);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadPage(reset: true));
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _loadNodeChildren(widget.nodeId),
+    );
   }
 
-  @override
-  void dispose() {
-    _scrollController
-      ..removeListener(_loadMoreOnScroll)
-      ..dispose();
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  void _loadMoreOnScroll() {
-    if (_scrollController.position.extentAfter < 240) _loadPage();
-  }
-
-  Future<void> _loadPage({bool reset = false}) async {
-    if (!reset && (_loading || !_hasMore)) return;
-    final version = ++_requestVersion;
-    setState(() => _loading = true);
-    // Yield so the dialog's loading frame is painted before SQLite walks a
-    // large subtree for the first page.
+  Future<void> _loadNodeChildren(String nodeId, {bool loadMore = false}) async {
+    final existing = _childrenByNodeId[nodeId];
+    if (_loadingNodeIds.contains(nodeId) ||
+        (loadMore && (existing == null || !existing.hasMoreEntities))) {
+      return;
+    }
+    setState(() => _loadingNodeIds.add(nodeId));
     await Future<void>.delayed(Duration.zero);
-    final page = widget.repository.listNodePreviewCandidates(
-      widget.nodeId,
-      query: _query,
-      offset: reset ? 0 : _items.length,
+    final childNodes = loadMore
+        ? existing!.nodes
+        : widget.repository.listChildNodes(widget.nodeId, parentId: nodeId);
+    final page = widget.repository.listEntityPageDirectlyUnderNode(
+      nodeId,
+      after: loadMore && existing!.entities.isNotEmpty
+          ? EntityPageCursor.fromEntity(
+              existing.entities.last,
+              EntitySortMode.nameAsc,
+            )
+          : null,
       limit: _pageSize,
     );
-    if (!mounted || version != _requestVersion) return;
+    if (!mounted) return;
     setState(() {
-      if (reset) _items.clear();
-      _items.addAll(page.items);
-      _hasMore = page.hasMore;
-      _loading = false;
+      _childrenByNodeId[nodeId] = _PreviewTreeChildren(
+        nodes: childNodes,
+        entities: [if (loadMore) ...existing!.entities, ...page.items],
+        hasMoreEntities: page.hasMore,
+      );
+      _loadingNodeIds.remove(nodeId);
     });
   }
 
-  void _updateQuery(String value) {
-    _query = value;
-    _hasMore = true;
-    _loadPage(reset: true);
+  void _toggleExpanded(IndexNode node) {
+    setState(() {
+      if (_expandedNodeIds.contains(node.id)) {
+        _expandedNodeIds.remove(node.id);
+      } else {
+        _expandedNodeIds.add(node.id);
+      }
+    });
+    if (!_childrenByNodeId.containsKey(node.id)) {
+      _loadNodeChildren(node.id);
+    }
   }
 
-  String _idFor(NodePreviewCandidate candidate) =>
-      candidate.entityId ?? candidate.nodeId!;
+  String _idFor(NodePreviewCandidate candidate) => candidate.entityId == null
+      ? 'node:${candidate.nodeId}'
+      : 'entity:${candidate.entityId}';
 
   void _toggle(NodePreviewCandidate candidate, bool selected) {
     final id = _idFor(candidate);
@@ -111,6 +113,59 @@ class _NodePreviewPickerState extends State<NodePreviewPicker> {
     });
   }
 
+  List<_PreviewTreeRow> _visibleRows() {
+    final rows = <_PreviewTreeRow>[];
+    void addChildren(String parentId, int depth) {
+      final children = _childrenByNodeId[parentId];
+      if (children == null) return;
+      for (final node in children.nodes) {
+        rows.add(_PreviewTreeRow.node(node: node, depth: depth));
+        if (_expandedNodeIds.contains(node.id)) {
+          addChildren(node.id, depth + 1);
+        }
+      }
+      for (final entity in children.entities) {
+        rows.add(_PreviewTreeRow.entity(entity: entity, depth: depth));
+      }
+      if (children.hasMoreEntities) {
+        rows.add(_PreviewTreeRow.loadMore(nodeId: parentId, depth: depth));
+      }
+    }
+
+    addChildren(widget.nodeId, 0);
+    return rows;
+  }
+
+  NodePreviewCandidate _candidateForNode(IndexNode node) =>
+      NodePreviewCandidate(
+        kind: IndexNodePreviewTileKind.node,
+        title: node.name,
+        nodeId: node.id,
+      );
+
+  NodePreviewCandidate _candidateForEntity(EntityListItem entity) {
+    final kind = switch (entity.entityType) {
+      EntityType.image || EntityType.video => IndexNodePreviewTileKind.visual,
+      EntityType.audio => IndexNodePreviewTileKind.audio,
+      EntityType.text ||
+      EntityType.externalLink =>
+        IndexNodePreviewTileKind.document,
+    };
+    return NodePreviewCandidate(
+      kind: kind,
+      title: entity.title,
+      entityId: entity.id,
+      thumbnailPath: entity.thumbnailPath,
+      thumbnailKey: entity.thumbnailKey,
+      thumbnailFormat: entity.thumbnailFormat,
+      aspectRatio: entity.thumbnailWidth != null &&
+              entity.thumbnailHeight != null &&
+              entity.thumbnailHeight! > 0
+          ? entity.thumbnailWidth! / entity.thumbnailHeight!
+          : 1,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final selectedCount = _selected.length;
@@ -121,46 +176,85 @@ class _NodePreviewPickerState extends State<NodePreviewPicker> {
         children: [
           Text('自定义节点预览', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 4),
-          Text('可从当前节点的全部下级节点和实体中选择，最多 4 项。',
+          Text('展开节点以选择任意下级节点或实体，最多 4 项。',
               style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _searchController,
-            onChanged: _updateQuery,
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.search_rounded),
-              hintText: '筛选名称',
-              border: OutlineInputBorder(),
-            ),
-          ),
           const SizedBox(height: 10),
           Expanded(
-            child: _items.isEmpty && _loading
+            child: _childrenByNodeId.isEmpty
                 ? const Center(child: CircularProgressIndicator())
                 : ListView.builder(
-                    controller: _scrollController,
-                    itemCount: _items.length + (_hasMore ? 1 : 0),
+                    itemCount: _visibleRows().length,
                     itemBuilder: (context, index) {
-                      if (index == _items.length) {
-                        return const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: Center(child: CircularProgressIndicator()),
+                      final row = _visibleRows()[index];
+                      if (row.loadMoreNodeId != null) {
+                        return Padding(
+                          padding: EdgeInsets.only(left: row.depth * 20.0),
+                          child: TextButton.icon(
+                            onPressed: () => _loadNodeChildren(
+                              row.loadMoreNodeId!,
+                              loadMore: true,
+                            ),
+                            icon: const Icon(Icons.expand_more_rounded),
+                            label: const Text('加载更多实体'),
+                          ),
                         );
                       }
-                      final candidate = _items[index];
+                      final node = row.node;
+                      final candidate = node == null
+                          ? _candidateForEntity(row.entity!)
+                          : _candidateForNode(node);
                       final id = _idFor(candidate);
-                      return CheckboxListTile(
-                        dense: true,
-                        value: _selected.containsKey(id),
-                        onChanged:
-                            selectedCount >= 4 && !_selected.containsKey(id)
-                                ? null
-                                : (selected) =>
-                                    _toggle(candidate, selected ?? false),
-                        secondary: _CandidateArtwork(candidate: candidate),
-                        title: Text(candidate.title,
-                            maxLines: 2, overflow: TextOverflow.ellipsis),
-                        subtitle: Text(_candidateKindLabel(candidate.kind)),
+                      final isExpanded =
+                          node != null && _expandedNodeIds.contains(node.id);
+                      final isLoading =
+                          node != null && _loadingNodeIds.contains(node.id);
+                      return Padding(
+                        padding: EdgeInsets.only(left: row.depth * 20.0),
+                        child: Row(
+                          children: [
+                            if (node != null)
+                              IconButton(
+                                tooltip: isExpanded ? '收起节点' : '展开节点',
+                                onPressed: () => _toggleExpanded(node),
+                                icon: isLoading
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
+                                      )
+                                    : Icon(isExpanded
+                                        ? Icons.expand_more_rounded
+                                        : Icons.chevron_right_rounded),
+                              )
+                            else
+                              const SizedBox(width: 48),
+                            Checkbox(
+                              value: _selected.containsKey(id),
+                              onChanged: selectedCount >= 4 &&
+                                      !_selected.containsKey(id)
+                                  ? null
+                                  : (selected) =>
+                                      _toggle(candidate, selected ?? false),
+                            ),
+                            _CandidateArtwork(candidate: candidate),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(candidate.title,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis),
+                                  Text(_candidateKindLabel(candidate.kind),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       );
                     },
                   ),
@@ -193,6 +287,45 @@ class _NodePreviewPickerState extends State<NodePreviewPicker> {
   }
 }
 
+class _PreviewTreeChildren {
+  const _PreviewTreeChildren({
+    required this.nodes,
+    required this.entities,
+    required this.hasMoreEntities,
+  });
+
+  final List<IndexNode> nodes;
+  final List<EntityListItem> entities;
+  final bool hasMoreEntities;
+}
+
+class _PreviewTreeRow {
+  const _PreviewTreeRow._({
+    required this.depth,
+    this.node,
+    this.entity,
+    this.loadMoreNodeId,
+  });
+
+  const _PreviewTreeRow.node({required IndexNode node, required int depth})
+      : this._(depth: depth, node: node);
+
+  const _PreviewTreeRow.entity({
+    required EntityListItem entity,
+    required int depth,
+  }) : this._(depth: depth, entity: entity);
+
+  const _PreviewTreeRow.loadMore({
+    required String nodeId,
+    required int depth,
+  }) : this._(depth: depth, loadMoreNodeId: nodeId);
+
+  final int depth;
+  final IndexNode? node;
+  final EntityListItem? entity;
+  final String? loadMoreNodeId;
+}
+
 class _CandidateArtwork extends StatelessWidget {
   const _CandidateArtwork({required this.candidate});
 
@@ -204,12 +337,15 @@ class _CandidateArtwork extends StatelessWidget {
     if (path != null) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(4),
-        child: Image.file(
-          File(path),
-          width: 40,
-          height: 40,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _fallback(context),
+        child: ColoredBox(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          child: Image.file(
+            File(path),
+            width: 40,
+            height: 40,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _fallback(context),
+          ),
         ),
       );
     }

@@ -70,4 +70,97 @@ void main() {
     expect(nextPage.entities.single.title, 'beta.jpg');
     expect(nextPage.hasMore, isFalse);
   });
+
+  test('read worker pages recursive results without blocking the UI isolate',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('best_viewer_worker_');
+    addTearDown(() => temp.delete(recursive: true));
+    final database = AppDatabase.openAtPathForTesting(
+      p.join(temp.path, 'library.db'),
+    );
+    addTearDown(database.close);
+    final repository = LibraryRepository(database);
+    final root = repository.ensureDirectoryIndexRoot(p.join(temp.path, 'root'));
+    final child = repository.ensureIndexNode(
+      parentId: root.id,
+      name: 'child',
+      nodeType: NodeType.folder,
+      viewType: ViewType.tree,
+    );
+    final first = repository
+        .upsertEntity(
+          path: p.join(temp.path, 'first.jpg'),
+          name: 'first.jpg',
+          format: 'jpg',
+          entityType: EntityType.image,
+          hash: 'first',
+          size: 1,
+          sourceCreatedAtMs: 1,
+          sourceModifiedAtMs: 1,
+        )
+        .entity;
+    final second = repository
+        .upsertEntity(
+          path: p.join(temp.path, 'second.jpg'),
+          name: 'second.jpg',
+          format: 'jpg',
+          entityType: EntityType.image,
+          hash: 'second',
+          size: 1,
+          sourceCreatedAtMs: 1,
+          sourceModifiedAtMs: 1,
+        )
+        .entity;
+    repository.linkEntityToIndexNode(entityId: first.id, indexNodeId: root.id);
+    repository.linkEntityToIndexNode(
+        entityId: second.id, indexNodeId: child.id);
+
+    final worker = await LibraryReadWorker.start(
+      databasePath: database.databasePath!,
+      storageDirectoryPath: database.storageDirectoryPath,
+    );
+    addTearDown(worker.close);
+    final firstPage = await worker.loadRecursivePage(
+      nodeId: root.id,
+      sortMode: EntitySortMode.nameAsc,
+      limit: 1,
+    );
+
+    expect(firstPage.entities.single.title, 'first.jpg');
+    expect(firstPage.hasMore, isTrue);
+    expect(firstPage.recursiveCursor, isNotNull);
+
+    final secondPage = await worker.loadRecursivePage(
+      nodeId: root.id,
+      sortMode: EntitySortMode.nameAsc,
+      after: firstPage.recursiveCursor,
+      limit: 1,
+    );
+    expect(secondPage.entities.single.title, 'second.jpg');
+    expect(secondPage.hasMore, isFalse);
+  });
+
+  test('read worker close is idempotent and releases the database handle',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('best_viewer_worker_');
+    addTearDown(() => temp.delete(recursive: true));
+    final database = AppDatabase.openAtPathForTesting(
+      p.join(temp.path, 'library.db'),
+    );
+    addTearDown(database.close);
+    final worker = await LibraryReadWorker.start(
+      databasePath: database.databasePath!,
+      storageDirectoryPath: database.storageDirectoryPath,
+    );
+
+    await Future.wait([worker.close(), worker.close()]);
+
+    await expectLater(
+      worker.loadDirectPage(
+        parentNodeId: 'missing',
+        sortMode: EntitySortMode.nameAsc,
+      ),
+      throwsStateError,
+    );
+  });
 }

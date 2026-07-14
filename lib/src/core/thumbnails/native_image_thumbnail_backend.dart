@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 
 import '../formats/thumbnail_spec.dart';
 import 'thumbnail_artifact.dart';
+import 'thumbnail_cancellation.dart';
 import 'webp_dimensions.dart';
 
 /// Uses native FFmpeg decoding, scaling and lossy WebP encoding on Windows.
@@ -15,12 +16,19 @@ class NativeImageThumbnailBackend {
 
   bool get supported => Platform.isWindows && !_unavailable;
 
-  Future<ThumbnailArtifact?> encode(File file) async {
+  Future<ThumbnailArtifact?> encode(
+    File file, {
+    ThumbnailCancellationToken? cancellationToken,
+  }) async {
     if (!supported) return null;
     final watch = Stopwatch()..start();
     for (final executable in _candidates()) {
+      cancellationToken?.throwIfCancelled();
+      Process? process;
+      void killProcess() => process?.kill();
+      cancellationToken?.addListener(killProcess);
       try {
-        final process = await Process.start(
+        process = await Process.start(
           executable,
           [
             '-hide_banner',
@@ -33,7 +41,7 @@ class NativeImageThumbnailBackend {
             '-frames:v',
             '1',
             '-vf',
-            "scale='min(iw,$thumbnailWidth)':-2",
+            "scale='trunc(iw*min(1,sqrt($thumbnailTargetPixelCount/(iw*ih))))':'trunc(ih*min(1,sqrt($thumbnailTargetPixelCount/(iw*ih))))'",
             '-f',
             'image2pipe',
             '-c:v',
@@ -53,10 +61,11 @@ class NativeImageThumbnailBackend {
         final exitCode = await process.exitCode.timeout(
           const Duration(seconds: 8),
           onTimeout: () {
-            process.kill();
+            process?.kill();
             return -1;
           },
         );
+        cancellationToken?.throwIfCancelled();
         final bytes = Uint8List.fromList(await stdoutFuture);
         await stderrFuture;
         if (exitCode != 0) {
@@ -74,8 +83,11 @@ class NativeImageThumbnailBackend {
           encodeMs: watch.elapsedMilliseconds,
         );
       } on ProcessException {
+        cancellationToken?.throwIfCancelled();
         _failedExecutables.add(executable);
         // Continue through configured and bundled executable candidates.
+      } finally {
+        cancellationToken?.removeListener(killProcess);
       }
     }
     if (_cachedExecutable == null) _unavailable = true;

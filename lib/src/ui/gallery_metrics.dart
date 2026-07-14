@@ -7,5 +7,6 @@ class GalleryMetrics {
 
   static double get cardWidth => _android ? 300 : 210;
   static double get cardHeight => _android ? 400 : 280;
+  static double get nodeCardHeight => _android ? 320 : 220;
   static double get squareSize => _android ? 330 : 240;
 }
