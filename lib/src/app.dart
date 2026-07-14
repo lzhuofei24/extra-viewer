@@ -2196,36 +2196,15 @@ class _AppShellState extends State<AppShell> {
   Future<void> _renameIndexNode(IndexNode index) async {
     final repository = _repository;
     if (repository == null || _scanning) return;
-    final controller = TextEditingController(text: index.name);
-    String? newName;
-    try {
-      newName = await showDialog<String>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('重命名索引'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: '索引名称'),
-            onSubmitted: (value) =>
-                Navigator.of(dialogContext).pop<String>(value),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop<String?>(null),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () =>
-                  Navigator.of(dialogContext).pop<String>(controller.text),
-              child: const Text('保存'),
-            ),
-          ],
-        ),
-      );
-    } finally {
-      controller.dispose();
-    }
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (_) => _TextPromptDialog(
+        title: '重命名索引',
+        label: '索引名称',
+        confirmLabel: '保存',
+        initialValue: index.name,
+      ),
+    );
     if (!mounted) return;
     final trimmed = newName?.trim();
     if (trimmed == null || trimmed.isEmpty || trimmed == index.name) return;
@@ -2781,12 +2760,14 @@ class _TextPromptDialog extends StatefulWidget {
     required this.label,
     required this.confirmLabel,
     this.hintText,
+    this.initialValue,
   });
 
   final String title;
   final String label;
   final String confirmLabel;
   final String? hintText;
+  final String? initialValue;
 
   @override
   State<_TextPromptDialog> createState() => _TextPromptDialogState();
@@ -2858,7 +2839,8 @@ class _DirectoryIndexDialogState extends State<_DirectoryIndexDialog> {
 }
 
 class _TextPromptDialogState extends State<_TextPromptDialog> {
-  late final TextEditingController _controller = TextEditingController();
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initialValue);
 
   @override
   void dispose() {

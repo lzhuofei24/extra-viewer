@@ -254,12 +254,20 @@ class LibraryBuildTaskController extends ChangeNotifier {
   }
 
   Future<void> _buildManifest(LibraryBuildJob job) async {
-    _report(job, 0, 0, '正在建立清单');
-    builds.resetManifest(job.id);
+    final resumeAfter = builds.manifestItemCount(job.id);
+    if (resumeAfter == 0) {
+      builds.resetManifest(job.id);
+    }
+    _report(
+      job,
+      resumeAfter,
+      0,
+      resumeAfter == 0 ? '正在建立清单' : '正在继续建立清单：已保留 $resumeAfter 项',
+    );
     final source = SourceHandle.parse(job.sourcePath);
     final total = source.isAndroidContentUri
-        ? await _buildAndroidManifest(job)
-        : await _buildLocalManifest(job);
+        ? await _buildAndroidManifest(job, resumeAfter: resumeAfter)
+        : await _buildLocalManifest(job, resumeAfter: resumeAfter);
     _control!.check();
     builds.checkpointStage(
       jobId: job.id,
@@ -268,7 +276,10 @@ class LibraryBuildTaskController extends ChangeNotifier {
     );
   }
 
-  Future<int> _buildLocalManifest(LibraryBuildJob job) async {
+  Future<int> _buildLocalManifest(
+    LibraryBuildJob job, {
+    required int resumeAfter,
+  }) async {
     final root = Directory(job.sourcePath);
     if (!await root.exists()) {
       throw FileSystemException('目录不存在', job.sourcePath);
@@ -280,12 +291,14 @@ class LibraryBuildTaskController extends ChangeNotifier {
       if (entry is! File) continue;
       final handler = FileFormatRegistry.resolvePath(entry.path);
       if (handler == null) continue;
+      final itemSequence = sequence++;
+      if (itemSequence < resumeAfter) continue;
       batch.add(LibraryBuildManifestItem(
         jobId: job.id,
         sourcePath: p.normalize(entry.path),
         relativePath:
             p.relative(entry.path, from: job.sourcePath).replaceAll('\\', '/'),
-        sequence: sequence++,
+        sequence: itemSequence,
         name: p.basename(entry.path),
         format: handler.formatFor(entry.path),
         entityType: handler.entityType,
@@ -306,7 +319,10 @@ class LibraryBuildTaskController extends ChangeNotifier {
     return sequence;
   }
 
-  Future<int> _buildAndroidManifest(LibraryBuildJob job) async {
+  Future<int> _buildAndroidManifest(
+    LibraryBuildJob job, {
+    required int resumeAfter,
+  }) async {
     final provider = SafCandidateSourceProvider(job.sourcePath);
     final scope = job.targetNodeId == null
         ? null
@@ -321,11 +337,13 @@ class LibraryBuildTaskController extends ChangeNotifier {
         for (final source in sources) {
           final handler = FileFormatRegistry.resolvePath(source.name);
           if (handler == null) continue;
+          final itemSequence = sequence++;
+          if (itemSequence < resumeAfter) continue;
           items.add(LibraryBuildManifestItem(
             jobId: job.id,
             sourcePath: source.sourcePath,
             relativePath: source.relativePath,
-            sequence: sequence++,
+            sequence: itemSequence,
             name: source.name,
             format: handler.formatFor(source.name),
             entityType: handler.entityType,
@@ -371,8 +389,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
     );
     final attachNode = target ?? root;
     final directoryCache = <String, IndexNode>{'': attachNode};
-    var cursor = -1;
-    var written = 0;
+    var cursor = job.indexedTotal - 1;
+    var written = job.indexedTotal;
     while (true) {
       _control!.check();
       final page = builds.listManifestPage(job.id, afterSequence: cursor);
@@ -414,6 +432,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
         rebuildStats: false,
         markPreviewDirty: false,
       );
+      // A whole manifest page is durable. Resuming never reprocesses it.
+      builds.updateIndexedProgress(job.id, written);
       _report(job, written, job.manifestTotal,
           '正在写入索引：$written/${job.manifestTotal}');
     }

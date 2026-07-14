@@ -210,6 +210,13 @@ class LibraryBuildRepository {
     }
   }
 
+  int manifestItemCount(String jobId) =>
+      _count('library_build_manifest', jobId);
+
+  void updateIndexedProgress(String jobId, int indexedTotal) {
+    _update(jobId, indexedTotal: indexedTotal);
+  }
+
   List<LibraryBuildManifestItem> listManifestPage(
     String jobId, {
     required int afterSequence,
