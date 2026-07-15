@@ -3302,48 +3302,6 @@ LEFT JOIN child_counts ON child_counts.id = node.id
     );
   }
 
-  void restoreEntityUserState({
-    required String entityId,
-    required bool archived,
-    int? lastOpenedAtMs,
-    int? lastPositionMs,
-    double? readerScrollOffset,
-    double? zoomScale,
-    String? extraStateJson,
-  }) {
-    database.db.execute(
-      '''
-      UPDATE entities
-      SET archived = ?, last_opened_at = ?,
-          last_position_ms = ?, reader_scroll_offset = ?, zoom_scale = ?,
-          extra_state_json = ?, updated_at = ?
-      WHERE id = ?
-      ''',
-      [
-        boolToInt(archived),
-        lastOpenedAtMs,
-        lastPositionMs,
-        readerScrollOffset,
-        zoomScale,
-        extraStateJson,
-        nowMillis(),
-        entityId,
-      ],
-    );
-  }
-
-  void setArchived(String entityId, bool archived) {
-    _requireEntityExists(entityId);
-    writeTransaction(() {
-      database.db.execute(
-        'UPDATE entities SET archived = ?, updated_at = ? WHERE id = ?',
-        [boolToInt(archived), nowMillis(), entityId],
-      );
-      _markEntityPreviewDirty(entityId, reason: 'entity_archive_changed');
-    });
-    rebuildIndexNodeStats();
-  }
-
   void unlinkEntityFromIndexNode({
     required String entityId,
     required String indexNodeId,

@@ -176,6 +176,8 @@ class Entity {
   final int? thumbnailHeight;
   final String? thumbnailError;
   final String? thumbnailPath;
+  /// Internal visibility compatibility flag. There is no user-facing archive
+  /// workflow; normal queries expose only non-archived entities.
   final bool archived;
   final int? lastOpenedAtMs;
   final int? lastPositionMs;
@@ -490,6 +492,8 @@ class EntityListItem {
   final int? thumbnailWidth;
   final int? thumbnailHeight;
   final int modifiedAtMs;
+  /// Internal visibility compatibility flag. There is no user-facing archive
+  /// workflow; normal queries expose only non-archived entities.
   final bool archived;
   final int? lastOpenedAtMs;
   final int? lastPositionMs;
