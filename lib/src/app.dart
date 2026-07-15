@@ -1069,7 +1069,7 @@ class _AppShellState extends State<AppShell> {
 
   void _openIndexNode(IndexNode node) {
     _exitImmersiveBrowsing();
-    // 一级索引根是全局根索引的直属节点；进入它时必须先切换索引上下文。
+    // 一级索引根是索引首页的直属节点；进入它时必须先切换索引上下文。
     if (_isIndexRoot(node)) {
       _openIndexRoot(node);
       return;

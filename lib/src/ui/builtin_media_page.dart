@@ -615,7 +615,7 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                                   );
                                 },
                               ),
-                            EntityType.document => _ExternalInfoPreview(
+                            EntityType.document => _DocumentInfoPreview(
                                 entity: entity,
                                 sourceResolver: _sourceResolver,
                               ),
@@ -3779,8 +3779,8 @@ class _PlaybackTimelineLabels extends StatelessWidget {
   }
 }
 
-class _ExternalInfoPreview extends StatelessWidget {
-  const _ExternalInfoPreview({
+class _DocumentInfoPreview extends StatelessWidget {
+  const _DocumentInfoPreview({
     required this.entity,
     required this.sourceResolver,
   });
