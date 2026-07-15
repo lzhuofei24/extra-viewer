@@ -390,7 +390,7 @@ Map<String, Object?> _entityToMap(Row row, String storageDirectoryPath) {
     'format': row['format'],
     'size': row['size'],
     'modifiedAtMs': row['source_modified_at_ms'],
-    'metadataPreview': row['metadata_preview'],
+    'contentExcerpt': row['metadata_preview'],
     'thumbnailStatus': status,
     'thumbnailPath': thumbnailPath,
     'thumbnailKey': key,
@@ -434,7 +434,7 @@ EntityListItem _entityFromMap(Map<Object?, Object?> map) => EntityListItem(
       format: map['format']! as String,
       size: map['size']! as int,
       modifiedAtMs: map['modifiedAtMs']! as int,
-      metadataPreview: map['metadataPreview'] as String?,
+      contentExcerpt: map['contentExcerpt'] as String?,
       thumbnailStatus:
           ThumbnailStatus.fromValue(map['thumbnailStatus']! as String),
       thumbnailPath: map['thumbnailPath'] as String?,

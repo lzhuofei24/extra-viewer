@@ -13,7 +13,7 @@ class EntityArtwork extends StatelessWidget {
     required this.entityType,
     required this.format,
     this.title,
-    this.metadataPreview,
+    this.contentExcerpt,
     this.thumbnailStatus = ThumbnailStatus.none,
     this.thumbnailPath,
     this.onThumbnailNeeded,
@@ -24,7 +24,7 @@ class EntityArtwork extends StatelessWidget {
   final EntityType entityType;
   final String format;
   final String? title;
-  final String? metadataPreview;
+  final String? contentExcerpt;
   final ThumbnailStatus thumbnailStatus;
   final String? thumbnailPath;
   final VoidCallback? onThumbnailNeeded;
@@ -48,20 +48,25 @@ class EntityArtwork extends StatelessWidget {
   Widget _buildVisual(BuildContext context) {
     final path = thumbnailPath;
     if (path != null && path.isNotEmpty) {
-      return ColoredBox(
-        color: Theme.of(context).scaffoldBackgroundColor,
-        child: Image.file(
-          File(path),
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) {
-            _requestThumbnail();
-            return _FallbackArtwork(
-              entityType: entityType,
-              format: format,
-              thumbnailStatus: thumbnailStatus,
-            );
-          },
-        ),
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          ColoredBox(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            child: Image.file(
+              File(path),
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) {
+                _requestThumbnail();
+                return _FallbackArtwork(
+                  entityType: entityType,
+                  format: format,
+                  thumbnailStatus: thumbnailStatus,
+                );
+              },
+            ),
+          ),
+        ],
       );
     }
     if (!_isGeneratedMedia(entityType)) {
@@ -69,7 +74,7 @@ class EntityArtwork extends StatelessWidget {
         entityType: entityType,
         format: format,
         title: title,
-        metadataPreview: metadataPreview,
+        contentExcerpt: contentExcerpt,
       );
     }
     _requestThumbnail();
@@ -152,10 +157,7 @@ class EntityCard extends StatelessWidget {
             entity.thumbnailHeight! > 0
         ? entity.thumbnailWidth! / entity.thumbnailHeight!
         : switch (entity.entityType) {
-            EntityType.audio ||
-            EntityType.text ||
-            EntityType.externalLink =>
-              1.0,
+            EntityType.audio || EntityType.text || EntityType.document => 1.0,
             _ => 4 / 3,
           };
     return Card(
@@ -180,7 +182,7 @@ class EntityCard extends StatelessWidget {
                 entityType: entity.entityType,
                 format: entity.format,
                 title: entity.title,
-                metadataPreview: entity.metadataPreview,
+                contentExcerpt: entity.contentExcerpt,
                 thumbnailStatus: entity.thumbnailStatus,
                 thumbnailPath: entity.thumbnailPath,
                 onThumbnailNeeded: onThumbnailNeeded,
@@ -545,10 +547,7 @@ class _FallbackArtwork extends StatelessWidget {
       EntityType.text => [const Color(0xFFE2D7BE), const Color(0xFF9C7C43)],
       EntityType.audio => [const Color(0xFFB8C9D9), const Color(0xFF4D6A86)],
       EntityType.video => [const Color(0xFFD0C7BC), const Color(0xFF726658)],
-      EntityType.externalLink => [
-          const Color(0xFFC7D5CB),
-          const Color(0xFF587163)
-        ],
+      EntityType.document => [const Color(0xFFC7D5CB), const Color(0xFF587163)],
     };
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -588,13 +587,13 @@ class _RuntimePreviewArtwork extends StatelessWidget {
     required this.entityType,
     required this.format,
     required this.title,
-    required this.metadataPreview,
+    required this.contentExcerpt,
   });
 
   final EntityType entityType;
   final String format;
   final String? title;
-  final String? metadataPreview;
+  final String? contentExcerpt;
 
   static const _chineseFontFallbacks = <String>[
     'Microsoft YaHei',
@@ -611,14 +610,11 @@ class _RuntimePreviewArtwork extends StatelessWidget {
       return const _AudioRuntimePreviewArtwork();
     }
     final theme = Theme.of(context);
-    final preview = metadataPreview?.trim();
+    final preview = contentExcerpt?.trim();
     final colors = switch (entityType) {
       EntityType.text => (const Color(0xFFF5F0E4), const Color(0xFF5D4B2E)),
       EntityType.audio => (const Color(0xFFE7EFF4), const Color(0xFF2B5C76)),
-      EntityType.externalLink => (
-          const Color(0xFFEBF0E9),
-          const Color(0xFF38644D)
-        ),
+      EntityType.document => (const Color(0xFFEBF0E9), const Color(0xFF38644D)),
       _ => (
           theme.colorScheme.surfaceContainerHighest,
           theme.colorScheme.onSurface
@@ -666,7 +662,7 @@ bool _isGeneratedMedia(EntityType type) {
 String _runtimePreviewDescription(EntityType type, String format) {
   return switch (type) {
     EntityType.audio => '音频文件\n${format.toUpperCase()}',
-    EntityType.externalLink => '文档或链接\n${format.toUpperCase()}',
+    EntityType.document => '文档\n${format.toUpperCase()}',
     _ => format.toUpperCase(),
   };
 }
@@ -677,7 +673,7 @@ String entityTypeLabel(EntityType type) {
     EntityType.image => '图片',
     EntityType.audio => '音频',
     EntityType.video => '视频',
-    EntityType.externalLink => '链接',
+    EntityType.document => '文档',
   };
 }
 
@@ -741,7 +737,7 @@ IconData _iconForType(EntityType type) {
     EntityType.audio => Icons.music_note_outlined,
     EntityType.video => Icons.movie_outlined,
     EntityType.text => Icons.description_outlined,
-    EntityType.externalLink => Icons.link_outlined,
+    EntityType.document => Icons.article_outlined,
   };
 }
 
@@ -749,10 +745,10 @@ IconData _indexNodeIcon(NodeType type) {
   return switch (type) {
     NodeType.root => Icons.account_tree_outlined,
     NodeType.directoryIndexRoot => Icons.folder_special_outlined,
-    NodeType.categoryIndexRoot => Icons.category_outlined,
+    NodeType.customIndexRoot => Icons.category_outlined,
     NodeType.graphIndexRoot => Icons.hub_outlined,
     NodeType.folder => Icons.folder_outlined,
-    NodeType.category => Icons.sell_outlined,
+    NodeType.customNode => Icons.sell_outlined,
     NodeType.graphNode => Icons.circle_outlined,
   };
 }
@@ -761,10 +757,10 @@ Color _indexNodeColor(NodeType type) {
   return switch (type) {
     NodeType.root => const Color(0xFF475569),
     NodeType.directoryIndexRoot => const Color(0xFF4F7D52),
-    NodeType.categoryIndexRoot => const Color(0xFF8A6A3D),
+    NodeType.customIndexRoot => const Color(0xFF8A6A3D),
     NodeType.graphIndexRoot => const Color(0xFF58708A),
     NodeType.folder => const Color(0xFF638459),
-    NodeType.category => const Color(0xFFA27C49),
+    NodeType.customNode => const Color(0xFFA27C49),
     NodeType.graphNode => const Color(0xFF657A9A),
   };
 }

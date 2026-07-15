@@ -184,9 +184,9 @@ class _AppShellState extends State<AppShell> {
   }
 
   bool get _isInsideCustomIndex =>
-      _selectedIndexRoot?.nodeType == NodeType.categoryIndexRoot &&
-      (_currentIndexNode?.nodeType == NodeType.categoryIndexRoot ||
-          _currentIndexNode?.nodeType == NodeType.category);
+      _selectedIndexRoot?.nodeType == NodeType.customIndexRoot &&
+      (_currentIndexNode?.nodeType == NodeType.customIndexRoot ||
+          _currentIndexNode?.nodeType == NodeType.customNode);
 
   bool get _canUpdateCurrentDirectoryNode {
     final repository = _repository;
@@ -381,9 +381,21 @@ class _AppShellState extends State<AppShell> {
       await audioController.restoreSession(activeSession);
     }
     _reload();
+    // Old completed builds may predate EPUB text excerpts. Repair those rows
+    // after the first frame without rescanning the selected directory.
+    unawaited(_repairMissingEpubPreviews(buildTasks));
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _petController.trigger(PetTrigger.appStarted),
     );
+  }
+
+  Future<void> _repairMissingEpubPreviews(
+    LibraryBuildTaskController tasks,
+  ) async {
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    final repaired = await tasks.repairMissingEpubMetadataPreviews();
+    if (!mounted || !identical(_buildTasks, tasks) || repaired == 0) return;
+    _reload(indexNodeId: _currentIndexNode?.id, invalidateBrowserCache: true);
   }
 
   void _handleBuildTaskChanged() {
@@ -1073,7 +1085,7 @@ class _AppShellState extends State<AppShell> {
 
   bool _isIndexRoot(IndexNode node) {
     return node.nodeType == NodeType.directoryIndexRoot ||
-        node.nodeType == NodeType.categoryIndexRoot ||
+        node.nodeType == NodeType.customIndexRoot ||
         node.nodeType == NodeType.graphIndexRoot;
   }
 
@@ -1187,7 +1199,7 @@ class _AppShellState extends State<AppShell> {
       _reload(indexNodeId: createdIndex.id, invalidateBrowserCache: true);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('索引完成，实体与节点预览已写入本地资产库。'),
+          content: Text('索引完成，实体与节点预览已写入应用存储。'),
         ),
       );
     }
@@ -1257,7 +1269,7 @@ class _AppShellState extends State<AppShell> {
     final repository = _repository;
     if (repository == null || _scanning) return;
     final confirmed = await _confirm(
-      title: '重新构建节点预览图',
+      title: '重新生成节点预览',
       message: '将重新生成“${root.name}”及全部下级节点的预览图描述。',
     );
     if (!confirmed) return;
@@ -1799,8 +1811,8 @@ class _AppShellState extends State<AppShell> {
     if (repository == null ||
         _scanning ||
         parent == null ||
-        (parent.nodeType != NodeType.categoryIndexRoot &&
-            parent.nodeType != NodeType.category)) {
+        (parent.nodeType != NodeType.customIndexRoot &&
+            parent.nodeType != NodeType.customNode)) {
       return;
     }
     final name = await showDialog<String>(
@@ -1897,7 +1909,7 @@ class _AppShellState extends State<AppShell> {
     }
     final collections = repository
         .listIndexRoots()
-        .where((node) => node.nodeType == NodeType.categoryIndexRoot)
+        .where((node) => node.nodeType == NodeType.customIndexRoot)
         .toList(growable: false);
     if (collections.isEmpty) {
       final name = await _askText(
@@ -2041,7 +2053,7 @@ class _AppShellState extends State<AppShell> {
       }
       await Future.wait(previewRefreshes);
     } on ArgumentError catch (error) {
-      if (mounted) setState(() => _indexError = '加入索引失败：${error.message}');
+      if (mounted) setState(() => _indexError = '添加到索引失败：${error.message}');
       return;
     }
     _exitSelectionMode();
@@ -2074,7 +2086,7 @@ class _AppShellState extends State<AppShell> {
     if (repository == null || source == null) return;
     final targets = repository
         .listIndexRoots()
-        .where((node) => node.nodeType == NodeType.categoryIndexRoot)
+        .where((node) => node.nodeType == NodeType.customIndexRoot)
         .toList(growable: false);
     if (targets.isEmpty) {
       setState(() => _indexError = '请先创建一个自定义索引作为复制目标。');
@@ -2289,7 +2301,7 @@ class _AppShellState extends State<AppShell> {
                 const Text('不会删除、移动或修改硬盘中的真实源文件。'),
                 if (conflicts.isEmpty) ...[
                   const SizedBox(height: 10),
-                  const Text('将删除本应用中的目录索引、实体记录、缩略图缓存。'),
+                  const Text('将删除本应用中的目录索引、实体记录和衍生预览资源。'),
                 ] else ...[
                   const SizedBox(height: 10),
                   Text(

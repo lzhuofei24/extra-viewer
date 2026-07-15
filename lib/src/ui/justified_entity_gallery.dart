@@ -169,7 +169,7 @@ double _entityAspectRatio(EntityListItem entity) {
     return width / height;
   }
   return switch (entity.entityType) {
-    EntityType.audio || EntityType.text || EntityType.externalLink => 1,
+    EntityType.audio || EntityType.text || EntityType.document => 1,
     _ => 4 / 3,
   };
 }

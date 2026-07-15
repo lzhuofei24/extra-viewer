@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../database/library_build_repository.dart';
 import '../database/library_repository.dart';
+import '../database/library_write_worker.dart';
 import '../diagnostics/app_diagnostic_log.dart';
 import '../domain/models.dart';
 import '../formats/file_format_handlers.dart';
@@ -22,6 +23,7 @@ import '../thumbnails/node_preview_composite_service.dart';
 import '../thumbnails/thumbnail_service.dart';
 import '../thumbnails/windows_wic_webp_thumbnail_backend.dart';
 import '../utils/file_fingerprint.dart';
+import '../utils/ids.dart';
 
 class LibraryBuildProgress {
   const LibraryBuildProgress({
@@ -92,6 +94,10 @@ class LibraryBuildTaskController extends ChangeNotifier {
   List<LibraryBuildJob> _recoverable = const [];
   List<LibraryBuildJob> _history = const [];
   String? _error;
+  Timer? _progressNotifyTimer;
+  DateTime _lastProgressNotification = DateTime.fromMillisecondsSinceEpoch(0);
+
+  static const _progressNotificationInterval = Duration(milliseconds: 150);
 
   bool get isRunning => _control != null;
   LibraryBuildProgress? get progress => _progress;
@@ -104,6 +110,12 @@ class LibraryBuildTaskController extends ChangeNotifier {
     _recoverable = builds.listRecoverable();
     _history = builds.listHistory();
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _progressNotifyTimer?.cancel();
+    super.dispose();
   }
 
   void pause() => _control?.pause();
@@ -191,6 +203,48 @@ class LibraryBuildTaskController extends ChangeNotifier {
     return _run(builds.get(job.id)!);
   }
 
+  /// Repairs EPUB excerpts created by older builds that completed before the
+  /// document-preview phase existed. It never rescans folders or regenerates
+  /// media thumbnails, and is deliberately skipped while a durable build job
+  /// owns the repository.
+  Future<int> repairMissingEpubMetadataPreviews({int limit = 200}) async {
+    if (isRunning) return 0;
+    final entities = library.listEpubsMissingMetadataPreview(limit: limit);
+    if (entities.isEmpty) return 0;
+    var repaired = 0;
+    await _forEachConcurrent(entities, 2, (entity) async {
+      try {
+        final metadata = await _metadataForEntity(
+          entity,
+          const EpubFileHandler(),
+        );
+        if (metadata.$1 == null || metadata.$1!.trim().isEmpty) {
+          throw StateError('EPUB 中没有可用于预览的正文');
+        }
+        library.updateEntityMetadataPreview(entity.id, metadata.$1, null);
+        repaired++;
+      } catch (error, stackTrace) {
+        AppDiagnosticLog.instance.error(
+          'epub_preview_repair_failed',
+          error,
+          stackTrace,
+          fields: {
+            'entityId': entity.id,
+            'name': entity.name,
+            'path': entity.path,
+          },
+        );
+      }
+    });
+    if (repaired > 0) {
+      AppDiagnosticLog.instance.info(
+        'epub_preview_repair_completed',
+        fields: {'repaired': repaired, 'requested': entities.length},
+      );
+    }
+    return repaired;
+  }
+
   Future<LibraryBuildJob?> _run(
     LibraryBuildJob initial, {
     String? displayName,
@@ -228,7 +282,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
         }
         job = builds.get(job.id)!;
         _activeJob = job;
-        notifyListeners();
+        _notifyProgress(force: true);
         if (job.status != LibraryBuildStatus.running &&
             job.stage != LibraryBuildStage.completed) {
           return job;
@@ -324,12 +378,12 @@ class LibraryBuildTaskController extends ChangeNotifier {
         sourceModifiedAtMs: 0,
       ));
       if (batch.length == 200) {
-        builds.upsertManifest(batch);
+        await builds.upsertManifestAsync(batch);
         batch = <LibraryBuildManifestItem>[];
         _report(job, sequence, 0, '正在建立清单：$sequence 个实体');
       }
     }
-    if (batch.isNotEmpty) builds.upsertManifest(batch);
+    if (batch.isNotEmpty) await builds.upsertManifestAsync(batch);
     _report(job, sequence, sequence, '清单已建立：$sequence 个实体');
     return sequence;
   }
@@ -367,7 +421,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
             sourceModifiedAtMs: source.document.modifiedAtMs,
           ));
         }
-        if (items.isNotEmpty) builds.upsertManifest(items);
+        if (items.isNotEmpty) await builds.upsertManifestAsync(items);
         _report(job, sequence, total, '正在建立清单：$sequence/$total');
       }
       return sequence;
@@ -412,14 +466,14 @@ class LibraryBuildTaskController extends ChangeNotifier {
       if (page.isEmpty) break;
       final existing =
           library.getEntitiesByPaths(page.map((item) => item.sourcePath));
-      final detailsBySequence =
-          <int, (String, int, int, int, String?, int?)>{};
+      final detailsBySequence = <int, (String, int, int, int, String?, int?)>{};
       // SAF reads are latency-bound. Keep up to eight in flight, then leave
       // all SQLite work to the single writer transaction below.
       await _forEachConcurrent(page, 8, (item) async {
         final handler = FileFormatRegistry.resolvePath(item.name);
         if (handler == null) return;
-        detailsBySequence[item.sequence] = await _inspectForIndex(item, handler);
+        detailsBySequence[item.sequence] =
+            await _inspectForIndex(item, handler);
       });
       final nodesBySequence = <int, IndexNode>{};
       for (final item in page) {
@@ -430,39 +484,17 @@ class LibraryBuildTaskController extends ChangeNotifier {
           cache: directoryCache,
         );
       }
-      final links = <({String entityId, String indexNodeId})>[];
-      library.writeTransaction(() {
-        for (final item in page) {
-          final details = detailsBySequence[item.sequence];
-          final node = nodesBySequence[item.sequence];
-          if (details == null || node == null) continue;
-          final result = library.upsertEntity(
-            path: item.sourcePath,
-            name: item.name,
-            format: item.format,
-            entityType: item.entityType,
-            hash: details.$1,
-            size: details.$2,
-            sourceCreatedAtMs: details.$3,
-            sourceModifiedAtMs: details.$4,
-            metadataPreview: details.$5,
-            durationMs: details.$6,
-            directoryRootId: root.id,
-            knownExisting: existing[item.sourcePath],
-            existingLookupCompleted: true,
-          );
-          links.add((entityId: result.entity.id, indexNodeId: node.id));
-          written++;
-          cursor = item.sequence;
-        }
-        library.linkEntitiesToIndexNodes(
-          links,
-          rebuildStats: false,
-          markPreviewDirty: false,
-        );
-        // A whole manifest page is durable. Resuming never reprocesses it.
-        builds.updateIndexedProgress(job.id, written);
-      });
+      final indexedInPage = await _commitIndexPage(
+        job: job,
+        page: page,
+        rootId: root.id,
+        existing: existing,
+        detailsBySequence: detailsBySequence,
+        nodesBySequence: nodesBySequence,
+        indexedBefore: written,
+      );
+      written += indexedInPage;
+      cursor = page.last.sequence;
       _report(job, written, job.manifestTotal,
           '正在写入索引：$written/${job.manifestTotal}');
     }
@@ -472,6 +504,166 @@ class LibraryBuildTaskController extends ChangeNotifier {
       stage: LibraryBuildStage.finalize,
       indexedTotal: written,
     );
+  }
+
+  /// Builds one serializable SQLite transaction for a manifest page. File
+  /// inspection and directory-node discovery happen on this isolate, but all
+  /// entity, relation, and checkpoint writes are committed by the dedicated
+  /// writer isolate as one durable page.
+  Future<int> _commitIndexPage({
+    required LibraryBuildJob job,
+    required List<LibraryBuildManifestItem> page,
+    required String rootId,
+    required Map<String, Entity> existing,
+    required Map<int, (String, int, int, int, String?, int?)> detailsBySequence,
+    required Map<int, IndexNode> nodesBySequence,
+    required int indexedBefore,
+  }) async {
+    final statements = <LibraryWriteStatement>[];
+    final now = nowMillis();
+    final touchedNodes = <String>{};
+    var completed = 0;
+    for (final item in page) {
+      final details = detailsBySequence[item.sequence];
+      final node = nodesBySequence[item.sequence];
+      if (details == null || node == null) continue;
+      final current = existing[item.sourcePath];
+      final entityId = current?.id ?? newId();
+      if (current == null) {
+        statements.add(LibraryWriteStatement(
+          '''
+          INSERT INTO entities(
+            id, path, local_path, name, format, media_type, hash,
+            metadata_preview, thumbnail_status, thumbnail_key,
+            thumbnail_format, thumbnail_width, thumbnail_height,
+            thumbnail_error, size, source_created_at_ms,
+            source_modified_at_ms, duration_ms, directory_root_id,
+            created_at, updated_at
+          ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'none', NULL, NULL, NULL,
+                    NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
+          ''',
+          [
+            entityId,
+            item.sourcePath,
+            item.name,
+            item.format,
+            item.entityType.value,
+            details.$1,
+            details.$5,
+            details.$2,
+            details.$3,
+            details.$4,
+            details.$6,
+            rootId,
+            now,
+            now,
+          ],
+        ));
+      } else if (!_isUnchangedIndexEntity(
+        current,
+        item: item,
+        details: details,
+        rootId: rootId,
+      )) {
+        final preserveThumbnail = (item.entityType == EntityType.image ||
+                item.entityType == EntityType.video ||
+                item.entityType == EntityType.document) &&
+            current.entityType == item.entityType &&
+            current.hash == details.$1;
+        final status = preserveThumbnail
+            ? current.thumbnailStatus.value
+            : ThumbnailStatus.none.value;
+        final preserveFields = status == ThumbnailStatus.success.value;
+        statements.add(LibraryWriteStatement(
+          '''
+          UPDATE entities
+          SET name = ?, format = ?, media_type = ?, hash = ?,
+              metadata_preview = ?, thumbnail_status = ?,
+              thumbnail_key = CASE WHEN ? THEN thumbnail_key ELSE NULL END,
+              thumbnail_format = CASE WHEN ? THEN thumbnail_format ELSE NULL END,
+              thumbnail_width = CASE WHEN ? THEN thumbnail_width ELSE NULL END,
+              thumbnail_height = CASE WHEN ? THEN thumbnail_height ELSE NULL END,
+              thumbnail_error = CASE WHEN ? THEN thumbnail_error ELSE NULL END,
+              size = ?, source_created_at_ms = ?, source_modified_at_ms = ?,
+              duration_ms = ?, directory_root_id = ?, local_path = NULL,
+              updated_at = ?
+          WHERE id = ?
+          ''',
+          [
+            item.name,
+            item.format,
+            item.entityType.value,
+            details.$1,
+            details.$5,
+            status,
+            preserveFields ? 1 : 0,
+            preserveFields ? 1 : 0,
+            preserveFields ? 1 : 0,
+            preserveFields ? 1 : 0,
+            status == ThumbnailStatus.failed.value ? 1 : 0,
+            details.$2,
+            details.$3,
+            details.$4,
+            details.$6,
+            rootId,
+            now,
+            entityId,
+          ],
+        ));
+      }
+      statements.add(LibraryWriteStatement(
+        '''
+        INSERT OR IGNORE INTO index_node_entities(
+          index_node_id, entity_id, sort_name, created_at
+        ) SELECT ?, id, lower(name), ? FROM entities WHERE id = ?
+        ''',
+        [node.id, now, entityId],
+      ));
+      touchedNodes.add(node.id);
+      completed++;
+    }
+    for (final nodeId in touchedNodes) {
+      statements.add(LibraryWriteStatement(
+        'UPDATE index_nodes SET updated_at = ? WHERE id = ?',
+        [now, nodeId],
+      ));
+    }
+    statements.add(LibraryWriteStatement(
+      'UPDATE library_build_jobs SET indexed_total = ?, updated_at = ? WHERE id = ?',
+      [indexedBefore + completed, now, job.id],
+    ));
+    final worker = library.writeWorker;
+    if (worker == null) {
+      library.writeTransaction(() {
+        for (final statement in statements) {
+          library.database.db.execute(statement.sql, statement.parameters);
+        }
+      });
+    } else {
+      await worker.executeBatch(statements);
+    }
+    return completed;
+  }
+
+  bool _isUnchangedIndexEntity(
+    Entity entity, {
+    required LibraryBuildManifestItem item,
+    required (String, int, int, int, String?, int?) details,
+    required String rootId,
+  }) {
+    final needsGeneratedThumbnail = item.entityType == EntityType.image ||
+        item.entityType == EntityType.video ||
+        item.entityType == EntityType.document;
+    return entity.hash == details.$1 &&
+        entity.contentExcerpt == details.$5 &&
+        entity.entityType == item.entityType &&
+        entity.format == item.format &&
+        entity.size == details.$2 &&
+        entity.durationMs == details.$6 &&
+        entity.directoryRootId == rootId &&
+        entity.localPath == null &&
+        (!needsGeneratedThumbnail ||
+            entity.thumbnailStatus == ThumbnailStatus.none);
   }
 
   Future<void> _finalizeIndex(LibraryBuildJob job) async {
@@ -587,6 +779,17 @@ class LibraryBuildTaskController extends ChangeNotifier {
           if (entity?.entityType != EntityType.video) return;
           await _buildOneEntityPreview(job.id, id, entity!, results);
         }),
+        // EPUB and DOCX are archive containers. Keep their image extraction
+        // bounded independently so large books do not compete with media
+        // decoding or exhaust Android archive memory.
+        _forEachConcurrent(entityIds, 2, (id) async {
+          final entity = entities[id];
+          if (entity == null ||
+              (entity.format != 'epub' && entity.format != 'docx')) {
+            return;
+          }
+          await _buildOneEntityPreview(job.id, id, entity, results);
+        }),
       ]);
       for (final id in entityIds) {
         results.putIfAbsent(
@@ -625,12 +828,33 @@ class LibraryBuildTaskController extends ChangeNotifier {
     Entity entity,
     Map<String, ({LibraryBuildWorkState state, String? error})> results,
   ) async {
+    File? transientDocument;
     try {
       _control!.check();
-      await _thumbnails.ensureThumbnail(entity);
+      if ((entity.format == 'epub' || entity.format == 'docx') &&
+          SourceHandle.parse(entity.path).isAndroidContentUri) {
+        final path = await PlatformDirectoryPicker.materializeDocument(
+          entity.path,
+          name: entity.name,
+          cacheScope: 'scan',
+        );
+        transientDocument = File(path);
+      }
+      if (transientDocument == null) {
+        await _thumbnails.ensureThumbnail(entity);
+      } else {
+        await _thumbnails.ensureThumbnailFromFile(entity, transientDocument);
+      }
       _control!.check();
       final refreshed = library.getEntity(id);
       if (refreshed?.thumbnailStatus == ThumbnailStatus.success) {
+        results[id] = (state: LibraryBuildWorkState.completed, error: null);
+        return;
+      }
+      // A book without embedded images intentionally renders the persisted
+      // text excerpt rather than a generated image thumbnail.
+      if ((entity.format == 'epub' || entity.format == 'docx') &&
+          refreshed?.thumbnailStatus == ThumbnailStatus.none) {
         results[id] = (state: LibraryBuildWorkState.completed, error: null);
         return;
       }
@@ -644,6 +868,11 @@ class LibraryBuildTaskController extends ChangeNotifier {
     } catch (error, stackTrace) {
       results[id] = (state: LibraryBuildWorkState.failed, error: '$error');
       _logThumbnailFailure(jobId, entity, '$error', stackTrace);
+    } finally {
+      final transient = transientDocument;
+      if (transient != null && await transient.exists()) {
+        await transient.delete();
+      }
     }
   }
 
@@ -683,19 +912,19 @@ class LibraryBuildTaskController extends ChangeNotifier {
       if (nodeIds.isEmpty) break;
       final results =
           <String, ({LibraryBuildWorkState state, String? error})>{};
+      _control!.check();
+      final outcomes = await compositor.rebuildNodesAsync(nodeIds);
+      _control!.check();
       for (final nodeId in nodeIds) {
-        try {
-          _control!.check();
-          compositor.rebuildNodes([nodeId]);
+        final outcome = outcomes[nodeId];
+        if (outcome?.error != null) {
+          results[nodeId] = (
+            state: LibraryBuildWorkState.failed,
+            error: outcome!.error,
+          );
+        } else {
           results[nodeId] =
               (state: LibraryBuildWorkState.completed, error: null);
-        } on LibraryBuildPausedException {
-          rethrow;
-        } on LibraryBuildAbandonedException {
-          rethrow;
-        } catch (error) {
-          results[nodeId] =
-              (state: LibraryBuildWorkState.failed, error: '$error');
         }
       }
       builds.completeNodePreviewWork(job.id, results);
@@ -707,8 +936,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
         '正在构建节点预览：${current.nodePreviewDone}/${current.nodePreviewTotal}',
         failed: current.nodePreviewFailed,
       );
-      // WebP composition is CPU-heavy Dart work. Keep batches small and give
-      // the Flutter frame scheduler a chance to paint task progress.
+      // The bounded background batch has returned; yield before the next
+      // database claim so taps and the progress card remain responsive.
       await Future<void>.delayed(const Duration(milliseconds: 1));
     }
     final nodeComplete = builds.get(job.id)!;
@@ -755,32 +984,52 @@ class LibraryBuildTaskController extends ChangeNotifier {
     File file,
     FileFormatHandler handler,
   ) async {
+    final preview = switch (handler.entityType) {
+      EntityType.text =>
+        _limitPreview(await readTextFile(file, maxBytes: 8192)),
+      EntityType.audio => 'AUDIO ${handler.formatFor(file.path).toUpperCase()}',
+      EntityType.document when handler.formatFor(file.path) == 'docx' =>
+        _limitPreview(await readDocxText(file)),
+      EntityType.document when handler.formatFor(file.path) == 'epub' =>
+        await _epubPreviewText(file),
+      EntityType.document when handler.formatFor(file.path) == 'pdf' => 'PDF',
+      EntityType.document =>
+        'DOCUMENT ${handler.formatFor(file.path).toUpperCase()}',
+      EntityType.image || EntityType.video => null,
+    };
+    final duration = handler.entityType == EntityType.audio
+        ? await probeMediaDurationMs(file)
+        : null;
+    return (preview?.isEmpty == true ? null : preview, duration);
+  }
+
+  /// Use the same block parser as the reader instead of the older EPUB book
+  /// compatibility parser. This follows the spine and extracts paragraphs,
+  /// headings, lists, and fallback XHTML text consistently.
+  Future<String> _epubPreviewText(File file) async {
+    Object? primaryError;
     try {
-      final preview = switch (handler.entityType) {
-        EntityType.text =>
-          _limitPreview(await readTextFile(file, maxBytes: 8192)),
-        EntityType.audio =>
-          'AUDIO ${handler.formatFor(file.path).toUpperCase()}',
-        EntityType.externalLink when handler.formatFor(file.path) == 'docx' =>
-          _limitPreview(await readDocxText(file)),
-        EntityType.externalLink when handler.formatFor(file.path) == 'epub' =>
-          _limitPreview((await readEpubBook(file))
-              .chapters
-              .map((chapter) => chapter.text)
-              .join('\n')),
-        EntityType.externalLink when handler.formatFor(file.path) == 'pdf' =>
-          'PDF',
-        EntityType.externalLink =>
-          'DOCUMENT ${handler.formatFor(file.path).toUpperCase()}',
-        EntityType.image || EntityType.video => null,
-      };
-      final duration = handler.entityType == EntityType.audio
-          ? await probeMediaDurationMs(file)
-          : null;
-      return (preview?.isEmpty == true ? null : preview, duration);
-    } catch (_) {
-      return (null, null);
+      final text = (await readEpubDocument(file)).plainText.trim();
+      if (text.isNotEmpty) return _limitPreview(text);
+    } catch (error) {
+      primaryError = error;
     }
+
+    // Some older EPUBs use XHTML that the reflow parser intentionally skips
+    // (for example a chapter made from legacy nested markup). The reader's
+    // compatibility parser still extracts body text from those chapters.
+    try {
+      final book = await readEpubBook(file);
+      final text =
+          book.chapters.map((chapter) => chapter.text).join('\n\n').trim();
+      if (text.isNotEmpty) return _limitPreview(text);
+    } catch (fallbackError) {
+      throw StateError(
+        'EPUB 正文解析失败：${primaryError ?? fallbackError}；兼容解析：$fallbackError',
+      );
+    }
+    throw StateError(
+        'EPUB 中没有可用于预览的正文${primaryError == null ? '' : '：$primaryError'}');
   }
 
   Future<(String, int, int, int, String?, int?)> _inspectForIndex(
@@ -808,7 +1057,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
       item.sourcePath,
       maxBytes: fileFingerprintPrefixBytes,
     );
-    String? metadataPreview;
+    String? contentExcerpt;
     int? durationMs;
     if (handler.entityType == EntityType.audio) {
       final localPath = await PlatformDirectoryPicker.materializeDocument(
@@ -818,7 +1067,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
       );
       final file = File(localPath);
       try {
-        (metadataPreview, durationMs) = await _metadataForFile(file, handler);
+        (contentExcerpt, durationMs) = await _metadataForFile(file, handler);
       } finally {
         if (await file.exists()) await file.delete();
       }
@@ -828,7 +1077,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
       item.size,
       item.sourceCreatedAtMs,
       item.sourceModifiedAtMs,
-      metadataPreview,
+      contentExcerpt,
       durationMs,
     );
   }
@@ -860,9 +1109,12 @@ class LibraryBuildTaskController extends ChangeNotifier {
     Future<void> Function(T value) action,
   ) async {
     var next = 0;
+    final control = _control;
     Future<void> worker() async {
       while (next < values.length) {
-        _control!.check();
+        // Startup repair work intentionally has no pause/cancel controller;
+        // durable index jobs still retain the same captured controller.
+        control?.check();
         final value = values[next++];
         await action(value);
       }
@@ -903,6 +1155,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
   }) {
     final current = builds.get(job.id) ?? job;
     _activeJob = current;
+    final stageChanged = _progress?.stage != current.stage;
     _progress = LibraryBuildProgress(
       stage: current.stage,
       completed: completed,
@@ -910,7 +1163,36 @@ class LibraryBuildTaskController extends ChangeNotifier {
       failed: failed,
       message: message,
     );
-    notifyListeners();
+    _notifyProgress(force: stageChanged);
+  }
+
+  /// Build callbacks can arrive once per SAF page, thumbnail, and node.
+  /// Coalescing repaint notifications prevents a long build from repeatedly
+  /// rebuilding the full index-management page while retaining the latest
+  /// in-memory progress value for the next frame.
+  void _notifyProgress({bool force = false}) {
+    if (force) {
+      _progressNotifyTimer?.cancel();
+      _progressNotifyTimer = null;
+      _lastProgressNotification = DateTime.now();
+      notifyListeners();
+      return;
+    }
+    final now = DateTime.now();
+    final elapsed = now.difference(_lastProgressNotification);
+    if (elapsed >= _progressNotificationInterval) {
+      _progressNotifyTimer?.cancel();
+      _progressNotifyTimer = null;
+      _lastProgressNotification = now;
+      notifyListeners();
+      return;
+    }
+    if (_progressNotifyTimer != null) return;
+    _progressNotifyTimer = Timer(_progressNotificationInterval - elapsed, () {
+      _progressNotifyTimer = null;
+      _lastProgressNotification = DateTime.now();
+      notifyListeners();
+    });
   }
 }
 
@@ -923,5 +1205,6 @@ String _normalizeSource(String value) {
 
 String _limitPreview(String value) {
   final trimmed = value.trim();
-  return trimmed.substring(0, trimmed.length.clamp(0, 500));
+  if (trimmed.length <= 500) return trimmed;
+  return '${trimmed.substring(0, 500)}…';
 }

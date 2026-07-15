@@ -10,7 +10,6 @@ import android.os.SystemClock
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
-import android.util.Size
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -85,16 +84,16 @@ class MainActivity : FlutterActivity() {
                     call.argument<String>("source"),
                     call.argument<String>("outputPath"),
                     call.argument<String>("requestId"),
-                    call.argument<Int>("targetPixelCount") ?: 600 * 600,
-                    call.argument<Int>("quality") ?: 78,
+                    call.argument<Int>("targetPixelCount") ?: 480000,
+                    call.argument<Int>("quality") ?: 86,
                     result,
                 )
                 "createVideoThumbnail" -> createVideoThumbnail(
                     call.argument<String>("source"),
                     call.argument<String>("outputPath"),
                     call.argument<String>("requestId"),
-                    call.argument<Int>("targetPixelCount") ?: 600 * 600,
-                    call.argument<Int>("quality") ?: 78,
+                    call.argument<Int>("targetPixelCount") ?: 480000,
+                    call.argument<Int>("quality") ?: 86,
                     result,
                 )
                 "cancelThumbnail" -> cancelThumbnail(
@@ -257,44 +256,31 @@ class MainActivity : FlutterActivity() {
                 var sourceWidth = 0
                 var sourceHeight = 0
                 var decoded: Bitmap? = null
-                if (source.startsWith("content://") &&
-                    android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                    try {
-                        // Providers such as MediaStore can return their cached
-                        // thumbnail without streaming the full TF-card file.
-                        decoded = contentResolver.loadThumbnail(
-                            Uri.parse(source),
-                            Size(640, 640),
-                            null,
-                        )
-                        sourceWidth = decoded.width
-                        sourceHeight = decoded.height
-                    } catch (_: Exception) {
-                        // SAF providers are not required to expose thumbnails.
-                    }
-                }
                 val readMs = SystemClock.elapsedRealtime() - readStarted
                 val decodeStarted = SystemClock.elapsedRealtime()
-                if (decoded == null) {
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    decodeBitmap(source, bounds)
-                    sourceWidth = bounds.outWidth
-                    sourceHeight = bounds.outHeight
-                    if (sourceWidth <= 0 || sourceHeight <= 0) {
-                        throw IllegalArgumentException("Unsupported image source")
-                    }
-                    val (requestedWidth, requestedHeight) = thumbnailDimensions(
-                        sourceWidth,
-                        sourceHeight,
-                        targetPixelCount,
-                    )
-                    val options = BitmapFactory.Options().apply {
-                        inSampleSize = sampleSizeFor(sourceWidth, sourceHeight, requestedWidth, requestedHeight)
-                        inPreferredConfig = Bitmap.Config.ARGB_8888
-                    }
-                    decoded = decodeBitmap(source, options)
-                        ?: throw IllegalArgumentException("Image decode returned no bitmap")
+                // Do not ask ContentResolver for its thumbnail cache here.
+                // Some SAF providers return an old or undersized derivative,
+                // which then becomes a permanently blurry app thumbnail. Read
+                // the original stream with BitmapFactory and downsample it once
+                // to our own v6 WebP specification instead.
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                decodeBitmap(source, bounds)
+                sourceWidth = bounds.outWidth
+                sourceHeight = bounds.outHeight
+                if (sourceWidth <= 0 || sourceHeight <= 0) {
+                    throw IllegalArgumentException("Unsupported image source")
                 }
+                val (requestedWidth, requestedHeight) = thumbnailDimensions(
+                    sourceWidth,
+                    sourceHeight,
+                    targetPixelCount,
+                )
+                val options = BitmapFactory.Options().apply {
+                    inSampleSize = sampleSizeFor(sourceWidth, sourceHeight, requestedWidth, requestedHeight)
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                }
+                decoded = decodeBitmap(source, options)
+                    ?: throw IllegalArgumentException("Image decode returned no bitmap")
                 val decodeMs = SystemClock.elapsedRealtime() - decodeStarted
                 val (targetWidth, targetHeight) = thumbnailDimensions(
                     decoded.width,

@@ -47,6 +47,33 @@ class ThumbnailService {
     Entity entity, {
     bool force = false,
     ThumbnailCancellationToken? cancellationToken,
+  }) =>
+      _ensureThumbnail(
+        entity,
+        force: force,
+        cancellationToken: cancellationToken,
+      );
+
+  /// Uses a temporary readable source for URI-backed archive documents while
+  /// keeping the public entity-based API stable for normal media callers.
+  Future<bool> ensureThumbnailFromFile(
+    Entity entity,
+    File sourceFile, {
+    bool force = false,
+    ThumbnailCancellationToken? cancellationToken,
+  }) =>
+      _ensureThumbnail(
+        entity,
+        sourceFileOverride: sourceFile,
+        force: force,
+        cancellationToken: cancellationToken,
+      );
+
+  Future<bool> _ensureThumbnail(
+    Entity entity, {
+    bool force = false,
+    ThumbnailCancellationToken? cancellationToken,
+    File? sourceFileOverride,
   }) async {
     final stopwatch = Stopwatch()..start();
     cancellationToken?.throwIfCancelled();
@@ -66,7 +93,8 @@ class ThumbnailService {
     _recordUpdate(ThumbnailDatabaseUpdate.pending(entity.id));
     ThumbnailArtifact? artifact;
     try {
-      final sourceFile = File(entity.localPath ?? entity.path);
+      final sourceFile =
+          sourceFileOverride ?? File(entity.localPath ?? entity.path);
       final nativeOutputPath = await store.prepareNativeOutputPath(
         expectedKey,
         'webp',
@@ -162,8 +190,8 @@ class ThumbnailService {
           bytes: artifact.bytes,
         );
       } else if (!await File(artifact.persistedPath!).exists()) {
-        throw FileSystemException('Native thumbnail output was missing',
-            artifact.persistedPath);
+        throw FileSystemException(
+            'Native thumbnail output was missing', artifact.persistedPath);
       }
       repository.recordThumbnailAsset(
         key: expectedKey,
@@ -214,7 +242,11 @@ class ThumbnailConcurrencyAdvisor {
   int get recommendedImageConcurrency {
     if (!Platform.isAndroid) return 8;
     if (_imageAverageMs == 0) return 4;
-    return _imageAverageMs < 280 ? 6 : _imageAverageMs < 700 ? 5 : 4;
+    return _imageAverageMs < 280
+        ? 6
+        : _imageAverageMs < 700
+            ? 5
+            : 4;
   }
 
   int get recommendedVideoConcurrency {
@@ -306,7 +338,7 @@ class ThumbnailTimingCollector {
       case EntityType.video:
         videoMs += milliseconds;
         videoCount++;
-      case EntityType.externalLink:
+      case EntityType.document:
         documentMs += milliseconds;
         documentCount++;
       default:

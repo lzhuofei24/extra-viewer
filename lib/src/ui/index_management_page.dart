@@ -147,7 +147,7 @@ class IndexManagementPage extends StatelessWidget {
           _IndexRootSection(
             presentation: IndexRootPresentation.collection,
             roots: roots
-                .where((node) => node.nodeType == NodeType.categoryIndexRoot)
+                .where((node) => node.nodeType == NodeType.customIndexRoot)
                 .toList(growable: false),
             rootCounts: rootCounts,
             scanning: scanning,
@@ -525,8 +525,7 @@ class _BuildStageLadder extends StatelessWidget {
   }
 
   int _failedFor(LibraryBuildStage stage) => switch (stage) {
-        LibraryBuildStage.documentPreviews =>
-          job?.documentPreviewFailed ?? 0,
+        LibraryBuildStage.documentPreviews => job?.documentPreviewFailed ?? 0,
         LibraryBuildStage.entityPreviews => job?.entityPreviewFailed ?? 0,
         LibraryBuildStage.nodePreviews => job?.nodePreviewFailed ?? 0,
         _ => 0,
@@ -537,8 +536,7 @@ class _BuildStageLadder extends StatelessWidget {
     if (value == null) return (0, 0);
     return switch (stage) {
       LibraryBuildStage.manifest => (value.manifestTotal, value.manifestTotal),
-      LibraryBuildStage.indexWrite =>
-        (value.indexedTotal, value.manifestTotal),
+      LibraryBuildStage.indexWrite => (value.indexedTotal, value.manifestTotal),
       LibraryBuildStage.finalize => (1, 1),
       LibraryBuildStage.documentPreviews => (
           value.documentPreviewDone + value.documentPreviewFailed,

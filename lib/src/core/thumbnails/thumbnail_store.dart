@@ -71,7 +71,7 @@ class ThumbnailStore {
 
 String thumbnailCacheKeyFor({
   required String fingerprint,
-  int version = 4,
+  int version = 6,
 }) {
   final input = '$fingerprint|$version';
   var hash = 0xcbf29ce484222325;
@@ -82,6 +82,8 @@ String thumbnailCacheKeyFor({
   }
   final high = (hash >>> 32) & 0xffffffff;
   final low = hash & 0xffffffff;
-  return high.toRadixString(16).padLeft(8, '0') +
-      low.toRadixString(16).padLeft(8, '0');
+  // The prefix makes cache-spec changes queryable from SQLite so an index
+  // update can rebuild old low-resolution assets without scanning files again.
+  return 'v${version}_${high.toRadixString(16).padLeft(8, '0')}'
+      '${low.toRadixString(16).padLeft(8, '0')}';
 }

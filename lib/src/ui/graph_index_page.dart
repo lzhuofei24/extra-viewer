@@ -265,7 +265,7 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
             spacing: 8,
             children: [
               IconButton(
-                tooltip: '返回根索引',
+                tooltip: '返回索引首页',
                 onPressed: widget.onReturnToRootIndex,
                 icon: const Icon(Icons.arrow_back_rounded),
               ),

@@ -162,49 +162,46 @@ class _SidebarButton extends StatelessWidget {
     final color = selected
         ? theme.colorScheme.onSecondaryContainer
         : theme.colorScheme.onSurfaceVariant;
-    return Tooltip(
-      message: item.label,
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(AppTokens.radiusSm),
-          onTap: onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            width: double.infinity,
-            padding: EdgeInsets.symmetric(
-              horizontal: collapsed ? 0 : 5,
-              vertical: collapsed ? 10 : 8,
-            ),
-            decoration: BoxDecoration(
-              color: selected
-                  ? theme.colorScheme.secondaryContainer.withValues(alpha: 0.9)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(AppTokens.radiusSm),
-            ),
-            child: collapsed
-                ? Center(
-                    child: Icon(selected ? item.selectedIcon : item.icon,
-                        color: color, size: 21),
-                  )
-                : Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(selected ? item.selectedIcon : item.icon,
-                          color: color, size: 21),
-                      const SizedBox(height: 3),
-                      Text(
-                        item.label,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: color,
-                          fontWeight:
-                              selected ? FontWeight.w700 : FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          width: double.infinity,
+          padding: EdgeInsets.symmetric(
+            horizontal: collapsed ? 0 : 5,
+            vertical: collapsed ? 10 : 8,
           ),
+          decoration: BoxDecoration(
+            color: selected
+                ? theme.colorScheme.secondaryContainer.withValues(alpha: 0.9)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+          ),
+          child: collapsed
+              ? Center(
+                  child: Icon(selected ? item.selectedIcon : item.icon,
+                      color: color, size: 21),
+                )
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(selected ? item.selectedIcon : item.icon,
+                        color: color, size: 21),
+                    const SizedBox(height: 3),
+                    Text(
+                      item.label,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: color,
+                        fontWeight:
+                            selected ? FontWeight.w700 : FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
         ),
       ),
     );
@@ -222,17 +219,14 @@ class _SidebarCollapseButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: collapsed ? '展开侧边栏' : '收起侧边栏',
-      child: SizedBox(
-        width: 32,
-        height: 32,
-        child: IconButton(
-          visualDensity: VisualDensity.compact,
-          padding: EdgeInsets.zero,
-          onPressed: onTap,
-          icon: const CollapseGripIcon(size: 18),
-        ),
+    return SizedBox(
+      width: 32,
+      height: 32,
+      child: IconButton(
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+        onPressed: onTap,
+        icon: const CollapseGripIcon(size: 18),
       ),
     );
   }

@@ -1,6 +1,7 @@
 import '../domain/models.dart';
 import '../utils/ids.dart';
 import 'library_repository.dart';
+import 'library_write_worker.dart';
 
 enum _WorkCounter { document, entity, node }
 
@@ -211,7 +212,7 @@ class LibraryBuildRepository {
           item.entityType.value,
           item.fingerprint,
           item.size,
-          item.metadataPreview,
+          item.contentExcerpt,
           item.durationMs,
           item.sourceCreatedAtMs,
           item.sourceModifiedAtMs,
@@ -220,6 +221,61 @@ class LibraryBuildRepository {
     } finally {
       statement.dispose();
     }
+  }
+
+  /// Directory enumeration can produce many small pages. Keep the durable
+  /// manifest writes off Flutter's isolate when the application writer is
+  /// available; the main isolate only continues after the page is committed.
+  Future<void> upsertManifestAsync(
+    Iterable<LibraryBuildManifestItem> values,
+  ) async {
+    final items = values.toList(growable: false);
+    if (items.isEmpty) return;
+    final worker = library.writeWorker;
+    if (worker == null) {
+      upsertManifest(items);
+      return;
+    }
+    await worker.executeBatch(items
+        .map(
+          (item) => LibraryWriteStatement(
+            '''
+            INSERT INTO library_build_manifest(
+              job_id, source_path, relative_path, sequence, name, format,
+              media_type, fingerprint, size, metadata_preview, duration_ms,
+              source_created_at_ms, source_modified_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(job_id, source_path) DO UPDATE SET
+              relative_path = excluded.relative_path,
+              sequence = excluded.sequence,
+              name = excluded.name,
+              format = excluded.format,
+              media_type = excluded.media_type,
+              fingerprint = excluded.fingerprint,
+              size = excluded.size,
+              metadata_preview = excluded.metadata_preview,
+              duration_ms = excluded.duration_ms,
+              source_created_at_ms = excluded.source_created_at_ms,
+              source_modified_at_ms = excluded.source_modified_at_ms
+            ''',
+            [
+              item.jobId,
+              item.sourcePath,
+              item.relativePath,
+              item.sequence,
+              item.name,
+              item.format,
+              item.entityType.value,
+              item.fingerprint,
+              item.size,
+              item.contentExcerpt,
+              item.durationMs,
+              item.sourceCreatedAtMs,
+              item.sourceModifiedAtMs,
+            ],
+          ),
+        )
+        .toList(growable: false));
   }
 
   int manifestItemCount(String jobId) =>
@@ -258,8 +314,15 @@ class LibraryBuildRepository {
       FROM index_node_entities link
       JOIN entities entity ON entity.id = link.entity_id
       WHERE link.index_node_id IN (SELECT id FROM subtree)
-        AND entity.media_type IN ('image', 'video')
-        AND (entity.thumbnail_status != 'success' OR entity.thumbnail_key IS NULL)
+        AND (
+          entity.media_type IN ('image', 'video') OR
+          entity.format IN ('epub', 'docx')
+        )
+        AND (
+          entity.thumbnail_status != 'success' OR
+          entity.thumbnail_key IS NULL OR
+          entity.thumbnail_key NOT LIKE 'v6_%'
+        )
     ''', [scopeNodeId, jobId, now]);
     final count = _count('library_entity_preview_work', jobId);
     _update(jobId, entityPreviewTotal: count);
@@ -281,7 +344,10 @@ class LibraryBuildRepository {
       JOIN entities entity ON entity.id = link.entity_id
       WHERE link.index_node_id IN (SELECT id FROM subtree)
         AND entity.media_type IN ('text', 'external')
-        AND (entity.metadata_preview IS NULL OR entity.metadata_preview = '')
+        AND (
+          entity.format = 'epub' OR
+          entity.metadata_preview IS NULL OR entity.metadata_preview = ''
+        )
     ''', [scopeNodeId, jobId, now]);
     final count = _count('library_document_preview_work', jobId);
     _update(jobId, documentPreviewTotal: count);
@@ -383,7 +449,7 @@ class LibraryBuildRepository {
       _hasPending('library_entity_preview_work', jobId);
 
   bool hasPendingNodePreviewWork(String jobId) =>
-    _hasPending('library_node_preview_work', jobId);
+      _hasPending('library_node_preview_work', jobId);
 
   bool hasPendingDocumentPreviewWork(String jobId) =>
       _hasPending('library_document_preview_work', jobId);
@@ -565,7 +631,10 @@ class LibraryBuildRepository {
         WHERE job_id = ? AND state = 'failed'
       ''', [jobId]).single['value'] as int;
       final columns = switch (counter) {
-        _WorkCounter.document => ('document_preview_done', 'document_preview_failed'),
+        _WorkCounter.document => (
+            'document_preview_done',
+            'document_preview_failed'
+          ),
         _WorkCounter.entity => ('entity_preview_done', 'entity_preview_failed'),
         _WorkCounter.node => ('node_preview_done', 'node_preview_failed'),
       };
@@ -623,7 +692,7 @@ class LibraryBuildRepository {
         entityType: EntityType.fromValue(row['media_type'] as String),
         fingerprint: row['fingerprint'] as String?,
         size: row['size'] as int,
-        metadataPreview: row['metadata_preview'] as String?,
+        contentExcerpt: row['metadata_preview'] as String?,
         durationMs: row['duration_ms'] as int?,
         sourceCreatedAtMs: row['source_created_at_ms'] as int,
         sourceModifiedAtMs: row['source_modified_at_ms'] as int,

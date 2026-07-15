@@ -615,7 +615,7 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                                   );
                                 },
                               ),
-                            EntityType.externalLink => _ExternalInfoPreview(
+                            EntityType.document => _ExternalInfoPreview(
                                 entity: entity,
                                 sourceResolver: _sourceResolver,
                               ),

@@ -148,7 +148,7 @@ class _NodePreviewPickerState extends State<NodePreviewPicker> {
       EntityType.image || EntityType.video => IndexNodePreviewTileKind.visual,
       EntityType.audio => IndexNodePreviewTileKind.audio,
       EntityType.text ||
-      EntityType.externalLink =>
+      EntityType.document =>
         IndexNodePreviewTileKind.document,
     };
     return NodePreviewCandidate(

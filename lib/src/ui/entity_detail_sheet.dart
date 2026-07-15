@@ -26,6 +26,8 @@ class EntityDetailSheet extends StatelessWidget {
               child: EntityArtwork(
                 entityType: detail.entityType,
                 format: detail.format,
+                title: detail.name,
+                contentExcerpt: detail.contentExcerpt,
                 thumbnailPath: detail.thumbnailPath,
                 borderRadius: BorderRadius.circular(AppTokens.radiusMd),
               ),

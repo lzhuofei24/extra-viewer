@@ -68,26 +68,16 @@ Future<Uint8List?> _buildPdfContentPreviewWebp(File source) async {
 }
 
 img.Image? _selectArchivePreviewImage(ArchiveSession session) {
-  final images = session.fileNames
-      .where(_isPreviewImage)
-      .map((name) => (name: name, size: session.entry(name)?.size ?? 0))
-      .toList(growable: false)
-    ..sort((left, right) {
-      final leftCover = _looksLikeCover(left.name) ? 0 : 1;
-      final rightCover = _looksLikeCover(right.name) ? 0 : 1;
-      if (leftCover != rightCover) return leftCover.compareTo(rightCover);
-      return right.size.compareTo(left.size);
-    });
-  for (final entry in images.take(12)) {
-    final bytes = session.readBytes(entry.name);
+  // EPUB/DOCX previews intentionally use the first embedded image in archive
+  // order. Re-ranking covers by name or size makes preview selection feel
+  // arbitrary when a book author deliberately places an opening illustration.
+  for (final name in session.fileNames.where(_isPreviewImage)) {
+    final bytes = session.readBytes(name);
     final image = bytes == null ? null : img.decodeImage(bytes);
-    if (image != null && image.width >= 96 && image.height >= 96) return image;
+    if (image != null) return image;
   }
   return null;
 }
-
-bool _looksLikeCover(String name) =>
-    RegExp(r'(cover|front|title|folder)', caseSensitive: false).hasMatch(name);
 
 Future<img.Image?> _renderPdfFirstPage(File source) async {
   final document = await PdfDocument.openFile(source.path);

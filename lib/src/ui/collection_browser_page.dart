@@ -213,7 +213,7 @@ class CollectionBrowserPage extends StatelessWidget {
                         title: immersiveBrowsing ? '沉浸式浏览为空' : '当前索引节点为空',
                         message: immersiveBrowsing
                             ? '当前节点及其下级节点中没有可展示的实体。'
-                            : '可从“索引”页面重新扫描，或返回根索引继续浏览。',
+                            : '可从“索引”页面重新检查，或返回索引首页继续浏览。',
                       ),
                     ),
                   ),
@@ -332,7 +332,7 @@ List<Widget> _rootIndexGroupSlivers(
 }) {
   final groups = <({String label, NodeType type})>[
     (label: '目录索引', type: NodeType.directoryIndexRoot),
-    (label: '自定义索引', type: NodeType.categoryIndexRoot),
+    (label: '自定义索引', type: NodeType.customIndexRoot),
     (label: '图索引', type: NodeType.graphIndexRoot),
   ];
   final visibleGroups = groups
@@ -745,7 +745,7 @@ class _PathBar extends StatelessWidget {
                           onDisplayModeChanged(value.first),
                     ),
                     const SizedBox(height: 6),
-                    Text('实体布局', style: theme.textTheme.labelMedium),
+                    Text('卡片布局', style: theme.textTheme.labelMedium),
                     const SizedBox(height: 6),
                     Wrap(
                       spacing: 6,
@@ -990,7 +990,7 @@ double _entityAspectRatio(EntityListItem entity) {
     return width / height;
   }
   return switch (entity.entityType) {
-    EntityType.audio || EntityType.text || EntityType.externalLink => 1,
+    EntityType.audio || EntityType.text || EntityType.document => 1,
     _ => 4 / 3,
   };
 }
@@ -1120,6 +1120,8 @@ class _EntityListSliver extends StatelessWidget {
                       child: EntityArtwork(
                         entityType: entity.entityType,
                         format: entity.format,
+                        title: entity.title,
+                        contentExcerpt: entity.contentExcerpt,
                         thumbnailPath: entity.thumbnailPath,
                         onThumbnailNeeded: () => onThumbnailNeeded(entity),
                         borderRadius: BorderRadius.circular(16),
@@ -1235,7 +1237,7 @@ class _SelectionActionBar extends StatelessWidget {
             OutlinedButton(
               onPressed:
                   entityCount == 0 && nodeCount == 0 ? null : onAddToCollection,
-              child: const Text('加入索引'),
+              child: const Text('添加到索引'),
             ),
             if (canRemoveFromCurrentNode)
               OutlinedButton(
@@ -1274,7 +1276,7 @@ class _IndexPathRail extends StatelessWidget {
     return _HorizontalNodeRail(
       children: [
         _NodeRailEntry(
-          label: '根索引',
+          label: '索引首页',
           selected: currentNode == null,
           onTap: onOpenRootIndex,
         ),

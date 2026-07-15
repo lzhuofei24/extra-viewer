@@ -779,7 +779,7 @@ class LibraryRepository {
           candidate.entityType?.value,
           candidate.fingerprint,
           candidate.size,
-          candidate.metadataPreview,
+          candidate.contentExcerpt,
           candidate.durationMs,
           candidate.error,
           candidate.sourceCreatedAtMs,
@@ -844,7 +844,7 @@ class LibraryRepository {
           candidate.entityType?.value,
           candidate.fingerprint,
           candidate.size,
-          candidate.metadataPreview,
+          candidate.contentExcerpt,
           candidate.durationMs,
           candidate.error,
           candidate.sourceCreatedAtMs,
@@ -1069,7 +1069,7 @@ class LibraryRepository {
     final node = ensureIndexNode(
       parentId: root.id,
       name: name,
-      nodeType: NodeType.categoryIndexRoot,
+      nodeType: NodeType.customIndexRoot,
       viewType: ViewType.tree,
     );
     rebuildIndexNodeStats();
@@ -1642,7 +1642,7 @@ class LibraryRepository {
     required int size,
     required int sourceCreatedAtMs,
     required int sourceModifiedAtMs,
-    String? metadataPreview,
+    String? contentExcerpt,
     int? durationMs,
     String? directoryRootId,
     String? localPath,
@@ -1654,7 +1654,7 @@ class LibraryRepository {
     final normalizedFormat =
         _normalizeEntityText(format, 'format').toLowerCase();
     final normalizedHash = _normalizeEntityText(hash, 'hash');
-    final normalizedPreview = _normalizeOptionalText(metadataPreview);
+    final normalizedPreview = _normalizeOptionalText(contentExcerpt);
     final normalizedLocalPath = localPath == null || localPath.trim().isEmpty
         ? null
         : p.normalize(localPath.trim());
@@ -1686,7 +1686,7 @@ class LibraryRepository {
     if (existing != null) {
       final requiresRuntimePreview = !_hasGeneratedThumbnail(entityType);
       if (existing.hash == normalizedHash &&
-          existing.metadataPreview == normalizedPreview &&
+          existing.contentExcerpt == normalizedPreview &&
           existing.entityType == entityType &&
           existing.format == normalizedFormat &&
           existing.size == size &&
@@ -1769,7 +1769,7 @@ class LibraryRepository {
           sourceModifiedAtMs: sourceModifiedAtMs,
           createdAtMs: existing.createdAtMs,
           updatedAtMs: now,
-          metadataPreview: normalizedPreview,
+          contentExcerpt: normalizedPreview,
           thumbnailStatus: thumbnailReset,
           thumbnailKey: thumbnailKey,
           thumbnailFormat: thumbnailFormat,
@@ -1846,7 +1846,7 @@ class LibraryRepository {
         sourceModifiedAtMs: sourceModifiedAtMs,
         createdAtMs: now,
         updatedAtMs: now,
-        metadataPreview: normalizedPreview,
+        contentExcerpt: normalizedPreview,
         thumbnailStatus: nextThumbnailStatus,
         durationMs: durationMs,
         directoryRootId: directoryRootId,
@@ -1858,7 +1858,7 @@ class LibraryRepository {
 
   void updateEntityMetadataPreview(
     String entityId,
-    String? metadataPreview,
+    String? contentExcerpt,
     int? durationMs,
   ) {
     database.db.execute(
@@ -1868,12 +1868,30 @@ class LibraryRepository {
       WHERE id = ?
       ''',
       [
-        _normalizeOptionalText(metadataPreview),
+        _normalizeOptionalText(contentExcerpt),
         durationMs,
         nowMillis(),
         entityId,
       ],
     );
+  }
+
+  /// Returns only EPUB records whose old build did not persist a text
+  /// excerpt. This is intentionally independent from directory scanning so a
+  /// renderer upgrade can repair previews without touching index membership.
+  List<Entity> listEpubsMissingMetadataPreview({int limit = 200}) {
+    final rows = database.db.select(
+      '''
+      SELECT * FROM entities
+      WHERE archived = 0
+        AND format = 'epub'
+        AND (metadata_preview IS NULL OR trim(metadata_preview) = '')
+      ORDER BY updated_at ASC, id ASC
+      LIMIT ?
+      ''',
+      [limit],
+    );
+    return rows.map((row) => _entityFromRow(row, thumbnailStore)).toList();
   }
 
   Entity? getEntity(String id) {
@@ -2304,7 +2322,7 @@ class LibraryRepository {
         final created = ensureIndexNode(
           parentId: parentId,
           name: name,
-          nodeType: NodeType.category,
+          nodeType: NodeType.customNode,
           viewType: ViewType.tree,
         );
         _touchIndexNode(parentId);
@@ -2334,7 +2352,7 @@ class LibraryRepository {
           targetParentId, 'targetParentId', 'Target index node does not exist');
     }
     final targetRoot = _owningIndexRoot(targetParent);
-    if (targetRoot?.nodeType != NodeType.categoryIndexRoot) {
+    if (targetRoot?.nodeType != NodeType.customIndexRoot) {
       throw ArgumentError.value(
         targetParentId,
         'targetParentId',
@@ -2398,7 +2416,7 @@ class LibraryRepository {
           id: newId(),
           parentId: parentId,
           name: uniqueName(parentId, original.name),
-          nodeType: NodeType.category,
+          nodeType: NodeType.customNode,
           viewType: ViewType.tree,
           sortOrder: original.sortOrder,
           createdAtMs: now,
@@ -2803,20 +2821,24 @@ class LibraryRepository {
       );
     }
     final assetRows = database.db.select(
-      'SELECT node_id, asset_key, format FROM node_preview_assets WHERE node_id IN ($placeholders)',
+      'SELECT node_id, asset_key, format, width, height FROM node_preview_assets WHERE node_id IN ($placeholders)',
       ids,
     );
-    final assetPaths = <String, String>{};
+    final assets = <String, ({String path, double aspectRatio})>{};
     for (final row in assetRows) {
       final nodeId = row['node_id'] as String;
       final assetKey = row['asset_key'] as String;
       final format = row['format'] as String;
       final path = _nodePreviewAssetPath(assetKey, format);
-      if (File(path).existsSync()) assetPaths[nodeId] = path;
+      final width = row['width'] as int;
+      final height = row['height'] as int;
+      if (File(path).existsSync() && width > 0 && height > 0) {
+        assets[nodeId] = (path: path, aspectRatio: width / height);
+      }
     }
     return Map<String, IndexNodePreview>.unmodifiable({
       for (final entry in previews.entries)
-        entry.key: _withNodePreviewAsset(entry.value, assetPaths[entry.key]),
+        entry.key: _withNodePreviewAsset(entry.value, assets[entry.key]),
     });
   }
 
@@ -3528,7 +3550,7 @@ LEFT JOIN child_counts ON child_counts.id = node.id
             IndexNodePreviewTileKind.visual,
           EntityType.audio => IndexNodePreviewTileKind.audio,
           EntityType.text ||
-          EntityType.externalLink =>
+          EntityType.document =>
             IndexNodePreviewTileKind.document,
           _ => IndexNodePreviewTileKind.node,
         };
@@ -4825,7 +4847,7 @@ LEFT JOIN child_counts ON child_counts.id = node.id
   }) {
     final requiredRootType = switch (nodeType) {
       NodeType.folder => NodeType.directoryIndexRoot,
-      NodeType.category => NodeType.categoryIndexRoot,
+      NodeType.customNode => NodeType.customIndexRoot,
       NodeType.graphNode => NodeType.graphIndexRoot,
       _ => null,
     };
@@ -4860,9 +4882,9 @@ LEFT JOIN child_counts ON child_counts.id = node.id
     required ViewType viewType,
   }) {
     final requiredViewType = switch (nodeType) {
-      NodeType.categoryIndexRoot ||
+      NodeType.customIndexRoot ||
       NodeType.folder ||
-      NodeType.category =>
+      NodeType.customNode =>
         ViewType.tree,
       NodeType.graphIndexRoot || NodeType.graphNode => ViewType.graph,
       _ => null,
@@ -4939,7 +4961,7 @@ Entity _entityFromRow(Row row, [ThumbnailStore? thumbnailStore]) {
     sourceModifiedAtMs: row['source_modified_at_ms'] as int,
     createdAtMs: row['created_at'] as int,
     updatedAtMs: row['updated_at'] as int,
-    metadataPreview: row['metadata_preview'] as String?,
+    contentExcerpt: row['metadata_preview'] as String?,
     thumbnailStatus: thumbnailStatus,
     thumbnailKey: thumbnailKey,
     thumbnailFormat: thumbnailFormat,
@@ -5022,7 +5044,7 @@ IndexJobCandidate _indexJobCandidateFromRow(Row row) => IndexJobCandidate(
           : EntityType.fromValue(row['media_type'] as String),
       fingerprint: row['fingerprint'] as String?,
       size: row['size'] as int?,
-      metadataPreview: row['metadata_preview'] as String?,
+      contentExcerpt: row['metadata_preview'] as String?,
       durationMs: row['duration_ms'] as int?,
       sourceCreatedAtMs: row['source_created_at_ms'] as int?,
       sourceModifiedAtMs: row['source_modified_at_ms'] as int?,
@@ -5242,11 +5264,9 @@ IndexNodePreview _buildIndexNodePreview({
   final hasSemanticData =
       distinctAudioNames.isNotEmpty || distinctDocumentNames.isNotEmpty;
   final visualCandidates = <IndexNodePreviewTile>[
-    ...childTiles.where(
-        (tile) => tile.kind == IndexNodePreviewTileKind.visual),
+    ...childTiles.where((tile) => tile.kind == IndexNodePreviewTileKind.visual),
     ...visuals,
-  ]
-    ..sort(
+  ]..sort(
       childTiles.isEmpty
           ? (left, right) => left.title.compareTo(right.title)
           : _compareNodePreviewVisualTiles,
@@ -5266,11 +5286,11 @@ IndexNodePreview _buildIndexNodePreview({
     }
     return IndexNodePreview(
       nodeId: nodeId,
-        kind: distinctAudioNames.isNotEmpty
-            ? IndexNodePreviewKind.audioList
-            : IndexNodePreviewKind.documentList,
-        audioNames: distinctAudioNames,
-        documentNames: distinctDocumentNames,
+      kind: distinctAudioNames.isNotEmpty
+          ? IndexNodePreviewKind.audioList
+          : IndexNodePreviewKind.documentList,
+      audioNames: distinctAudioNames,
+      documentNames: distinctDocumentNames,
     );
   }
 
@@ -5317,7 +5337,7 @@ List<String> _distinctPreviewNames(Iterable<String> values) {
 
 IndexNodePreview _withNodePreviewAsset(
   IndexNodePreview preview,
-  String? assetPath,
+  ({String path, double aspectRatio})? asset,
 ) {
   if (preview.kind != IndexNodePreviewKind.singleVisual &&
       preview.kind != IndexNodePreviewKind.visualGrid) {
@@ -5330,7 +5350,8 @@ IndexNodePreview _withNodePreviewAsset(
     audioNames: preview.audioNames,
     documentNames: preview.documentNames,
     customOrderTopToBottom: preview.customOrderTopToBottom,
-    visualAssetPath: assetPath,
+    visualAssetPath: asset?.path,
+    visualAssetAspectRatio: asset?.aspectRatio,
   );
 }
 
@@ -5379,7 +5400,7 @@ IndexNodePreviewTile _resolvePreviewOverrideTile(
             entityId: entity.id,
             audioNames: [_nodePreviewAudioTitle(entity)],
           ),
-        EntityType.text || EntityType.externalLink => IndexNodePreviewTile(
+        EntityType.text || EntityType.document => IndexNodePreviewTile(
             kind: IndexNodePreviewTileKind.document,
             title: entity.title,
             entityId: entity.id,
@@ -5503,7 +5524,7 @@ EntityListItem _listItemFromRow(Row row, ThumbnailStore thumbnailStore) {
     hash: entity.hash,
     size: entity.size,
     mimeType: entity.mimeType,
-    metadataPreview: entity.metadataPreview,
+    contentExcerpt: entity.contentExcerpt,
     thumbnailStatus: entity.thumbnailStatus,
     thumbnailPath: entity.thumbnailPath,
     thumbnailKey: entity.thumbnailKey,
@@ -5603,7 +5624,7 @@ bool _pathsOverlap(String left, String right) {
 }
 
 bool _isTopLevelIndexRootType(NodeType nodeType) {
-  return nodeType == NodeType.categoryIndexRoot ||
+  return nodeType == NodeType.customIndexRoot ||
       nodeType == NodeType.graphIndexRoot;
 }
 
@@ -5691,6 +5712,7 @@ ThumbnailStatus _defaultThumbnailStatusFor(EntityType type) {
   return ThumbnailStatus.none;
 }
 
-bool _hasGeneratedThumbnail(EntityType type) {
-  return type == EntityType.image || type == EntityType.video;
-}
+bool _hasGeneratedThumbnail(EntityType type) =>
+    type == EntityType.image ||
+    type == EntityType.video ||
+    type == EntityType.document;

@@ -3,7 +3,8 @@ enum EntityType {
   image('image'),
   audio('audio'),
   video('video'),
-  externalLink('external_link');
+  // Keep the storage value for compatibility with existing databases.
+  document('external_link');
 
   const EntityType(this.value);
   final String value;
@@ -165,10 +166,11 @@ class ThumbnailDatabaseUpdate {
 enum NodeType {
   root('root'),
   directoryIndexRoot('directory_index_root'),
-  categoryIndexRoot('category_index_root'),
+  // Keep the storage value for compatibility with existing databases.
+  customIndexRoot('category_index_root'),
   graphIndexRoot('graph_index_root'),
   folder('folder'),
-  category('category'),
+  customNode('category'),
   graphNode('graph_node');
 
   const NodeType(this.value);
@@ -214,7 +216,7 @@ class Entity {
     required this.updatedAtMs,
     this.shuffleRemaining = const [],
     this.history = const [],
-    this.metadataPreview,
+    this.contentExcerpt,
     this.thumbnailStatus = ThumbnailStatus.none,
     this.thumbnailKey,
     this.thumbnailFormat,
@@ -246,7 +248,7 @@ class Entity {
   final int updatedAtMs;
   final List<int> shuffleRemaining;
   final List<int> history;
-  final String? metadataPreview;
+  final String? contentExcerpt;
   final ThumbnailStatus thumbnailStatus;
   final String? thumbnailKey;
   final String? thumbnailFormat;
@@ -351,6 +353,7 @@ class IndexNodePreview {
     this.documentNames = const [],
     this.customOrderTopToBottom = false,
     this.visualAssetPath,
+    this.visualAssetAspectRatio,
   });
 
   final String nodeId;
@@ -360,6 +363,10 @@ class IndexNodePreview {
   final List<String> documentNames;
   final bool customOrderTopToBottom;
   final String? visualAssetPath;
+
+  /// The persisted composite has a variable width. Keep its measured ratio so
+  /// the card does not crop away the lower-layer shadows with BoxFit.cover.
+  final double? visualAssetAspectRatio;
 }
 
 /// One selectable source for a manually composed index-node preview.
@@ -534,7 +541,7 @@ class EntityListItem {
     required this.size,
     required this.modifiedAtMs,
     this.mimeType,
-    this.metadataPreview,
+    this.contentExcerpt,
     this.thumbnailStatus = ThumbnailStatus.none,
     this.thumbnailPath,
     this.thumbnailKey,
@@ -559,7 +566,7 @@ class EntityListItem {
   final String hash;
   final int size;
   final String? mimeType;
-  final String? metadataPreview;
+  final String? contentExcerpt;
   final ThumbnailStatus thumbnailStatus;
   final String? thumbnailPath;
   final String? thumbnailKey;
@@ -782,7 +789,7 @@ class LibraryBuildManifestItem {
     required this.sourceCreatedAtMs,
     required this.sourceModifiedAtMs,
     this.fingerprint,
-    this.metadataPreview,
+    this.contentExcerpt,
     this.durationMs,
   });
 
@@ -795,7 +802,7 @@ class LibraryBuildManifestItem {
   final EntityType entityType;
   final String? fingerprint;
   final int size;
-  final String? metadataPreview;
+  final String? contentExcerpt;
   final int? durationMs;
   final int sourceCreatedAtMs;
   final int sourceModifiedAtMs;
@@ -946,7 +953,7 @@ class IndexJobCandidate {
     this.entityType,
     this.fingerprint,
     this.size,
-    this.metadataPreview,
+    this.contentExcerpt,
     this.durationMs,
     this.sourceCreatedAtMs,
     this.sourceModifiedAtMs,
@@ -962,7 +969,7 @@ class IndexJobCandidate {
   final EntityType? entityType;
   final String? fingerprint;
   final int? size;
-  final String? metadataPreview;
+  final String? contentExcerpt;
   final int? durationMs;
   final int? sourceCreatedAtMs;
   final int? sourceModifiedAtMs;

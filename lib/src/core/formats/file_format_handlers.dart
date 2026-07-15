@@ -180,7 +180,7 @@ class ImageFileHandler extends FileFormatHandler {
 class PdfFileHandler extends FileFormatHandler {
   const PdfFileHandler()
       : super(
-          entityType: EntityType.externalLink,
+          entityType: EntityType.document,
           viewerKind: ViewerKind.pdfReader,
           extensions: const {'pdf'},
         );
@@ -200,7 +200,7 @@ class PdfFileHandler extends FileFormatHandler {
 class EpubFileHandler extends FileFormatHandler {
   const EpubFileHandler()
       : super(
-          entityType: EntityType.externalLink,
+          entityType: EntityType.document,
           viewerKind: ViewerKind.epubReader,
           extensions: const {'epub'},
         );
@@ -220,7 +220,7 @@ class EpubFileHandler extends FileFormatHandler {
 class DocxFileHandler extends FileFormatHandler {
   const DocxFileHandler()
       : super(
-          entityType: EntityType.externalLink,
+          entityType: EntityType.document,
           viewerKind: ViewerKind.docxReader,
           extensions: const {'docx'},
         );

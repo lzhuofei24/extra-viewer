@@ -6,11 +6,24 @@ import '../core/domain/models.dart';
 
 double indexNodePreviewAspectRatio(IndexNodePreview? preview) {
   if (preview == null) return 1;
+  // The stored WebP is the source of truth. Its width is deliberately based
+  // on 0.4H lower covers, not on the original image dimensions.
+  final persistedAspectRatio = preview.visualAssetAspectRatio;
+  if (persistedAspectRatio != null && persistedAspectRatio > 0) {
+    return persistedAspectRatio;
+  }
   return switch (preview.kind) {
     IndexNodePreviewKind.singleVisual ||
     IndexNodePreviewKind.visualGrid =>
       _BookStackLayout.fromTiles(
-        preview.tiles,
+        // Persistent WebPs contain visual covers only. Use the same tile set
+        // as the compositor so their variable width is never stretched back
+        // into the legacy mixed-data layout at display time.
+        preview.visualAssetPath == null
+            ? preview.tiles
+            : preview.tiles
+                .where((tile) => tile.kind == IndexNodePreviewTileKind.visual)
+                .toList(growable: false),
         customOrderTopToBottom: preview.customOrderTopToBottom,
       ).aspectRatio,
     IndexNodePreviewKind.audioList ||
@@ -112,7 +125,10 @@ class _VisualNodeAsset extends StatelessWidget {
     }
     return Image.file(
       File(value),
-      fit: BoxFit.fill,
+      // Node preview WebPs have a fixed height but intentionally variable
+      // width. Cover may trim an edge when constraints change; fill would
+      // distort every cover's aspect ratio.
+      fit: BoxFit.cover,
       filterQuality: FilterQuality.medium,
     );
   }
@@ -145,18 +161,15 @@ class _BookStack extends StatelessWidget {
               child: DecoratedBox(
                 decoration: const BoxDecoration(
                   color: Color(0x66000000),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Color(0x59000000),
-                      blurRadius: 5,
-                      offset: Offset(1, 0),
-                    ),
-                  ],
                 ),
                 child: ClipRRect(
-                  borderRadius: const BorderRadius.horizontal(
-                    left: Radius.circular(16),
-                  ),
+                  // Internal stacked seams are square; only the leading
+                  // outer edge keeps the cover's rounded silhouette.
+                  borderRadius: index == 0
+                      ? const BorderRadius.horizontal(
+                          left: Radius.circular(16),
+                        )
+                      : BorderRadius.zero,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       border: Border.all(
@@ -170,9 +183,13 @@ class _BookStack extends StatelessWidget {
                       fit: StackFit.expand,
                       children: [
                         _PreviewTile(tile: layout.tiles[index]),
-                        if (index < layout.tiles.length - 1)
+                        if (index < layout.tiles.length - 1 &&
+                            layout.tiles[index].kind ==
+                                IndexNodePreviewTileKind.visual)
                           Positioned(
-                            left: constraints.maxHeight * .25,
+                            left: (layout.coverWidths[index] - .15)
+                                    .clamp(0.0, layout.coverWidths[index]) *
+                                constraints.maxHeight,
                             top: 0,
                             width: constraints.maxHeight * .15,
                             height: constraints.maxHeight,
@@ -255,14 +272,18 @@ class _BookStackLayout {
   factory _BookStackLayout._fromBottomToTop(
     List<IndexNodePreviewTile> ordered,
   ) {
-    final widths = ordered.map(_bookCoverWidth).toList(growable: false);
+    final widths = <double>[
+      for (var index = 0; index < ordered.length; index++)
+        _bookCoverWidth(
+          ordered[index],
+          isTop: index == ordered.length - 1,
+        ),
+    ];
     final offsets = <double>[];
     var offset = 0.0;
     for (var index = 0; index < ordered.length; index++) {
       offsets.add(offset);
-      offset += index == ordered.length - 1
-          ? widths[index]
-          : widths[index].clamp(0.0, .4).toDouble();
+      offset += widths[index];
     }
     return _BookStackLayout(
       aspectRatio: offset,
@@ -278,9 +299,11 @@ bool _isBookDataTile(IndexNodePreviewTile tile) =>
     tile.kind == IndexNodePreviewTileKind.document ||
     tile.kind == IndexNodePreviewTileKind.mixedData;
 
-double _bookCoverWidth(IndexNodePreviewTile tile) {
+double _bookCoverWidth(IndexNodePreviewTile tile, {required bool isTop}) {
   if (_isBookDataTile(tile)) return 1;
-  return tile.aspectRatio.clamp(.12, 1.0).toDouble();
+  // Match the persistent compositor: every lower visual is a real 0.4H
+  // cover, while only the top cover keeps a source-derived width.
+  return isTop ? tile.aspectRatio.clamp(.4, 1.0).toDouble() : .4;
 }
 
 class _PreviewTile extends StatelessWidget {

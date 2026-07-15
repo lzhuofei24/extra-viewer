@@ -40,7 +40,7 @@ void main() {
     );
     expect(
       FileFormatRegistry.resolveFormat('docx')?.entityType,
-      EntityType.externalLink,
+      EntityType.document,
     );
     expect(
       FileFormatRegistry.resolveFormat('epub')?.viewerKind,
@@ -202,7 +202,10 @@ exit 0
     expect(result.height, 360);
     // PowerShell normalizes colon-style FFmpeg options to a space in $args.
     expect(args, contains(RegExp(r'-c(?::|\s+)v\s+libwebp')));
-    expect(args, contains(RegExp(r'-q(?::|\s+)v\s+78')));
+    expect(
+      args,
+      contains(RegExp('-q(?::|\\s+)v\\s+$thumbnailWebpQuality')),
+    );
   });
 }
 
