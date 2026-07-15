@@ -34,86 +34,6 @@ enum ThumbnailStatus {
   }
 }
 
-enum ThumbnailBuildStatus {
-  pending('pending'),
-  running('running'),
-  paused('paused'),
-  completed('completed'),
-  failed('failed'),
-  abandoned('abandoned');
-
-  const ThumbnailBuildStatus(this.value);
-  final String value;
-
-  static ThumbnailBuildStatus fromValue(String value) =>
-      ThumbnailBuildStatus.values.firstWhere(
-        (status) => status.value == value,
-        orElse: () => paused,
-      );
-}
-
-enum ThumbnailBuildEntryState {
-  pending('pending'),
-  processing('processing'),
-  completed('completed'),
-  failed('failed'),
-  skipped('skipped');
-
-  const ThumbnailBuildEntryState(this.value);
-  final String value;
-
-  static ThumbnailBuildEntryState fromValue(String value) =>
-      ThumbnailBuildEntryState.values.firstWhere(
-        (state) => state.value == value,
-        orElse: () => pending,
-      );
-}
-
-class ThumbnailBuildJob {
-  const ThumbnailBuildJob({
-    required this.id,
-    required this.status,
-    required this.total,
-    required this.processed,
-    required this.failed,
-    required this.createdAtMs,
-    required this.updatedAtMs,
-    this.indexRootId,
-    this.error,
-  });
-
-  final String id;
-  final String? indexRootId;
-  final ThumbnailBuildStatus status;
-  final int total;
-  final int processed;
-  final int failed;
-  final String? error;
-  final int createdAtMs;
-  final int updatedAtMs;
-
-  int get remaining => total - processed - failed;
-  double? get progress => total == 0 ? null : (processed + failed) / total;
-}
-
-class ThumbnailBuildEntry {
-  const ThumbnailBuildEntry({
-    required this.jobId,
-    required this.entityId,
-    required this.state,
-    required this.attempts,
-    required this.updatedAtMs,
-    this.error,
-  });
-
-  final String jobId;
-  final String entityId;
-  final ThumbnailBuildEntryState state;
-  final String? error;
-  final int attempts;
-  final int updatedAtMs;
-}
-
 enum ThumbnailUpdateType { pending, success, failed, none }
 
 class ThumbnailDatabaseUpdate {
@@ -499,13 +419,9 @@ class DirectoryIndexDeletionReport {
 class DirectoryIndexDeletionResult {
   const DirectoryIndexDeletionResult({
     required this.deletedEntityCount,
-    this.fileDeleteFailures = const [],
   });
 
   final int deletedEntityCount;
-  final List<String> fileDeleteFailures;
-
-  bool get completed => fileDeleteFailures.isEmpty;
 }
 
 class IndexTreeNode {
@@ -667,28 +583,6 @@ enum EntitySortMode {
   typeAsc;
 }
 
-enum IndexJobStatus {
-  pending('pending'),
-  running('running'),
-  paused('paused'),
-  attentionRequired('attention_required'),
-  completed('completed'),
-  failed('failed'),
-  abandoned('abandoned');
-
-  const IndexJobStatus(this.storageValue);
-
-  final String storageValue;
-
-  static IndexJobStatus fromStorageValue(String value) {
-    if (value == 'attentionRequired') return attentionRequired;
-    return IndexJobStatus.values.firstWhere(
-      (status) => status.storageValue == value,
-      orElse: () => throw ArgumentError.value(value, 'value', 'status'),
-    );
-  }
-}
-
 /// The only recoverable build state machine. Stages before asset generation
 /// deliberately restart as a whole; asset stages checkpoint their work rows.
 enum LibraryBuildStage {
@@ -808,93 +702,6 @@ class LibraryBuildManifestItem {
   final int sourceModifiedAtMs;
 }
 
-enum IndexJobPhase {
-  discovering,
-  preparing,
-  writing,
-  previews,
-  completed;
-}
-
-/// Describes which persisted source scope an index job owns. This is stored
-/// with the job so recovery never has to infer intent from a path string.
-enum IndexJobOperationType {
-  rootScan('root_scan'),
-  subtreeRefresh('subtree_refresh');
-
-  const IndexJobOperationType(this.storageValue);
-
-  final String storageValue;
-
-  static IndexJobOperationType fromStorageValue(String value) =>
-      IndexJobOperationType.values.firstWhere(
-        (operation) => operation.storageValue == value,
-        orElse: () => throw ArgumentError.value(value, 'value', 'operation'),
-      );
-}
-
-/// The user-visible recovery operations for a persisted index task.
-///
-/// Keeping this separate from [IndexJobStatus] prevents callers from
-/// inferring work from a combination of status, phase, and candidate rows.
-enum IndexJobAction {
-  resume,
-  recheck,
-  retryFailed,
-}
-
-/// The exact stage a recovery command is allowed to enter. Recovery callers
-/// must choose this plan once; scanners do not infer a new operation from a
-/// mixture of counters and candidate rows halfway through a run.
-enum IndexJobRecoveryStage { discovery, preparation, writing, previews }
-
-class IndexJobRecoveryPlan {
-  const IndexJobRecoveryPlan({
-    required this.action,
-    required this.stage,
-    required this.requiresCompleteManifest,
-  });
-
-  final IndexJobAction action;
-  final IndexJobRecoveryStage stage;
-  final bool requiresCompleteManifest;
-
-  factory IndexJobRecoveryPlan.fromJob(
-    IndexBuildJob job,
-    IndexJobAction action,
-  ) {
-    if (action == IndexJobAction.recheck) {
-      return const IndexJobRecoveryPlan(
-        action: IndexJobAction.recheck,
-        stage: IndexJobRecoveryStage.discovery,
-        requiresCompleteManifest: false,
-      );
-    }
-    if (action == IndexJobAction.retryFailed) {
-      return const IndexJobRecoveryPlan(
-        action: IndexJobAction.retryFailed,
-        stage: IndexJobRecoveryStage.previews,
-        requiresCompleteManifest: true,
-      );
-    }
-    final stage = switch (job.phase) {
-      IndexJobPhase.discovering => IndexJobRecoveryStage.discovery,
-      IndexJobPhase.preparing => IndexJobRecoveryStage.preparation,
-      IndexJobPhase.writing => IndexJobRecoveryStage.writing,
-      IndexJobPhase.previews => IndexJobRecoveryStage.previews,
-      IndexJobPhase.completed => IndexJobRecoveryStage.previews,
-    };
-    return IndexJobRecoveryPlan(
-      action: action,
-      stage: stage,
-      requiresCompleteManifest: stage == IndexJobRecoveryStage.writing ||
-          stage == IndexJobRecoveryStage.previews,
-    );
-  }
-}
-
-enum IndexJobCandidateState { pending, prepared, written, previewed, failed }
-
 enum IndexPreviewRebuildScope { node, subtree }
 
 class DirtyIndexPreviewNode {
@@ -911,153 +718,6 @@ class DirtyIndexPreviewNode {
   final IndexPreviewRebuildScope scope;
   final int dirtyAtMs;
   final String? reason;
-}
-
-/// Identifies the source and attachment point of one directory build.
-/// Platform scanners only need this value object; lifecycle handling stays
-/// independent from Windows paths and Android SAF URIs.
-class ScanScope {
-  const ScanScope.root({required this.sourcePath})
-      : indexRootId = null,
-        targetNodeId = null,
-        relativePath = null;
-
-  const ScanScope.subtree({
-    required this.sourcePath,
-    required this.indexRootId,
-    required this.targetNodeId,
-    this.relativePath,
-  });
-
-  final String sourcePath;
-  final String? indexRootId;
-  final String? targetNodeId;
-  final String? relativePath;
-
-  bool get isRoot => targetNodeId == null;
-
-  IndexJobOperationType get operationType => isRoot
-      ? IndexJobOperationType.rootScan
-      : IndexJobOperationType.subtreeRefresh;
-}
-
-class IndexJobCandidate {
-  const IndexJobCandidate({
-    required this.jobId,
-    required this.sourcePath,
-    required this.relativePath,
-    required this.sequence,
-    required this.state,
-    required this.updatedAtMs,
-    this.format,
-    this.entityType,
-    this.fingerprint,
-    this.size,
-    this.contentExcerpt,
-    this.durationMs,
-    this.sourceCreatedAtMs,
-    this.sourceModifiedAtMs,
-    this.error,
-  });
-
-  final String jobId;
-  final String sourcePath;
-  final String relativePath;
-  final int sequence;
-  final IndexJobCandidateState state;
-  final String? format;
-  final EntityType? entityType;
-  final String? fingerprint;
-  final int? size;
-  final String? contentExcerpt;
-  final int? durationMs;
-  final int? sourceCreatedAtMs;
-  final int? sourceModifiedAtMs;
-  final String? error;
-  final int updatedAtMs;
-}
-
-class IndexJobCandidateSummary {
-  const IndexJobCandidateSummary({
-    required this.pending,
-    required this.prepared,
-    required this.written,
-    required this.previewed,
-    required this.failed,
-  });
-
-  final int pending;
-  final int prepared;
-  final int written;
-  final int previewed;
-  final int failed;
-
-  int get total => pending + prepared + written + previewed + failed;
-  int get remaining => pending + prepared + written;
-}
-
-class IndexBuildJob {
-  const IndexBuildJob({
-    required this.id,
-    required this.sourcePath,
-    required this.status,
-    required this.phase,
-    required this.discovered,
-    required this.total,
-    required this.processed,
-    required this.previewTotal,
-    required this.previewProcessed,
-    required this.scanCompleted,
-    required this.createdAtMs,
-    required this.updatedAtMs,
-    required this.operationType,
-    required this.scopePath,
-    this.indexRootId,
-    this.targetNodeId,
-    this.stagingRootId,
-    this.error,
-  });
-
-  final String id;
-  final String sourcePath;
-  final String? indexRootId;
-  final IndexJobStatus status;
-  final IndexJobPhase phase;
-  final int discovered;
-  final int total;
-  final int processed;
-  final int previewTotal;
-  final int previewProcessed;
-  final bool scanCompleted;
-  final String? error;
-  final String? targetNodeId;
-  final String? stagingRootId;
-  final int createdAtMs;
-  final int updatedAtMs;
-  final IndexJobOperationType operationType;
-  final String scopePath;
-}
-
-class IndexJobHistoryEntry {
-  const IndexJobHistoryEntry({
-    required this.id,
-    required this.sourcePath,
-    required this.status,
-    required this.summary,
-    required this.createdAtMs,
-    required this.completedAtMs,
-    this.indexRootId,
-    this.targetNodeId,
-  });
-
-  final String id;
-  final String sourcePath;
-  final String? indexRootId;
-  final String? targetNodeId;
-  final IndexJobStatus status;
-  final String summary;
-  final int createdAtMs;
-  final int completedAtMs;
 }
 
 class EntityPageCursor {
