@@ -252,49 +252,152 @@ class _IndexRootSection extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          for (final node in roots) ...[
-            Card(
-              child: ListTile(
-                contentPadding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-                title: Text(node.name),
-                subtitle: Text('${rootCounts[node.id] ?? 0} 个实体'),
-                trailing: Wrap(
-                  spacing: 4,
-                  children: [
-                    TextButton(
-                      onPressed: scanning ? null : () => onPrimaryAction(node),
-                      child: Text(presentation.primaryActionLabel),
-                    ),
-                    PopupMenuButton<String>(
-                      enabled: !scanning,
-                      onSelected: (action) {
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (action == 'rebuildPreviews') {
-                            onRebuildPreviews(node);
-                          }
-                          if (action == 'rename') onRename(node);
-                          if (action == 'delete') onDelete(node);
-                        });
-                      },
-                      itemBuilder: (context) => const [
-                        PopupMenuItem(
-                          value: 'rebuildPreviews',
-                          child: Text('重新生成节点预览'),
-                        ),
-                        PopupMenuItem(value: 'rename', child: Text('重命名')),
-                        PopupMenuItem(value: 'delete', child: Text('删除')),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: roots.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              mainAxisExtent: 76,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 1,
             ),
-            const SizedBox(height: 8),
-          ],
+            itemBuilder: (context, index) => _IndexRootGridCard(
+              node: roots[index],
+              presentation: presentation,
+              entityCount: rootCounts[roots[index].id] ?? 0,
+              scanning: scanning,
+              onPrimaryAction: () => onPrimaryAction(roots[index]),
+              onRename: () => onRename(roots[index]),
+              onDelete: () => onDelete(roots[index]),
+              onRebuildPreviews: () => onRebuildPreviews(roots[index]),
+            ),
+          ),
         ],
       ),
     );
   }
+}
+
+class _IndexRootGridCard extends StatelessWidget {
+  const _IndexRootGridCard({
+    required this.node,
+    required this.presentation,
+    required this.entityCount,
+    required this.scanning,
+    required this.onPrimaryAction,
+    required this.onRename,
+    required this.onDelete,
+    required this.onRebuildPreviews,
+  });
+
+  final IndexNode node;
+  final IndexRootPresentation presentation;
+  final int entityCount;
+  final bool scanning;
+  final VoidCallback onPrimaryAction;
+  final VoidCallback onRename;
+  final VoidCallback onDelete;
+  final VoidCallback onRebuildPreviews;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 6, 4, 6),
+        child: Row(
+          children: [
+            Icon(
+              presentation.icon,
+              size: 21,
+              color: theme.colorScheme.primary,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    node.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '$entityCount 个实体',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall,
+                  ),
+                ],
+              ),
+            ),
+            TextButton(
+              onPressed: scanning ? null : onPrimaryAction,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                minimumSize: const Size(0, 30),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(presentation.primaryActionLabel),
+            ),
+            _RootActionsMenu(
+              enabled: !scanning,
+              onRename: onRename,
+              onDelete: onDelete,
+              onRebuildPreviews: onRebuildPreviews,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RootActionsMenu extends StatelessWidget {
+  const _RootActionsMenu({
+    required this.enabled,
+    required this.onRename,
+    required this.onDelete,
+    required this.onRebuildPreviews,
+  });
+
+  final bool enabled;
+  final VoidCallback onRename;
+  final VoidCallback onDelete;
+  final VoidCallback onRebuildPreviews;
+
+  @override
+  Widget build(BuildContext context) => PopupMenuButton<String>(
+        enabled: enabled,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+        iconSize: 19,
+        onSelected: (action) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            switch (action) {
+              case 'rebuildPreviews':
+                onRebuildPreviews();
+              case 'rename':
+                onRename();
+              case 'delete':
+                onDelete();
+            }
+          });
+        },
+        itemBuilder: (context) => const [
+          PopupMenuItem(
+            value: 'rebuildPreviews',
+            child: Text('重新生成节点预览'),
+          ),
+          PopupMenuItem(value: 'rename', child: Text('重命名')),
+          PopupMenuItem(value: 'delete', child: Text('删除')),
+        ],
+      );
 }
 
 class IndexRootPresentation {

@@ -1,11 +1,14 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:image/image.dart' as img;
 
 import '../database/library_repository.dart';
 import '../domain/models.dart';
-import 'webp_encoder.dart';
+import 'lossy_webp_encoder.dart';
 
 /// Builds visual node preview files without decoding or encoding on Flutter's
 /// isolate. Repository reads and the final asset-row mutation deliberately
@@ -29,13 +32,32 @@ class NodePreviewCompositeService {
       if (preview.customOrderTopToBottom &&
           preview.tiles
               .any((tile) => tile.kind != IndexNodePreviewTileKind.visual)) {
+        // A custom preview containing semantic tiles is intentionally rendered
+        // by Flutter. It must not keep a stale visual composite around.
         outcomes[preview.nodeId] = const NodePreviewCompositeOutcome.remove();
         continue;
       }
-      final tiles = preview.tiles
-          .where((tile) =>
-              tile.kind == IndexNodePreviewTileKind.visual &&
-              tile.thumbnailPath != null)
+      final visualTiles = preview.tiles
+          .where((tile) => tile.kind == IndexNodePreviewTileKind.visual)
+          .toList(growable: false);
+      if (visualTiles.isEmpty) {
+        // This is a visual preview description, but no source is available.
+        // Treat it as a retryable failure instead of deleting a working asset.
+        outcomes[preview.nodeId] = NodePreviewCompositeOutcome.failed(
+          '视觉预览没有可用图片源',
+        );
+        continue;
+      }
+      final missingSource = visualTiles.any(
+        (tile) => tile.thumbnailPath == null || tile.thumbnailPath!.isEmpty,
+      );
+      if (missingSource) {
+        outcomes[preview.nodeId] = NodePreviewCompositeOutcome.failed(
+          '视觉预览的实体缩略图尚未生成',
+        );
+        continue;
+      }
+      final tiles = visualTiles
           .map(
             (tile) => <String, Object?>{
               'path': tile.thumbnailPath!,
@@ -43,16 +65,18 @@ class NodePreviewCompositeService {
             },
           )
           .toList(growable: false);
-      if (tiles.isEmpty) {
-        outcomes[preview.nodeId] = const NodePreviewCompositeOutcome.remove();
-        continue;
-      }
+      final signature = _signature(preview);
+      // Each build gets a new final path. This makes the commit safe on both
+      // Android and Windows: a process interruption can never remove the
+      // asset currently referenced by SQLite.
+      final assetKey =
+          'node_${preview.nodeId}_${_assetDigest(signature)}_${DateTime.now().microsecondsSinceEpoch}';
       requests.add(<String, Object?>{
         'nodeId': preview.nodeId,
-        'signature': _signature(preview),
-        'assetKey': 'node_${preview.nodeId}',
+        'signature': signature,
+        'assetKey': assetKey,
         'outputPath': repository.nodePreviewAssetPath(
-          'node_${preview.nodeId}',
+          assetKey,
           'webp',
         ),
         'height': Platform.isAndroid ? 640 : 440,
@@ -73,16 +97,30 @@ class NodePreviewCompositeService {
           outcomes[nodeId] = NodePreviewCompositeOutcome.failed(error);
           continue;
         }
-        if (result['written'] != true) {
-          outcomes[nodeId] = const NodePreviewCompositeOutcome.remove();
+        final rawPixels = result['pixels'];
+        if (rawPixels is! TransferableTypedData) {
+          outcomes[nodeId] = NodePreviewCompositeOutcome.failed(
+            '节点预览像素数据未生成',
+          );
           continue;
         }
-        outcomes[nodeId] = NodePreviewCompositeOutcome.written(
-          signature: result['signature']! as String,
-          assetKey: result['assetKey']! as String,
-          width: result['width']! as int,
-          height: result['height']! as int,
-        );
+        try {
+          final pixels = rawPixels.materialize().asUint8List();
+          final artifact = await encodeRgbaCanvasToWebp(
+            pixels: pixels,
+            width: result['width']! as int,
+            height: result['height']! as int,
+            outputPath: result['outputPath']! as String,
+          );
+          outcomes[nodeId] = NodePreviewCompositeOutcome.written(
+            signature: result['signature']! as String,
+            assetKey: result['assetKey']! as String,
+            width: artifact.width,
+            height: artifact.height,
+          );
+        } catch (error) {
+          outcomes[nodeId] = NodePreviewCompositeOutcome.failed('$error');
+        }
       }
     }
     for (final entry in outcomes.entries) {
@@ -107,6 +145,9 @@ class NodePreviewCompositeService {
       .map((tile) =>
           '${tile.kind.name}:${tile.entityId ?? tile.nodeId ?? tile.title}:${tile.thumbnailKey ?? ''}:${tile.aspectRatio}')
       .join('|');
+
+  static String _assetDigest(String signature) =>
+      sha256.convert(utf8.encode(signature)).toString().substring(0, 16);
 }
 
 class NodePreviewCompositeOutcome {
@@ -169,7 +210,11 @@ Map<String, Object?> _composeRequest(Map<String, Object?> request) {
       }
     }
     if (tiles.isEmpty) {
-      return <String, Object?>{'nodeId': nodeId, 'written': false};
+      return <String, Object?>{
+        'nodeId': nodeId,
+        'written': false,
+        'error': '节点预览的缩略图文件不存在',
+      };
     }
     final lowerCoverWidth = (height * .4).round();
     // The top cover can preserve a portrait source ratio, but must not become
@@ -191,7 +236,11 @@ Map<String, Object?> _composeRequest(Map<String, Object?> request) {
           : lowerCoverWidth.clamp(1, width - left);
       final source = img.decodeImage(File(tiles[index].path).readAsBytesSync());
       if (source == null) {
-        return <String, Object?>{'nodeId': nodeId, 'written': false};
+        return <String, Object?>{
+          'nodeId': nodeId,
+          'written': false,
+          'error': '节点预览的缩略图无法解码',
+        };
       }
       // Every source has a fixed height and is cover-cropped, never stretched.
       // Each lower layer is exactly 0.4H wide; only the top layer keeps the
@@ -214,19 +263,14 @@ Map<String, Object?> _composeRequest(Map<String, Object?> request) {
       }
       left += tileWidth;
     }
-    final output = File(request['outputPath']! as String);
-    output.parent.createSync(recursive: true);
-    final temp = File('${output.path}.tmp');
-    temp.writeAsBytesSync(encodeThumbnailWebp(canvas));
-    if (output.existsSync()) output.deleteSync();
-    temp.renameSync(output.path);
     return <String, Object?>{
       'nodeId': nodeId,
-      'written': true,
       'signature': request['signature'],
       'assetKey': request['assetKey'],
+      'outputPath': request['outputPath'],
       'width': width,
       'height': height,
+      'pixels': TransferableTypedData.fromList(<Uint8List>[_rgba(canvas)]),
     };
   } catch (error) {
     return <String, Object?>{
@@ -234,6 +278,21 @@ Map<String, Object?> _composeRequest(Map<String, Object?> request) {
       'error': '$error',
     };
   }
+}
+
+Uint8List _rgba(img.Image image) {
+  final pixels = Uint8List(image.width * image.height * 4);
+  var offset = 0;
+  for (var y = 0; y < image.height; y++) {
+    for (var x = 0; x < image.width; x++) {
+      final pixel = image.getPixel(x, y);
+      pixels[offset++] = pixel.r.toInt().clamp(0, 255);
+      pixels[offset++] = pixel.g.toInt().clamp(0, 255);
+      pixels[offset++] = pixel.b.toInt().clamp(0, 255);
+      pixels[offset++] = pixel.a.toInt().clamp(0, 255);
+    }
+  }
+  return pixels;
 }
 
 img.Image _cover(img.Image source, int width, int height) {

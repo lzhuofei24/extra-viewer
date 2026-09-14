@@ -118,7 +118,7 @@ class _VisualNodeAsset extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final value = path;
-    if (value == null || value.isEmpty || !File(value).existsSync()) {
+    if (value == null || value.isEmpty) {
       // Visual node previews are persistent build artifacts. Do not recreate
       // a multi-image layout while scrolling when the asset is unavailable.
       return fallback ?? const SizedBox.expand();
@@ -130,6 +130,7 @@ class _VisualNodeAsset extends StatelessWidget {
       // distort every cover's aspect ratio.
       fit: BoxFit.cover,
       filterQuality: FilterQuality.medium,
+      errorBuilder: (_, __, ___) => fallback ?? const SizedBox.expand(),
     );
   }
 }
@@ -445,7 +446,7 @@ class _NameList extends StatelessWidget {
         builder: (context, constraints) {
           const lineHeight = 15.0;
           final lineCount =
-              (constraints.maxHeight / lineHeight).floor().clamp(1, 8);
+              (constraints.maxHeight / lineHeight).floor().clamp(1, 1 << 20);
           final reserveOverflowLine = names.length > lineCount;
           final visible = names
               .take(reserveOverflowLine ? lineCount - 1 : lineCount)

@@ -98,6 +98,30 @@ extern "C" __declspec(dllexport) int BestViewerCreateThumbnail(
   return result;
 }
 
+extern "C" __declspec(dllexport) int BestViewerEncodeRGBA(
+    const uint8_t* pixels,
+    int width,
+    int height,
+    float quality,
+    uint8_t** output_bytes,
+    size_t* output_size) {
+  if (pixels == nullptr || width <= 0 || height <= 0 || output_bytes == nullptr ||
+      output_size == nullptr) {
+    return E_INVALIDARG;
+  }
+
+  *output_bytes = nullptr;
+  *output_size = 0;
+  const size_t stride = static_cast<size_t>(width) * 4;
+  const size_t encoded_size = WebPEncodeRGBA(
+      pixels, width, height, static_cast<int>(stride), quality, output_bytes);
+  if (encoded_size == 0 || *output_bytes == nullptr) {
+    return E_FAIL;
+  }
+  *output_size = encoded_size;
+  return S_OK;
+}
+
 extern "C" __declspec(dllexport) void BestViewerFreeThumbnail(uint8_t* bytes) {
   if (bytes != nullptr) WebPFree(bytes);
 }

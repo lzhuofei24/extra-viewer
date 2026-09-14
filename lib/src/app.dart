@@ -36,7 +36,6 @@ import 'ui/app_sidebar.dart';
 import 'ui/app_pet.dart';
 import 'ui/builtin_media_page.dart';
 import 'ui/collection_browser_page.dart';
-import 'ui/collapse_grip_icon.dart';
 import 'ui/design_tokens.dart';
 import 'ui/entity_detail_sheet.dart';
 import 'ui/graph_index_page.dart';
@@ -49,6 +48,8 @@ import 'ui/pet_page.dart';
 import 'ui/node_preview_picker.dart';
 import 'ui/settings_page.dart';
 import 'ui/diagnostics_page.dart';
+import 'ui/dialogs/app_dialogs.dart';
+import 'ui/widgets/app_widgets.dart';
 
 class BestViewerApp extends StatefulWidget {
   const BestViewerApp({super.key, this.databaseFactory});
@@ -123,6 +124,7 @@ class _AppShellState extends State<AppShell> {
   LibraryWriteWorker? _writeWorker;
   LibraryRepository? _repository;
   LibraryReadWorker? _readWorker;
+  Future<LibraryReadWorker>? _readWorkerStart;
   BrowsingThumbnailController? _browsingThumbnails;
   AppAudioController? _audioController;
   LibraryBuildTaskController? _buildTasks;
@@ -130,6 +132,8 @@ class _AppShellState extends State<AppShell> {
   int? _incompatibleSchemaVersion;
   bool _resettingLocalIndex = false;
   String? _indexError;
+  String? _readError;
+  bool _readRetrying = false;
   AppSection _section = AppSection.home;
   BrowserState _browserState = const BrowserState();
   IndexNode? _selectedIndexRoot;
@@ -180,7 +184,7 @@ class _AppShellState extends State<AppShell> {
     IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,
     String? reason,
   }) async {
-    await _buildTasks?.rebuildNodePreview(nodeId);
+    await _buildTasks?.rebuildNodePreview(nodeId, scope: scope);
   }
 
   bool get _isInsideCustomIndex =>
@@ -249,6 +253,111 @@ class _AppShellState extends State<AppShell> {
     final writeWorker = _writeWorker;
     if (writeWorker != null) await writeWorker.close();
     _database?.close();
+  }
+
+  Future<LibraryReadWorker> _ensureReadWorker() async {
+    final existing = _readWorker;
+    if (existing != null) return existing;
+    final database = _database;
+    final databasePath = database?.databasePath;
+    if (database == null || databasePath == null) {
+      throw StateError('读取服务不可用：当前数据库没有可供读 Isolate 使用的文件路径');
+    }
+    final pending = _readWorkerStart;
+    if (pending != null) return pending;
+    late final Future<LibraryReadWorker> start;
+    start = LibraryReadWorker.start(
+      databasePath: databasePath,
+      storageDirectoryPath: database.storageDirectoryPath,
+    ).then((worker) {
+      if (!mounted || !identical(_database, database)) {
+        unawaited(worker.close());
+        throw StateError('读取服务启动时应用已经切换数据库');
+      }
+      _readWorker = worker;
+      return worker;
+    }).whenComplete(() {
+      if (identical(_readWorkerStart, start)) _readWorkerStart = null;
+    });
+    _readWorkerStart = start;
+    return start;
+  }
+
+  Future<void> _restartReadWorker(LibraryReadWorker failedWorker) async {
+    if (!identical(_readWorker, failedWorker)) return;
+    _readWorker = null;
+    try {
+      await failedWorker.close();
+    } catch (_) {
+      // The worker may already have terminated after a native/database error.
+    }
+  }
+
+  Future<T> _read<T>(
+    Future<T> Function(LibraryReadWorker worker) operation,
+  ) async {
+    Object? lastError;
+    StackTrace? lastStackTrace;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      LibraryReadWorker? worker;
+      try {
+        worker = await _ensureReadWorker();
+        final result = await operation(worker);
+        if (mounted && _readError != null) {
+          setState(() => _readError = null);
+        }
+        return result;
+      } catch (error, stackTrace) {
+        lastError = error;
+        lastStackTrace = stackTrace;
+        AppDiagnosticLog.instance.warning(
+          'database_read_worker_failed',
+          fields: {
+            'attempt': attempt + 1,
+            'error': '$error',
+            'stackTrace': '$stackTrace',
+          },
+        );
+        if (worker != null) await _restartReadWorker(worker);
+      }
+    }
+    final error = StateError('读取服务暂时不可用：$lastError');
+    _setReadError(error, lastStackTrace ?? StackTrace.current);
+    throw error;
+  }
+
+  void _setReadError(Object error, StackTrace stackTrace) {
+    AppDiagnosticLog.instance.error(
+      'database_read_unavailable',
+      error,
+      stackTrace,
+    );
+    if (!mounted) return;
+    setState(() => _readError = '$error');
+  }
+
+  Future<void> _retryReadWorker() async {
+    if (_readRetrying) return;
+    setState(() {
+      _readRetrying = true;
+      _readError = null;
+    });
+    try {
+      final worker = _readWorker;
+      _readWorker = null;
+      if (worker != null) await worker.close();
+      _readWorkerStart = null;
+      await _ensureReadWorker();
+      await _reloadAsync(
+        indexNodeId: _currentIndexNode?.id,
+        invalidateBrowserCache: true,
+      );
+      if (_section != AppSection.data) await _reloadDashboardDataAsync();
+    } catch (error, stackTrace) {
+      _setReadError(error, stackTrace);
+    } finally {
+      if (mounted) setState(() => _readRetrying = false);
+    }
   }
 
   Future<void> _bootstrap() async {
@@ -359,8 +468,12 @@ class _AppShellState extends State<AppShell> {
           databasePath: database.databasePath!,
           storageDirectoryPath: database.storageDirectoryPath,
         );
-      } catch (_) {
-        // The synchronous repository remains a functional fallback.
+      } catch (error, stackTrace) {
+        _readError = '读取服务启动失败：$error';
+        AppDiagnosticLog.instance.warning(
+          'database_read_worker_unavailable',
+          fields: {'error': '$error', 'stackTrace': '$stackTrace'},
+        );
       }
     }
     setState(() {
@@ -437,16 +550,23 @@ class _AppShellState extends State<AppShell> {
   Future<ThumbnailPreloadPage> _loadCurrentNodeThumbnailPreloadPage(
     String? afterEntityId,
   ) async {
-    final repository = _repository;
     final node = _currentIndexNode;
-    if (repository == null || node == null) {
+    if (node == null) {
       return const ThumbnailPreloadPage(paths: []);
     }
-    return repository.listThumbnailPreloadPageUnderNode(
-      node.id,
-      afterEntityId: afterEntityId,
-      recursive: _browserState.contentScope == BrowserContentScope.recursive,
-    );
+    try {
+      return await _read(
+        (worker) => worker.loadThumbnailPreloadPage(
+          nodeId: node.id,
+          afterEntityId: afterEntityId,
+          recursive:
+              _browserState.contentScope == BrowserContentScope.recursive,
+        ),
+      );
+    } catch (error, stackTrace) {
+      _setReadError(error, stackTrace);
+      return const ThumbnailPreloadPage(paths: []);
+    }
   }
 
   void _handlePetChanged() {
@@ -547,172 +667,173 @@ class _AppShellState extends State<AppShell> {
       _browserNodeCache.clear();
       _cacheWarmupGeneration++;
     }
-
-    final roots = repository.listIndexRoots(sortMode: _browserState.sortMode);
-    final selectedRoot = _resolveSelectedIndexRoot(roots);
-    final selectedItem = _resolveSelectedItem(
-      repository: repository,
-      selectedIndexRoot: selectedRoot,
-      indexNodeId: indexNodeId,
-    );
-    final currentNode = selectedItem ?? selectedRoot;
-    final recursiveBrowsing =
-        _browserState.contentScope == BrowserContentScope.recursive;
-    final cacheKey = selectedRoot == null || currentNode == null
-        ? null
-        : BrowserNodeCacheKey(
+    try {
+      final roots = await _read(
+        (worker) => worker.loadIndexRoots(sortMode: _browserState.sortMode),
+      );
+      if (!mounted || generation != _reloadGeneration) return;
+      final selectedRoot = _resolveSelectedIndexRoot(roots);
+      final targetId = indexNodeId ?? _selectedItem?.id;
+      List<IndexNode> nodePath = const <IndexNode>[];
+      IndexNode? selectedItem;
+      if (selectedRoot != null) {
+        final currentId = targetId ?? selectedRoot.id;
+        nodePath = await _read(
+          (worker) => worker.loadNodePath(
             indexRootId: selectedRoot.id,
-            nodeId: currentNode.id,
-            sortMode: _browserState.sortMode,
-            recursive: recursiveBrowsing,
-          );
-    final cached = cacheKey == null ? null : _browserNodeCache.get(cacheKey);
-    List<IndexNode> childNodes;
-    EntityPage? uncachedPage;
-    if (recursiveBrowsing) {
-      childNodes = const <IndexNode>[];
-      if (selectedRoot != null && cached == null) {
-        final readWorker = _readWorker;
-        if (readWorker != null) {
-          try {
-            final page = await readWorker.loadRecursivePage(
-              nodeId: currentNode?.id ?? selectedRoot.id,
-              sortMode: _browserState.sortMode,
-              limit: _entityPageSize,
-            );
-            if (!mounted || generation != _reloadGeneration) return;
-            uncachedPage = EntityPage(
-              items: page.entities,
-              hasMore: page.hasMore,
-              recursiveCursor: page.recursiveCursor,
-            );
-          } catch (_) {
-            uncachedPage = repository.listEntityPageRecursivelyUnderNode(
-              currentNode?.id ?? selectedRoot.id,
-              sortMode: _browserState.sortMode,
-              limit: _entityPageSize,
-            );
-          }
-        } else {
-          uncachedPage = repository.listEntityPageRecursivelyUnderNode(
-            currentNode?.id ?? selectedRoot.id,
-            sortMode: _browserState.sortMode,
-            limit: _entityPageSize,
-          );
+            currentNodeId: currentId,
+          ),
+        );
+        if (nodePath.isNotEmpty && currentId != selectedRoot.id) {
+          selectedItem = nodePath.last;
         }
       }
-    } else if (currentNode == null) {
-      childNodes = roots;
-    } else if (cached != null) {
-      childNodes = cached.childNodes;
-    } else {
-      final readWorker = _readWorker;
-      if (readWorker != null) {
-        try {
-          final page = await readWorker.loadDirectPage(
-            parentNodeId: currentNode.id,
-            sortMode: _browserState.sortMode,
-            limit: _entityPageSize,
+      final currentNode = selectedItem ?? selectedRoot;
+      final recursiveBrowsing =
+          _browserState.contentScope == BrowserContentScope.recursive;
+      final cacheKey = selectedRoot == null || currentNode == null
+          ? null
+          : BrowserNodeCacheKey(
+              indexRootId: selectedRoot.id,
+              nodeId: currentNode.id,
+              sortMode: _browserState.sortMode,
+              recursive: recursiveBrowsing,
+            );
+      final cached = cacheKey == null ? null : _browserNodeCache.get(cacheKey);
+      List<IndexNode> childNodes;
+      EntityPage? uncachedPage;
+      if (recursiveBrowsing) {
+        childNodes = const <IndexNode>[];
+        if (selectedRoot != null && currentNode != null && cached == null) {
+          final page = await _read(
+            (worker) => worker.loadRecursivePage(
+              nodeId: currentNode.id,
+              sortMode: _browserState.sortMode,
+              limit: _entityPageSize,
+            ),
           );
           if (!mounted || generation != _reloadGeneration) return;
-          childNodes = page.childNodes;
           uncachedPage = EntityPage(
             items: page.entities,
             hasMore: page.hasMore,
-          );
-        } catch (_) {
-          childNodes = repository.listChildNodes(
-            selectedRoot!.id,
-            parentId: currentNode.id,
-            sortMode: _browserState.sortMode,
-          );
-          uncachedPage = repository.listEntityPageDirectlyUnderNode(
-            currentNode.id,
-            sortMode: _browserState.sortMode,
-            limit: _entityPageSize,
+            recursiveCursor: page.recursiveCursor,
           );
         }
+      } else if (currentNode == null) {
+        childNodes = roots;
+      } else if (cached != null) {
+        childNodes = cached.childNodes;
+        if (cached.nodePath.isNotEmpty) nodePath = cached.nodePath;
       } else {
-        childNodes = repository.listChildNodes(
-          selectedRoot!.id,
-          parentId: currentNode.id,
-          sortMode: _browserState.sortMode,
+        final page = await _read(
+          (worker) => worker.loadDirectPage(
+            parentNodeId: currentNode.id,
+            sortMode: _browserState.sortMode,
+            limit: _entityPageSize,
+          ),
         );
-        uncachedPage = repository.listEntityPageDirectlyUnderNode(
-          currentNode.id,
-          sortMode: _browserState.sortMode,
-          limit: _entityPageSize,
+        if (!mounted || generation != _reloadGeneration) return;
+        childNodes = page.childNodes;
+        uncachedPage = EntityPage(
+          items: page.entities,
+          hasMore: page.hasMore,
         );
       }
-    }
-    final nodePath = selectedRoot == null
-        ? const <IndexNode>[]
-        : repository.listNodePath(selectedRoot.id, currentNode!.id);
-    final entities = selectedRoot == null
-        ? const <EntityListItem>[]
-        : cached?.entities ?? uncachedPage!.items;
-    final entitiesHasMore = cached?.hasMore ?? uncachedPage?.hasMore ?? false;
-    final recursiveCursor =
-        cached?.recursiveCursor ?? uncachedPage?.recursiveCursor;
-    final nodeSummaries = cached?.nodeSummaries ??
-        repository.listIndexNodeSummaries(childNodes.map((node) => node.id));
-    final nodePreviews = cached?.nodePreviews ??
-        repository.listIndexNodePreviews(childNodes.map((node) => node.id));
-    if (!mounted || generation != _reloadGeneration) return;
-    if (cacheKey != null && cached == null) {
-      _browserNodeCache.put(
-        cacheKey,
-        EntityPageSnapshot(
-          childNodes: List<IndexNode>.unmodifiable(childNodes),
-          entities: List<EntityListItem>.unmodifiable(entities),
-          nodePath: List<IndexNode>.unmodifiable(nodePath),
-          nodeSummaries:
-              Map<String, IndexNodeSummary>.unmodifiable(nodeSummaries),
-          nodePreviews:
-              Map<String, IndexNodePreview>.unmodifiable(nodePreviews),
-          recursiveCursor: recursiveCursor,
-          hasMore: entitiesHasMore,
-        ),
-        priority: BrowserNodeCachePriority.pinned,
+      final entities =
+          cached?.entities ?? uncachedPage?.items ?? const <EntityListItem>[];
+      final entitiesHasMore = cached?.hasMore ?? uncachedPage?.hasMore ?? false;
+      final recursiveCursor =
+          cached?.recursiveCursor ?? uncachedPage?.recursiveCursor;
+      final Map<String, IndexNodeSummary> nodeSummaries;
+      if (cached != null) {
+        nodeSummaries = cached.nodeSummaries;
+      } else {
+        nodeSummaries = await _read(
+          (worker) => worker.loadNodeSummaries(
+            childNodes.map((node) => node.id),
+          ),
+        );
+      }
+      final Map<String, IndexNodePreview> nodePreviews;
+      if (cached != null) {
+        nodePreviews = cached.nodePreviews;
+      } else {
+        nodePreviews = await _read<Map<String, IndexNodePreview>>(
+          (worker) => worker.loadNodePreviews(
+            childNodes.map((node) => node.id),
+          ),
+        );
+      }
+      final detail = _detail == null
+          ? null
+          : await _read((worker) => worker.loadEntity(_detail!.id));
+      if (!mounted || generation != _reloadGeneration) return;
+      if (cacheKey != null && cached == null) {
+        _browserNodeCache.put(
+          cacheKey,
+          EntityPageSnapshot(
+            childNodes: List<IndexNode>.unmodifiable(childNodes),
+            entities: List<EntityListItem>.unmodifiable(entities),
+            nodePath: List<IndexNode>.unmodifiable(nodePath),
+            nodeSummaries:
+                Map<String, IndexNodeSummary>.unmodifiable(nodeSummaries),
+            nodePreviews:
+                Map<String, IndexNodePreview>.unmodifiable(nodePreviews),
+            recursiveCursor: recursiveCursor,
+            hasMore: entitiesHasMore,
+          ),
+          priority: BrowserNodeCachePriority.pinned,
+        );
+      }
+      _updateNavigationCacheScope(
+        root: selectedRoot,
+        nodePath: nodePath,
+        childNodes: childNodes,
+        recursive: recursiveBrowsing,
       );
-    }
-    _updateNavigationCacheScope(
-      root: selectedRoot,
-      nodePath: nodePath,
-      childNodes: childNodes,
-      recursive: recursiveBrowsing,
-    );
-    final detail = _detail == null ? null : repository.getEntity(_detail!.id);
 
-    setState(() {
-      _indexRoots = roots;
-      _selectedIndexRoot = selectedRoot;
-      _selectedItem = selectedItem;
-      _childNodes = childNodes;
-      _nodePath = nodePath;
-      _entities = entities;
-      _entitiesHasMore = entitiesHasMore;
-      _recursiveEntityCursor = recursiveCursor;
-      _loadingMoreEntities = false;
-      _detail = detail;
-      _nodeSummaries = nodeSummaries;
-      _nodePreviews = nodePreviews;
-    });
-    if (_section != AppSection.data) _reloadDashboardData();
+      setState(() {
+        _indexRoots = roots;
+        _selectedIndexRoot = selectedRoot;
+        _selectedItem = selectedItem;
+        _childNodes = childNodes;
+        _nodePath = nodePath;
+        _entities = entities;
+        _entitiesHasMore = entitiesHasMore;
+        _recursiveEntityCursor = recursiveCursor;
+        _loadingMoreEntities = false;
+        _detail = detail;
+        _nodeSummaries = nodeSummaries;
+        _nodePreviews = nodePreviews;
+      });
+      if (_section != AppSection.data) await _reloadDashboardDataAsync();
+    } catch (error, stackTrace) {
+      if (mounted && generation == _reloadGeneration) {
+        _setReadError(error, stackTrace);
+      }
+    }
   }
 
   void _reloadDashboardData() {
-    final repository = _repository;
-    if (repository == null) return;
-    final roots = repository.listIndexRoots();
-    final rootCounts = repository.countEntitiesUnderIndexNodes(
-      roots.map((root) => root.id),
-    );
-    _refreshRecoverableIndexTasks();
-    setState(() {
-      _indexRoots = roots;
-      _rootCounts = rootCounts;
-    });
+    unawaited(_reloadDashboardDataAsync());
+  }
+
+  Future<void> _reloadDashboardDataAsync() async {
+    if (_repository == null) return;
+    try {
+      final roots = await _read((worker) => worker.loadIndexRoots());
+      final rootCounts = await _read(
+        (worker) => worker.loadRootEntityCounts(roots.map((root) => root.id)),
+      );
+      _refreshRecoverableIndexTasks();
+      if (!mounted) return;
+      setState(() {
+        _indexRoots = roots;
+        _rootCounts = rootCounts;
+      });
+    } catch (error, stackTrace) {
+      _setReadError(error, stackTrace);
+    }
   }
 
   void _refreshRecoverableIndexTasks() {
@@ -760,6 +881,14 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
+  /// Stop queued lookahead reads before an explicit navigation action. A
+  /// running read may finish, but its generation check will discard the stale
+  /// result instead of competing with the newly requested page.
+  void _cancelPageWarmup() {
+    _cacheWarmupGeneration++;
+    _taskScheduler.cancelTag('page-warm');
+  }
+
   void _scheduleNextPageWarmup({
     required int generation,
     required IndexNode root,
@@ -798,8 +927,6 @@ class _AppShellState extends State<AppShell> {
     if (!mounted || generation != _cacheWarmupGeneration || pending.isEmpty) {
       return;
     }
-    final repository = _repository;
-    if (repository == null) return;
     final node = pending.removeFirst();
     final key = BrowserNodeCacheKey(
       indexRootId: root.id,
@@ -808,53 +935,35 @@ class _AppShellState extends State<AppShell> {
       recursive: false,
     );
     if (_browserNodeCache.canWarm(key)) {
-      List<IndexNode> childNodes;
-      List<EntityListItem> entities;
-      bool hasMore;
-      final readWorker = _readWorker;
-      if (readWorker != null) {
-        try {
-          final page = await readWorker.loadDirectPage(
+      late final List<IndexNode> childNodes;
+      late final List<EntityListItem> entities;
+      late final bool hasMore;
+      try {
+        final page = await _read(
+          (worker) => worker.loadDirectPage(
             parentNodeId: node.id,
             sortMode: sortMode,
             limit: _entityPageSize,
-          );
-          childNodes = page.childNodes;
-          entities = page.entities;
-          hasMore = page.hasMore;
-        } catch (_) {
-          childNodes = repository.listChildNodes(
-            root.id,
-            parentId: node.id,
-            sortMode: sortMode,
-          );
-          final page = repository.listEntityPageDirectlyUnderNode(
-            node.id,
-            sortMode: sortMode,
-            limit: _entityPageSize,
-          );
-          entities = page.items;
-          hasMore = page.hasMore;
-        }
-      } else {
-        childNodes = repository.listChildNodes(
-          root.id,
-          parentId: node.id,
-          sortMode: sortMode,
+          ),
         );
-        final page = repository.listEntityPageDirectlyUnderNode(
-          node.id,
-          sortMode: sortMode,
-          limit: _entityPageSize,
-        );
-        entities = page.items;
+        childNodes = page.childNodes;
+        entities = page.entities;
         hasMore = page.hasMore;
+      } catch (error, stackTrace) {
+        _setReadError(error, stackTrace);
+        return;
       }
       if (!mounted || generation != _cacheWarmupGeneration) return;
-      final nodeSummaries =
-          repository.listIndexNodeSummaries(childNodes.map((item) => item.id));
-      final nodePreviews =
-          repository.listIndexNodePreviews(childNodes.map((item) => item.id));
+      final nodeSummaries = await _read(
+        (worker) => worker.loadNodeSummaries(
+          childNodes.map((item) => item.id),
+        ),
+      );
+      final nodePreviews = await _read(
+        (worker) => worker.loadNodePreviews(
+          childNodes.map((item) => item.id),
+        ),
+      );
       final stored = _browserNodeCache.put(
         key,
         EntityPageSnapshot(
@@ -882,11 +991,9 @@ class _AppShellState extends State<AppShell> {
   }
 
   Future<void> _loadMoreEntities() async {
-    final repository = _repository;
     final root = _selectedIndexRoot;
     final node = _currentIndexNode;
-    if (repository == null ||
-        root == null ||
+    if (root == null ||
         node == null ||
         !_entitiesHasMore ||
         _loadingMoreEntities) {
@@ -901,43 +1008,30 @@ class _AppShellState extends State<AppShell> {
         : EntityPageCursor.fromEntity(_entities.last, sortMode);
     try {
       EntityPage page;
-      final readWorker = _readWorker;
-      if (readWorker != null) {
-        if (recursiveBrowsing) {
-          final result = await readWorker.loadRecursivePage(
+      if (recursiveBrowsing) {
+        final result = await _read(
+          (worker) => worker.loadRecursivePage(
             nodeId: node.id,
             sortMode: sortMode,
             after: _recursiveEntityCursor,
             limit: _entityPageSize,
-          );
-          page = EntityPage(
-            items: result.entities,
-            hasMore: result.hasMore,
-            recursiveCursor: result.recursiveCursor,
-          );
-        } else {
-          final result = await readWorker.loadDirectPage(
+          ),
+        );
+        page = EntityPage(
+          items: result.entities,
+          hasMore: result.hasMore,
+          recursiveCursor: result.recursiveCursor,
+        );
+      } else {
+        final result = await _read(
+          (worker) => worker.loadDirectPage(
             parentNodeId: node.id,
             sortMode: sortMode,
             after: after,
             limit: _entityPageSize,
-          );
-          page = EntityPage(items: result.entities, hasMore: result.hasMore);
-        }
-      } else {
-        page = recursiveBrowsing
-            ? repository.listEntityPageRecursivelyUnderNode(
-                node.id,
-                sortMode: sortMode,
-                after: _recursiveEntityCursor,
-                limit: _entityPageSize,
-              )
-            : repository.listEntityPageDirectlyUnderNode(
-                node.id,
-                sortMode: sortMode,
-                after: after,
-                limit: _entityPageSize,
-              );
+          ),
+        );
+        page = EntityPage(items: result.entities, hasMore: result.hasMore);
       }
       if (!mounted ||
           node.id != _currentIndexNode?.id ||
@@ -975,6 +1069,8 @@ class _AppShellState extends State<AppShell> {
         _entitiesHasMore = page.hasMore;
         _recursiveEntityCursor = page.recursiveCursor ?? _recursiveEntityCursor;
       });
+    } catch (error, stackTrace) {
+      _setReadError(error, stackTrace);
     } finally {
       if (mounted) setState(() => _loadingMoreEntities = false);
     }
@@ -990,22 +1086,9 @@ class _AppShellState extends State<AppShell> {
     return null;
   }
 
-  IndexNode? _resolveSelectedItem({
-    required LibraryRepository repository,
-    required IndexNode? selectedIndexRoot,
-    required String? indexNodeId,
-  }) {
-    if (selectedIndexRoot == null) return null;
-    final targetId = indexNodeId ?? _selectedItem?.id;
-    if (targetId == null || targetId == selectedIndexRoot.id) return null;
-    final target = repository.getIndexNode(targetId);
-    if (target == null) return null;
-    final path = repository.listNodePath(selectedIndexRoot.id, target.id);
-    return path.isEmpty ? null : target;
-  }
-
   void _openIndexRoot(IndexNode root) {
     _exitImmersiveBrowsing();
+    _cancelPageWarmup();
     final cached = _browserNodeCache.get(
       BrowserNodeCacheKey(
         indexRootId: root.id,
@@ -1047,6 +1130,7 @@ class _AppShellState extends State<AppShell> {
 
   void _openRootIndex() {
     _exitImmersiveBrowsing();
+    _cancelPageWarmup();
     setState(() {
       _section = AppSection.data;
       _selectedIndexRoot = null;
@@ -1067,8 +1151,22 @@ class _AppShellState extends State<AppShell> {
     setState(() => _section = section);
   }
 
+  void _selectDataRootTab(BrowserRootTab tab) {
+    _exitImmersiveBrowsing();
+    _cancelPageWarmup();
+    setState(() {
+      _browserState = _browserState.copyWith(rootTab: tab);
+      _section = AppSection.data;
+      _selectedIndexRoot = null;
+      _selectedItem = null;
+      _detail = null;
+    });
+    _reload();
+  }
+
   void _openIndexNode(IndexNode node) {
     _exitImmersiveBrowsing();
+    _cancelPageWarmup();
     // 一级索引根是索引首页的直属节点；进入它时必须先切换索引上下文。
     if (_isIndexRoot(node)) {
       _openIndexRoot(node);
@@ -1240,7 +1338,7 @@ class _AppShellState extends State<AppShell> {
           height: 480,
           child: ListView(
             children: [
-              _DirectoryUpdateNodeTile(
+              DirectoryUpdateNodeTile(
                 node: IndexTreeNode(
                   item: root,
                   children: tree,
@@ -1273,7 +1371,11 @@ class _AppShellState extends State<AppShell> {
       message: '将重新生成“${root.name}”及全部下级节点的预览图描述。',
     );
     if (!confirmed) return;
-    await _refreshNodePreview(root.id, reason: 'manual_rebuild');
+    await _refreshNodePreview(
+      root.id,
+      scope: IndexPreviewRebuildScope.subtree,
+      reason: 'manual_rebuild',
+    );
     _reload(invalidateBrowserCache: true);
     if (mounted) {
       ScaffoldMessenger.of(context)
@@ -1360,7 +1462,7 @@ class _AppShellState extends State<AppShell> {
     if (!mounted) return;
     final displayName = await showDialog<String>(
       context: context,
-      builder: (_) => _DirectoryIndexDialog(
+      builder: (_) => DirectoryIndexDialog(
         source: source,
         initialName: fallbackName,
       ),
@@ -1715,7 +1817,7 @@ class _AppShellState extends State<AppShell> {
   Future<void> _showEntityContextMenu(EntityListItem entity) async {
     final handler = FileFormatRegistry.resolveFormat(entity.format);
     final canRegenerate = handler?.supportsGeneratedThumbnail ?? false;
-    final action = await showModalBottomSheet<_EntityMenuAction>(
+    final action = await showModalBottomSheet<EntityMenuAction>(
       context: context,
       showDragHandle: true,
       builder: (context) => SafeArea(
@@ -1725,7 +1827,7 @@ class _AppShellState extends State<AppShell> {
             ListTile(
               leading: const Icon(Icons.checklist_rounded),
               title: const Text('选择此项'),
-              onTap: () => Navigator.of(context).pop(_EntityMenuAction.select),
+              onTap: () => Navigator.of(context).pop(EntityMenuAction.select),
             ),
             if (canRegenerate)
               ListTile(
@@ -1735,7 +1837,7 @@ class _AppShellState extends State<AppShell> {
                     ? const Text('重新尝试失败的缩略图任务')
                     : null,
                 onTap: () => Navigator.of(context)
-                    .pop(_EntityMenuAction.regenerateThumbnail),
+                    .pop(EntityMenuAction.regenerateThumbnail),
               ),
           ],
         ),
@@ -1743,9 +1845,9 @@ class _AppShellState extends State<AppShell> {
     );
     if (!mounted || action == null) return;
     switch (action) {
-      case _EntityMenuAction.select:
+      case EntityMenuAction.select:
         _startEntitySelection(entity);
-      case _EntityMenuAction.regenerateThumbnail:
+      case EntityMenuAction.regenerateThumbnail:
         await _regenerateThumbnail(entity);
     }
   }
@@ -1817,7 +1919,7 @@ class _AppShellState extends State<AppShell> {
     }
     final name = await showDialog<String>(
       context: context,
-      builder: (_) => _TextPromptDialog(
+      builder: (_) => TextPromptDialog(
         title: '新建索引节点',
         label: '节点名称',
         confirmLabel: entityIds.isEmpty ? '创建' : '创建并加入',
@@ -1856,7 +1958,7 @@ class _AppShellState extends State<AppShell> {
     if (repository == null) return;
     final name = await showDialog<String>(
       context: context,
-      builder: (_) => _TextPromptDialog(
+      builder: (_) => TextPromptDialog(
         title: '新建自定义索引',
         label: '自定义索引名称',
         hintText: '例如：待读、银狼相关、睡前听',
@@ -1889,7 +1991,7 @@ class _AppShellState extends State<AppShell> {
     if (repository == null) return;
     final name = await showDialog<String>(
       context: context,
-      builder: (_) => const _TextPromptDialog(
+      builder: (_) => const TextPromptDialog(
         title: '新建图索引',
         label: '图索引名称',
         confirmLabel: '创建',
@@ -2070,7 +2172,7 @@ class _AppShellState extends State<AppShell> {
   }) {
     return nodes
         .map(
-          (node) => _CollectionTargetNodeTile(
+          (node) => CollectionTargetNodeTile(
             treeNode: node,
             selectedIds: selected,
             initiallyExpanded: true,
@@ -2210,7 +2312,7 @@ class _AppShellState extends State<AppShell> {
     if (repository == null || _scanning) return;
     final newName = await showDialog<String>(
       context: context,
-      builder: (_) => _TextPromptDialog(
+      builder: (_) => TextPromptDialog(
         title: '重命名索引',
         label: '索引名称',
         confirmLabel: '保存',
@@ -2436,7 +2538,7 @@ class _AppShellState extends State<AppShell> {
       );
     }
 
-    final body = switch (_section) {
+    final pageBody = switch (_section) {
       AppSection.home => LibraryDashboardPage(
           rootsCount: _indexRoots.length,
           itemsCount: _rootCounts.values.fold<int>(0, (a, b) => a + b),
@@ -2600,78 +2702,28 @@ class _AppShellState extends State<AppShell> {
         ),
       AppSection.pet => PetPage(controller: _petController),
     };
+    final body = _readError == null ||
+            _section == AppSection.settings ||
+            _section == AppSection.logs
+        ? pageBody
+        : Column(
+            children: [
+              ReadUnavailableBanner(
+                message: _readError!,
+                retrying: _readRetrying,
+                onRetry: _retryReadWorker,
+              ),
+              Expanded(child: pageBody),
+            ],
+          );
 
-    const navItems = <_FloatingNavItem>[
-      _FloatingNavItem(
-        section: AppSection.home,
-        icon: Icons.home_outlined,
-        selectedIcon: Icons.home_rounded,
-        label: '首页',
-      ),
-      _FloatingNavItem(
-        section: AppSection.data,
-        icon: Icons.collections_bookmark_outlined,
-        selectedIcon: Icons.collections_bookmark_rounded,
-        label: '数据',
-      ),
-      _FloatingNavItem(
-        section: AppSection.video,
-        icon: Icons.movie_outlined,
-        selectedIcon: Icons.movie_rounded,
-        label: '视频',
-      ),
-      _FloatingNavItem(
-        section: AppSection.gallery,
-        icon: Icons.photo_library_outlined,
-        selectedIcon: Icons.photo_library_rounded,
-        label: '图库',
-      ),
-      _FloatingNavItem(
-        section: AppSection.reading,
-        icon: Icons.auto_stories_outlined,
-        selectedIcon: Icons.auto_stories_rounded,
-        label: '阅读',
-      ),
-      _FloatingNavItem(
-        section: AppSection.music,
-        icon: Icons.library_music_outlined,
-        selectedIcon: Icons.library_music_rounded,
-        label: '音乐',
-      ),
-      _FloatingNavItem(
-        section: AppSection.indexes,
-        icon: Icons.account_tree_outlined,
-        selectedIcon: Icons.account_tree_rounded,
-        label: '索引',
-      ),
-      _FloatingNavItem(
-        section: AppSection.logs,
-        icon: Icons.bug_report_outlined,
-        selectedIcon: Icons.bug_report_rounded,
-        label: '日志',
-      ),
-      _FloatingNavItem(
-        section: AppSection.pet,
-        icon: Icons.smart_toy_outlined,
-        selectedIcon: Icons.smart_toy_rounded,
-        label: '宠物',
-      ),
-      _FloatingNavItem(
-        section: AppSection.settings,
-        icon: Icons.tune_outlined,
-        selectedIcon: Icons.tune_rounded,
-        label: '设置',
-      ),
-    ];
-
-    final desktopLayout = MediaQuery.sizeOf(context).width >= 900;
     final audioController = _audioController;
     final miniPlayer = audioController == null
         ? const SizedBox.shrink()
         : ListenableBuilder(
             listenable: audioController,
             builder: (context, _) => audioController.hasCurrent
-                ? _MiniAudioPlayer(
+                ? MiniAudioPlayer(
                     controller: audioController,
                     onOpen: _openNowPlaying,
                     collapsed: _miniPlayerCollapsed,
@@ -2701,49 +2753,28 @@ class _AppShellState extends State<AppShell> {
           ),
           child: Stack(
             children: [
-              if (desktopLayout)
-                SafeArea(
-                  child: Row(
-                    children: [
-                      AppSidebar(
-                        current: _section,
-                        onChanged: _navigateToSection,
-                        collapsed: _sidebarCollapsed,
-                        onToggleCollapsed: () => setState(
-                          () => _sidebarCollapsed = !_sidebarCollapsed,
-                        ),
-                      ),
-                      VerticalDivider(
-                        width: 1,
-                        thickness: 1,
-                        color: Theme.of(context).colorScheme.outlineVariant,
-                      ),
-                      Expanded(child: body),
-                    ],
-                  ),
-                )
-              else
-                Stack(
+              SafeArea(
+                child: Row(
                   children: [
-                    SafeArea(
-                      bottom: false,
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 92),
-                        child: body,
+                    AppSidebar(
+                      current: _section,
+                      onChanged: _navigateToSection,
+                      rootTab: _browserState.rootTab,
+                      onRootTabChanged: _selectDataRootTab,
+                      collapsed: _sidebarCollapsed,
+                      onToggleCollapsed: () => setState(
+                        () => _sidebarCollapsed = !_sidebarCollapsed,
                       ),
                     ),
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: _FloatingGlassNavBar(
-                        current: _section,
-                        items: navItems,
-                        onChanged: _navigateToSection,
-                      ),
+                    VerticalDivider(
+                      width: 1,
+                      thickness: 1,
+                      color: Theme.of(context).colorScheme.outlineVariant,
                     ),
+                    Expanded(child: body),
                   ],
                 ),
+              ),
               if (_mediaOverlay case final overlay?)
                 Positioned.fill(child: overlay),
               if (_petController.visible && _mediaOverlay == null)
@@ -2752,7 +2783,7 @@ class _AppShellState extends State<AppShell> {
                 ),
               Positioned(
                 right: 0,
-                bottom: desktopLayout ? 12 : 88,
+                bottom: 12,
                 child: Align(
                   alignment: Alignment.bottomRight,
                   child: miniPlayer,
@@ -2760,565 +2791,6 @@ class _AppShellState extends State<AppShell> {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TextPromptDialog extends StatefulWidget {
-  const _TextPromptDialog({
-    required this.title,
-    required this.label,
-    required this.confirmLabel,
-    this.hintText,
-    this.initialValue,
-  });
-
-  final String title;
-  final String label;
-  final String confirmLabel;
-  final String? hintText;
-  final String? initialValue;
-
-  @override
-  State<_TextPromptDialog> createState() => _TextPromptDialogState();
-}
-
-class _DirectoryIndexDialog extends StatefulWidget {
-  const _DirectoryIndexDialog({
-    required this.source,
-    required this.initialName,
-  });
-
-  final String source;
-  final String initialName;
-
-  @override
-  State<_DirectoryIndexDialog> createState() => _DirectoryIndexDialogState();
-}
-
-class _DirectoryIndexDialogState extends State<_DirectoryIndexDialog> {
-  late final TextEditingController _controller =
-      TextEditingController(text: widget.initialName);
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _submit() => Navigator.of(context).pop(_controller.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('新建目录索引'),
-      content: SizedBox(
-        width: 460,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.source,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _controller,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: '索引名称（可选）',
-                hintText: '默认使用目录最后一级名称',
-              ),
-              onSubmitted: (_) => _submit(),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(onPressed: _submit, child: const Text('建立索引')),
-      ],
-    );
-  }
-}
-
-class _TextPromptDialogState extends State<_TextPromptDialog> {
-  late final TextEditingController _controller =
-      TextEditingController(text: widget.initialValue);
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _submit() => Navigator.of(context).pop(_controller.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.title),
-      content: TextField(
-        controller: _controller,
-        autofocus: true,
-        decoration: InputDecoration(
-          labelText: widget.label,
-          hintText: widget.hintText,
-        ),
-        onSubmitted: (_) => _submit(),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: _submit,
-          child: Text(widget.confirmLabel),
-        ),
-      ],
-    );
-  }
-}
-
-class _DirectoryUpdateNodeTile extends StatelessWidget {
-  const _DirectoryUpdateNodeTile({
-    required this.node,
-    required this.initiallyExpanded,
-    this.isRoot = false,
-    required this.onSelected,
-  });
-
-  final IndexTreeNode node;
-  final bool initiallyExpanded;
-  final bool isRoot;
-  final ValueChanged<IndexNode> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final title = Text(
-      isRoot ? '${node.item.name}（整个索引）' : node.item.name,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-    );
-    final subtitle = Text('${node.entityCount} 个实体');
-    if (node.children.isEmpty) {
-      return ListTile(
-        dense: true,
-        leading: IconButton(
-          tooltip: isRoot ? '更新整个索引' : '更新此节点',
-          onPressed: () => onSelected(node.item),
-          icon: const Icon(Icons.sync_rounded),
-        ),
-        title: title,
-        subtitle: subtitle,
-        onTap: () => onSelected(node.item),
-      );
-    }
-    return ExpansionTile(
-      initiallyExpanded: initiallyExpanded,
-      leading: IconButton(
-        tooltip: isRoot ? '更新整个索引' : '更新此节点',
-        onPressed: () => onSelected(node.item),
-        icon: const Icon(Icons.sync_rounded),
-      ),
-      title: title,
-      subtitle: subtitle,
-      childrenPadding: const EdgeInsets.only(left: 18),
-      children: node.children
-          .map(
-            (child) => _DirectoryUpdateNodeTile(
-              node: child,
-              initiallyExpanded: false,
-              isRoot: false,
-              onSelected: onSelected,
-            ),
-          )
-          .toList(growable: false),
-    );
-  }
-}
-
-class _CollectionTargetNodeTile extends StatelessWidget {
-  const _CollectionTargetNodeTile({
-    required this.treeNode,
-    required this.selectedIds,
-    required this.initiallyExpanded,
-    required this.onChanged,
-  });
-
-  final IndexTreeNode treeNode;
-  final Set<String> selectedIds;
-  final bool initiallyExpanded;
-  final void Function(IndexNode node, bool checked) onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final node = treeNode.item;
-    final selected = selectedIds.contains(node.id);
-    final title = Text(node.name, maxLines: 1, overflow: TextOverflow.ellipsis);
-    final subtitle = Text('${treeNode.entityCount} 个实体');
-    if (treeNode.children.isEmpty) {
-      return CheckboxListTile(
-        key: PageStorageKey('collection-target-${node.id}'),
-        dense: true,
-        contentPadding: const EdgeInsets.only(left: 20, right: 8),
-        value: selected,
-        title: title,
-        subtitle: subtitle,
-        onChanged: (checked) => onChanged(node, checked ?? false),
-      );
-    }
-    return ExpansionTile(
-      key: PageStorageKey('collection-target-${node.id}'),
-      initiallyExpanded: initiallyExpanded,
-      leading: Checkbox(
-        value: selected,
-        onChanged: (checked) => onChanged(node, checked ?? false),
-      ),
-      title: title,
-      subtitle: subtitle,
-      tilePadding: const EdgeInsets.only(left: 8, right: 8),
-      childrenPadding: const EdgeInsets.only(left: 22),
-      children: treeNode.children
-          .map(
-            (child) => _CollectionTargetNodeTile(
-              treeNode: child,
-              selectedIds: selectedIds,
-              initiallyExpanded: false,
-              onChanged: onChanged,
-            ),
-          )
-          .toList(growable: false),
-    );
-  }
-}
-
-class _MiniAudioPlayer extends StatelessWidget {
-  const _MiniAudioPlayer({
-    required this.controller,
-    required this.onOpen,
-    required this.collapsed,
-    required this.onToggleCollapsed,
-  });
-
-  final AppAudioController controller;
-  final VoidCallback onOpen;
-  final bool collapsed;
-  final VoidCallback onToggleCollapsed;
-
-  @override
-  Widget build(BuildContext context) {
-    final entity = controller.current!;
-    final player = controller.player;
-    final scheme = Theme.of(context).colorScheme;
-    final title = p.basenameWithoutExtension(entity.title);
-    final titleStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ) ??
-        const TextStyle(fontWeight: FontWeight.w700);
-    final titlePainter = TextPainter(
-      text: TextSpan(text: title, style: titleStyle),
-      textDirection: Directionality.of(context),
-      maxLines: 1,
-      ellipsis: '...',
-    )..layout(maxWidth: 250);
-    final titleWidth = titlePainter.width.clamp(72.0, 250.0).toDouble();
-    final availableWidth =
-        (MediaQuery.sizeOf(context).width - 8).clamp(280.0, 500.0).toDouble();
-    final expandedWidth =
-        (titleWidth + 224).clamp(280.0, availableWidth).toDouble();
-    const attachedRadius = BorderRadius.only(
-      topLeft: Radius.circular(10),
-      bottomLeft: Radius.circular(10),
-    );
-
-    return AnimatedSize(
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOutCubic,
-      alignment: Alignment.centerRight,
-      child: collapsed
-          ? Material(
-              color: scheme.surface.withValues(alpha: 0.92),
-              elevation: 8,
-              borderRadius: attachedRadius,
-              clipBehavior: Clip.antiAlias,
-              child: IconButton(
-                tooltip: '展开播放器',
-                onPressed: onToggleCollapsed,
-                icon: const CollapseGripIcon(),
-              ),
-            )
-          : Material(
-              color: scheme.surface.withValues(alpha: 0.92),
-              elevation: 8,
-              borderRadius: attachedRadius,
-              clipBehavior: Clip.antiAlias,
-              child: SizedBox(
-                width: expandedWidth,
-                child: InkWell(
-                  onTap: onOpen,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
-                    child: Row(
-                      children: [
-                        _MiniPlayerControl(
-                          tooltip: '收起播放器',
-                          onPressed: onToggleCollapsed,
-                          iconWidget: const CollapseGripIcon(),
-                        ),
-                        Icon(Icons.graphic_eq_rounded, color: scheme.primary),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: titleStyle,
-                              ),
-                              const SizedBox(height: 5),
-                              StreamBuilder<Duration>(
-                                stream: player.stream.position,
-                                initialData: player.state.position,
-                                builder: (context, snapshot) {
-                                  final duration =
-                                      player.state.duration.inMilliseconds;
-                                  final position =
-                                      snapshot.data?.inMilliseconds ?? 0;
-                                  return LinearProgressIndicator(
-                                    minHeight: 2,
-                                    value: duration <= 0
-                                        ? 0
-                                        : (position / duration).clamp(0.0, 1.0),
-                                  );
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
-                        _MiniPlayerControl(
-                          tooltip: '上一首',
-                          onPressed: controller.previous,
-                          icon: Icons.skip_previous_rounded,
-                        ),
-                        StreamBuilder<bool>(
-                          stream: player.stream.playing,
-                          initialData: player.state.playing,
-                          builder: (context, snapshot) => _MiniPlayerControl(
-                            tooltip: snapshot.data == true ? '暂停' : '播放',
-                            onPressed: player.playOrPause,
-                            filled: true,
-                            icon: snapshot.data == true
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
-                          ),
-                        ),
-                        _MiniPlayerControl(
-                          tooltip: '下一首',
-                          onPressed: controller.next,
-                          icon: Icons.skip_next_rounded,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-    );
-  }
-}
-
-class _MiniPlayerControl extends StatelessWidget {
-  const _MiniPlayerControl({
-    required this.tooltip,
-    required this.onPressed,
-    this.icon,
-    this.iconWidget,
-    this.filled = false,
-  }) : assert(icon != null || iconWidget != null);
-
-  final String tooltip;
-  final VoidCallback onPressed;
-  final IconData? icon;
-  final Widget? iconWidget;
-  final bool filled;
-
-  @override
-  Widget build(BuildContext context) {
-    final button = filled
-        ? IconButton.filled(
-            tooltip: tooltip,
-            onPressed: onPressed,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints.tightFor(width: 34, height: 34),
-            icon: iconWidget ?? Icon(icon, size: 19),
-          )
-        : IconButton(
-            tooltip: tooltip,
-            onPressed: onPressed,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints.tightFor(width: 34, height: 34),
-            visualDensity: VisualDensity.compact,
-            icon: iconWidget ?? Icon(icon, size: 20),
-          );
-    return Padding(
-      padding: const EdgeInsets.only(left: 2),
-      child: button,
-    );
-  }
-}
-
-enum _EntityMenuAction { select, regenerateThumbnail }
-
-class _FloatingNavItem {
-  const _FloatingNavItem({
-    required this.section,
-    required this.icon,
-    required this.selectedIcon,
-    required this.label,
-  });
-
-  final AppSection section;
-  final IconData icon;
-  final IconData selectedIcon;
-  final String label;
-}
-
-class _FloatingGlassNavBar extends StatelessWidget {
-  const _FloatingGlassNavBar({
-    required this.current,
-    required this.items,
-    required this.onChanged,
-  });
-
-  final AppSection current;
-  final List<_FloatingNavItem> items;
-  final ValueChanged<AppSection> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return SafeArea(
-      minimum: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final width = constraints.maxWidth.clamp(1.0, 760.0).toDouble();
-          // Keep the selected label visible on tablet-width windows even
-          // after adding the debug entry to the bottom navigation.
-          final showSelectedLabel = width / items.length >= 72;
-          return Center(
-            child: SizedBox(
-              width: width,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surface.withValues(alpha: 0.54),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: theme.colorScheme.outlineVariant
-                        .withValues(alpha: 0.32),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      blurRadius: 30,
-                      offset: const Offset(0, 14),
-                      color: Colors.black.withValues(alpha: 0.14),
-                    ),
-                  ],
-                ),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-                  child: Row(
-                    children: [
-                      for (final item in items)
-                        Expanded(
-                          child: _FloatingGlassNavButton(
-                            item: item,
-                            selected: current == item.section,
-                            showLabel: showSelectedLabel,
-                            onTap: () => onChanged(item.section),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _FloatingGlassNavButton extends StatelessWidget {
-  const _FloatingGlassNavButton({
-    required this.item,
-    required this.selected,
-    required this.showLabel,
-    required this.onTap,
-  });
-
-  final _FloatingNavItem item;
-  final bool selected;
-  final bool showLabel;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final foreground = selected
-        ? theme.colorScheme.onSecondaryContainer
-        : theme.colorScheme.onSurfaceVariant;
-    return InkWell(
-      borderRadius: BorderRadius.circular(999),
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 280),
-        curve: Curves.easeOutQuart,
-        margin: const EdgeInsets.symmetric(horizontal: 2),
-        padding: EdgeInsets.symmetric(
-          vertical: 9,
-          horizontal: selected && showLabel ? 5 : 6,
-        ),
-        decoration: BoxDecoration(
-          color: selected
-              ? theme.colorScheme.secondaryContainer.withValues(alpha: 0.9)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              selected ? item.selectedIcon : item.icon,
-              color: foreground,
-              size: 20,
-            ),
-            if (selected && showLabel) ...[
-              const SizedBox(width: 6),
-              Text(
-                item.label,
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: foreground,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ],
         ),
       ),
     );

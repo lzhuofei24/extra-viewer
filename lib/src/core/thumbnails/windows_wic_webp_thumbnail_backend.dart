@@ -34,6 +34,21 @@ class WindowsWicWebpThumbnailBackend {
   }
 }
 
+/// Encodes an RGBA canvas with the same bundled libwebp used by the Windows
+/// thumbnail backend. The native call runs in a short-lived isolate so node
+/// preview encoding never blocks Flutter's UI isolate.
+Future<Uint8List?> encodeRgbaWebpOnWindows(
+  Uint8List pixels, {
+  required int width,
+  required int height,
+  required double quality,
+}) async {
+  if (!Platform.isWindows) return null;
+  return Isolate.run(
+    () => _encodeRgbaWebpNative(pixels, width, height, quality),
+  );
+}
+
 Future<_WicThumbnailResult?> _runWicThumbnail(
   String path, {
   ThumbnailCancellationToken? cancellationToken,
@@ -138,6 +153,44 @@ _WicThumbnailResult? _encodeWicThumbnail(String path) {
   }
 }
 
+Uint8List? _encodeRgbaWebpNative(
+  Uint8List pixels,
+  int width,
+  int height,
+  double quality,
+) {
+  final bindings = _WicBindings.tryLoad();
+  if (bindings == null) return null;
+  final input = calloc<Uint8>(pixels.length);
+  final output = calloc<Pointer<Uint8>>();
+  final outputSize = calloc<UintPtr>();
+  try {
+    input.asTypedList(pixels.length).setAll(0, pixels);
+    final result = bindings.encodeRgba(
+      input,
+      width,
+      height,
+      quality,
+      output,
+      outputSize,
+    );
+    if (result < 0 || output.value == nullptr || outputSize.value == 0) {
+      return null;
+    }
+    final bytes = Uint8List.fromList(
+      output.value.asTypedList(outputSize.value),
+    );
+    bindings.free(output.value);
+    output.value = nullptr;
+    return bytes;
+  } finally {
+    if (output.value != nullptr) bindings.free(output.value);
+    calloc.free(input);
+    calloc.free(output);
+    calloc.free(outputSize);
+  }
+}
+
 class _WicThumbnailResult {
   const _WicThumbnailResult(
       this.bytes, this.width, this.height, this.elapsedMs);
@@ -149,13 +202,14 @@ class _WicThumbnailResult {
 }
 
 final class _WicBindings {
-  _WicBindings(this.create, this.free);
+  _WicBindings(this.create, this.free, this.encodeRgba);
 
   static _WicBindings? _instance;
   static bool _unavailable = false;
 
   final _CreateThumbnailDart create;
   final _FreeThumbnailDart free;
+  final _EncodeRgbaDart encodeRgba;
 
   static _WicBindings? tryLoad() {
     if (_unavailable) return null;
@@ -169,6 +223,9 @@ final class _WicBindings {
         ),
         library.lookupFunction<_FreeThumbnailNative, _FreeThumbnailDart>(
           'BestViewerFreeThumbnail',
+        ),
+        library.lookupFunction<_EncodeRgbaNative, _EncodeRgbaDart>(
+          'BestViewerEncodeRGBA',
         ),
       );
     } catch (_) {
@@ -210,3 +267,19 @@ typedef _CreateThumbnailDart = int Function(
 );
 typedef _FreeThumbnailNative = Void Function(Pointer<Uint8> output);
 typedef _FreeThumbnailDart = void Function(Pointer<Uint8> output);
+typedef _EncodeRgbaNative = Int32 Function(
+  Pointer<Uint8> pixels,
+  Int32 width,
+  Int32 height,
+  Float quality,
+  Pointer<Pointer<Uint8>> output,
+  Pointer<UintPtr> outputSize,
+);
+typedef _EncodeRgbaDart = int Function(
+  Pointer<Uint8> pixels,
+  int width,
+  int height,
+  double quality,
+  Pointer<Pointer<Uint8>> output,
+  Pointer<UintPtr> outputSize,
+);

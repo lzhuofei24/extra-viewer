@@ -179,7 +179,10 @@ class LibraryBuildTaskController extends ChangeNotifier {
 
   /// Queues an explicit node-preview refresh through the same durable node
   /// asset work table. It never requests entity thumbnails from the browser.
-  Future<LibraryBuildJob?> rebuildNodePreview(String nodeId) async {
+  Future<LibraryBuildJob?> rebuildNodePreview(
+    String nodeId, {
+    IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,
+  }) async {
     if (isRunning) return null;
     final root = library.owningIndexRootForNode(nodeId);
     if (root == null) return null;
@@ -193,6 +196,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
       job.id,
       scopeNodeId: nodeId,
       rootNodeId: root.id,
+      scope: scope,
     );
     final prepared = builds.get(job.id)!;
     builds.checkpointStage(
@@ -813,6 +817,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
       job.id,
       scopeNodeId: job.targetNodeId ?? rootId,
       rootNodeId: rootId,
+      scope: IndexPreviewRebuildScope.subtree,
     );
     final refreshed = builds.get(job.id)!;
     builds.checkpointStage(
@@ -904,7 +909,14 @@ class LibraryBuildTaskController extends ChangeNotifier {
     // work. The asset writer then only reads existing entity WebPs.
     _report(job, 0, job.nodePreviewTotal, '正在整理节点预览描述');
     await Future<void>.delayed(const Duration(milliseconds: 16));
-    library.rebuildIndexNodePreviewCache(job.targetNodeId ?? rootId);
+    final scopeNodeId = job.targetNodeId ?? rootId;
+    final rebuildSubtree = job.targetNodeId == null ||
+        builds.nodePreviewWorkIncludesDescendants(job.id, scopeNodeId);
+    if (rebuildSubtree) {
+      library.rebuildIndexNodePreviewCache(scopeNodeId);
+    } else {
+      library.rebuildIndexNodePreviewCacheChain(scopeNodeId);
+    }
     final compositor = NodePreviewCompositeService(library);
     while (true) {
       _control!.check();
@@ -917,10 +929,28 @@ class LibraryBuildTaskController extends ChangeNotifier {
       _control!.check();
       for (final nodeId in nodeIds) {
         final outcome = outcomes[nodeId];
-        if (outcome?.error != null) {
+        if (outcome == null) {
+          const message = '节点预览任务未返回结果';
+          AppDiagnosticLog.instance.error(
+            'node_preview_build_missing_result',
+            StateError(message),
+            StackTrace.current,
+            fields: {'jobId': job.id, 'nodeId': nodeId},
+          );
           results[nodeId] = (
             state: LibraryBuildWorkState.failed,
-            error: outcome!.error,
+            error: message,
+          );
+        } else if (outcome.error != null) {
+          AppDiagnosticLog.instance.error(
+            'node_preview_build_failed',
+            StateError(outcome.error!),
+            StackTrace.current,
+            fields: {'jobId': job.id, 'nodeId': nodeId},
+          );
+          results[nodeId] = (
+            state: LibraryBuildWorkState.failed,
+            error: outcome.error,
           );
         } else {
           results[nodeId] =

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'browser_state.dart';
 import 'collapse_grip_icon.dart';
 import 'design_tokens.dart';
 
@@ -21,12 +22,16 @@ class AppSidebar extends StatelessWidget {
     super.key,
     required this.current,
     required this.onChanged,
+    required this.rootTab,
+    required this.onRootTabChanged,
     required this.collapsed,
     required this.onToggleCollapsed,
   });
 
   final AppSection current;
   final ValueChanged<AppSection> onChanged;
+  final BrowserRootTab rootTab;
+  final ValueChanged<BrowserRootTab> onRootTabChanged;
   final bool collapsed;
   final VoidCallback onToggleCollapsed;
 
@@ -35,9 +40,24 @@ class AppSidebar extends StatelessWidget {
         AppSection.home, '首页', Icons.home_outlined, Icons.home_rounded),
     _SidebarItem(
       AppSection.data,
-      '数据',
-      Icons.collections_bookmark_outlined,
-      Icons.collections_bookmark_rounded,
+      '目录',
+      Icons.folder_copy_outlined,
+      Icons.folder_copy_rounded,
+      dataTab: BrowserRootTab.directory,
+    ),
+    _SidebarItem(
+      AppSection.data,
+      '树',
+      Icons.account_tree_outlined,
+      Icons.account_tree_rounded,
+      dataTab: BrowserRootTab.tree,
+    ),
+    _SidebarItem(
+      AppSection.data,
+      '图',
+      Icons.hub_outlined,
+      Icons.hub_rounded,
+      dataTab: BrowserRootTab.graph,
     ),
     _SidebarItem(
         AppSection.video, '视频', Icons.movie_outlined, Icons.movie_rounded),
@@ -84,17 +104,17 @@ class AppSidebar extends StatelessWidget {
                 for (final item in _primaryItems)
                   _SidebarButton(
                     item: item,
-                    selected: current == item.section,
+                    selected: _isSelected(item),
                     collapsed: collapsed,
-                    onTap: () => onChanged(item.section),
+                    onTap: () => _select(item),
                   ),
                 Divider(color: theme.colorScheme.outlineVariant),
                 for (final item in _utilityItems)
                   _SidebarButton(
                     item: item,
-                    selected: current == item.section,
+                    selected: _isSelected(item),
                     collapsed: collapsed,
-                    onTap: () => onChanged(item.section),
+                    onTap: () => _select(item),
                   ),
               ],
             );
@@ -112,9 +132,9 @@ class AppSidebar extends StatelessWidget {
               for (final item in _primaryItems)
                 _SidebarButton(
                   item: item,
-                  selected: current == item.section,
+                  selected: _isSelected(item),
                   collapsed: collapsed,
-                  onTap: () => onChanged(item.section),
+                  onTap: () => _select(item),
                 ),
               const Spacer(),
               Divider(color: theme.colorScheme.outlineVariant),
@@ -122,9 +142,9 @@ class AppSidebar extends StatelessWidget {
               for (final item in _utilityItems)
                 _SidebarButton(
                   item: item,
-                  selected: current == item.section,
+                  selected: _isSelected(item),
                   collapsed: collapsed,
-                  onTap: () => onChanged(item.section),
+                  onTap: () => _select(item),
                 ),
             ],
           );
@@ -132,15 +152,36 @@ class AppSidebar extends StatelessWidget {
       ),
     );
   }
+
+  bool _isSelected(_SidebarItem item) {
+    return current == item.section &&
+        (item.dataTab == null || item.dataTab == rootTab);
+  }
+
+  void _select(_SidebarItem item) {
+    final dataTab = item.dataTab;
+    if (dataTab != null) {
+      onRootTabChanged(dataTab);
+    } else {
+      onChanged(item.section);
+    }
+  }
 }
 
 class _SidebarItem {
-  const _SidebarItem(this.section, this.label, this.icon, this.selectedIcon);
+  const _SidebarItem(
+    this.section,
+    this.label,
+    this.icon,
+    this.selectedIcon, {
+    this.dataTab,
+  });
 
   final AppSection section;
   final String label;
   final IconData icon;
   final IconData selectedIcon;
+  final BrowserRootTab? dataTab;
 }
 
 class _SidebarButton extends StatelessWidget {

@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.database.Cursor
+import java.nio.ByteBuffer
 import android.os.Bundle
 import android.os.SystemClock
 import android.content.Intent
@@ -84,16 +85,24 @@ class MainActivity : FlutterActivity() {
                     call.argument<String>("source"),
                     call.argument<String>("outputPath"),
                     call.argument<String>("requestId"),
-                    call.argument<Int>("targetPixelCount") ?: 480000,
-                    call.argument<Int>("quality") ?: 86,
+                    call.argument<Int>("targetPixelCount") ?: 360000,
+                    call.argument<Int>("quality") ?: 80,
                     result,
                 )
                 "createVideoThumbnail" -> createVideoThumbnail(
                     call.argument<String>("source"),
                     call.argument<String>("outputPath"),
                     call.argument<String>("requestId"),
-                    call.argument<Int>("targetPixelCount") ?: 480000,
-                    call.argument<Int>("quality") ?: 86,
+                    call.argument<Int>("targetPixelCount") ?: 360000,
+                    call.argument<Int>("quality") ?: 80,
+                    result,
+                )
+                "encodeNodePreview" -> encodeNodePreview(
+                    call.argument<ByteArray>("pixels"),
+                    call.argument<Int>("width"),
+                    call.argument<Int>("height"),
+                    call.argument<String>("outputPath"),
+                    call.argument<Int>("quality") ?: 80,
                     result,
                 )
                 "cancelThumbnail" -> cancelThumbnail(
@@ -414,6 +423,54 @@ class MainActivity : FlutterActivity() {
             }
         }
         if (requestId != null) thumbnailJobs[requestId] = job
+    }
+
+    private fun encodeNodePreview(
+        pixels: ByteArray?,
+        width: Int?,
+        height: Int?,
+        outputPath: String?,
+        quality: Int,
+        result: MethodChannel.Result,
+    ) {
+        if (pixels == null || width == null || height == null || outputPath.isNullOrBlank()) {
+            result.error("argument", "pixels, dimensions and outputPath are required", null)
+            return
+        }
+        val expectedBytes = width.toLong() * height.toLong() * 4L
+        if (width <= 0 || height <= 0 || expectedBytes != pixels.size.toLong()) {
+            result.error("argument", "Invalid node preview pixel buffer", null)
+            return
+        }
+        sourceExecutor.execute {
+            var bitmap: Bitmap? = null
+            try {
+                bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                // Dart sends RGBA bytes, matching Android's ARGB_8888 buffer
+                // layout on the supported devices.
+                bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(pixels))
+                val writeMs = writeWebpAtomically(
+                    bitmap,
+                    quality.coerceIn(1, 100),
+                    outputPath,
+                    null,
+                )
+                runOnUiThread {
+                    result.success(mapOf(
+                        "outputPath" to outputPath,
+                        "width" to width,
+                        "height" to height,
+                        "writeMs" to writeMs,
+                    ))
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("nodePreview", "Cannot encode node preview.", error.message)
+                }
+            } finally {
+                bitmap?.recycle()
+            }
+        }
     }
 
     private fun cancelThumbnail(

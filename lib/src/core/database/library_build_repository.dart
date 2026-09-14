@@ -357,8 +357,12 @@ class LibraryBuildRepository {
     String jobId, {
     required String scopeNodeId,
     required String rootNodeId,
+    IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.subtree,
   }) {
     final now = nowMillis();
+    final selectedNodes = scope == IndexPreviewRebuildScope.subtree
+        ? 'SELECT id FROM subtree UNION SELECT id FROM ancestors'
+        : 'SELECT id FROM ancestors';
     library.database.db.execute('''
       WITH RECURSIVE subtree(id) AS (
         SELECT ?
@@ -375,14 +379,29 @@ class LibraryBuildRepository {
         job_id, node_id, state, attempts, updated_at
       )
       SELECT ?, id, 'pending', 0, ?
-      FROM (
-        SELECT id FROM subtree
-        UNION
-        SELECT id FROM ancestors
-      )
+      FROM ($selectedNodes)
     ''', [scopeNodeId, scopeNodeId, jobId, now]);
     final count = _count('library_node_preview_work', jobId);
     _update(jobId, nodePreviewTotal: count);
+  }
+
+  bool nodePreviewWorkIncludesDescendants(
+    String jobId,
+    String scopeNodeId,
+  ) {
+    return library.database.db.select('''
+      WITH RECURSIVE descendants(id) AS (
+        SELECT id FROM index_nodes WHERE parent_id = ?
+        UNION ALL
+        SELECT child.id
+        FROM index_nodes child JOIN descendants ON child.parent_id = descendants.id
+      )
+      SELECT 1
+      FROM library_node_preview_work work
+      JOIN descendants ON descendants.id = work.node_id
+      WHERE work.job_id = ?
+      LIMIT 1
+    ''', [scopeNodeId, jobId]).isNotEmpty;
   }
 
   List<String> claimEntityPreviewWork(String jobId, {int limit = 100}) =>

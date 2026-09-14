@@ -34,7 +34,7 @@ class JustifiedEntityGallerySliver extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final gap = immersive ? 2.0 : 8.0;
+    final gap = immersive ? 1.0 : 8.0;
     final horizontalPadding = immersive ? 2.0 : 8.0;
     final targetHeight = GalleryMetrics.cardHeight;
     return SliverLayoutBuilder(

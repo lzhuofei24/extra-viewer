@@ -6,12 +6,11 @@ const thumbnailWidth = 640;
 
 /// Media previews retain their source aspect ratio while targeting this many
 /// pixels. This gives portrait and landscape media comparable detail and size.
-// 300dp gallery cards on high-density Android tablets need more than the old
-// 600px-area thumbnail budget. This remains far below source resolution while
-// preserving illustrations, text, and fine linework when cards are enlarged.
-const thumbnailTargetPixelCount = 480000;
+// Keep the stored derivative below source resolution while retaining enough
+// detail for 300dp gallery cards on Android tablets.
+const thumbnailTargetPixelCount = 360000;
 
-const thumbnailWebpQuality = 86;
+const thumbnailWebpQuality = 80;
 
 /// Legacy name retained for test fixtures and callers that need the target
 /// horizontal width.

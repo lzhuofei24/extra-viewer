@@ -122,8 +122,15 @@ class CollectionBrowserPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasNodes = childNodes.isNotEmpty && !immersiveBrowsing;
+    final visibleNodes = currentNode == null
+        ? childNodes
+            .where((node) => _rootTabMatchesNode(browserState.rootTab, node))
+            .toList(growable: false)
+        : childNodes;
+    final hasNodes = visibleNodes.isNotEmpty && !immersiveBrowsing;
     final hasEntities = entities.isNotEmpty;
+    final listMode = !immersiveBrowsing &&
+        browserState.displayMode == BrowserDisplayMode.list;
     return Column(
       children: [
         Padding(
@@ -182,35 +189,59 @@ class CollectionBrowserPage extends StatelessWidget {
               controller: controller,
               slivers: [
                 if (hasNodes && currentNode == null)
-                  ..._rootIndexGroupSlivers(
-                    childNodes,
-                    summaries: nodeSummaries,
-                    previews: nodePreviews,
-                    onOpenNode: onOpenNode,
-                    onThumbnailEntityNeeded: onThumbnailEntityNeeded,
-                    selectedNodeIds: selectedNodeIds,
-                    selectionMode: selectionMode,
-                    onToggleNodeSelection: onToggleNodeSelection,
-                    onStartNodeSelection: onStartNodeSelection,
-                  ),
+                  (listMode
+                      ? _NodeListSliver(
+                          nodes: visibleNodes,
+                          summaries: nodeSummaries,
+                          onOpenNode: onOpenNode,
+                          selectedNodeIds: selectedNodeIds,
+                          selectionMode: selectionMode,
+                          onToggleNodeSelection: onToggleNodeSelection,
+                          onStartNodeSelection: onStartNodeSelection,
+                        )
+                      : _NodeGridSliver(
+                          nodes: visibleNodes,
+                          summaries: nodeSummaries,
+                          previews: nodePreviews,
+                          onOpenNode: onOpenNode,
+                          onThumbnailEntityNeeded: onThumbnailEntityNeeded,
+                          selectedNodeIds: selectedNodeIds,
+                          selectionMode: selectionMode,
+                          onToggleNodeSelection: onToggleNodeSelection,
+                          onStartNodeSelection: onStartNodeSelection,
+                        )),
                 if (hasNodes && currentNode != null)
-                  _NodeGridSliver(
-                    nodes: childNodes,
-                    summaries: nodeSummaries,
-                    previews: nodePreviews,
-                    onOpenNode: onOpenNode,
-                    onThumbnailEntityNeeded: onThumbnailEntityNeeded,
-                    selectedNodeIds: selectedNodeIds,
-                    selectionMode: selectionMode,
-                    onToggleNodeSelection: onToggleNodeSelection,
-                    onStartNodeSelection: onStartNodeSelection,
-                  ),
+                  listMode
+                      ? _NodeListSliver(
+                          nodes: childNodes,
+                          summaries: nodeSummaries,
+                          onOpenNode: onOpenNode,
+                          selectedNodeIds: selectedNodeIds,
+                          selectionMode: selectionMode,
+                          onToggleNodeSelection: onToggleNodeSelection,
+                          onStartNodeSelection: onStartNodeSelection,
+                        )
+                      : _NodeGridSliver(
+                          nodes: childNodes,
+                          summaries: nodeSummaries,
+                          previews: nodePreviews,
+                          onOpenNode: onOpenNode,
+                          onThumbnailEntityNeeded: onThumbnailEntityNeeded,
+                          selectedNodeIds: selectedNodeIds,
+                          selectionMode: selectionMode,
+                          onToggleNodeSelection: onToggleNodeSelection,
+                          onStartNodeSelection: onStartNodeSelection,
+                        ),
                 if (!hasNodes && !hasEntities)
                   SliverPadding(
                     padding: const EdgeInsets.all(20),
                     sliver: SliverToBoxAdapter(
                       child: EmptyStateCard(
-                        title: immersiveBrowsing ? '沉浸式浏览为空' : '当前索引节点为空',
+                        title: immersiveBrowsing
+                            ? '沉浸式浏览为空'
+                            : currentNode == null
+                                ? '${browserState.rootTab.label}页暂无索引'
+                                : '当前索引节点为空',
                         message: immersiveBrowsing
                             ? '当前节点及其下级节点中没有可展示的实体。'
                             : '可从“索引”页面重新检查，或返回索引首页继续浏览。',
@@ -317,74 +348,6 @@ class CollectionBrowserPage extends StatelessWidget {
       ],
     );
   }
-}
-
-List<Widget> _rootIndexGroupSlivers(
-  List<IndexNode> roots, {
-  required Map<String, IndexNodeSummary> summaries,
-  required Map<String, IndexNodePreview> previews,
-  required ValueChanged<IndexNode> onOpenNode,
-  required ValueChanged<String> onThumbnailEntityNeeded,
-  required Set<String> selectedNodeIds,
-  required bool selectionMode,
-  required ValueChanged<IndexNode> onToggleNodeSelection,
-  required ValueChanged<IndexNode> onStartNodeSelection,
-}) {
-  final groups = <({String label, NodeType type})>[
-    (label: '目录索引', type: NodeType.directoryIndexRoot),
-    (label: '自定义索引', type: NodeType.customIndexRoot),
-    (label: '图索引', type: NodeType.graphIndexRoot),
-  ];
-  final visibleGroups = groups
-      .map(
-        (group) => (
-          label: group.label,
-          nodes: roots
-              .where((node) => node.nodeType == group.type)
-              .toList(growable: false),
-        ),
-      )
-      .where((group) => group.nodes.isNotEmpty)
-      .toList(growable: false);
-  final slivers = <Widget>[];
-  for (var index = 0; index < visibleGroups.length; index++) {
-    final group = visibleGroups[index];
-    slivers.add(
-      SliverPadding(
-        padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
-        sliver: SliverToBoxAdapter(
-          child: Text(
-            group.label,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-          ),
-        ),
-      ),
-    );
-    slivers.add(
-      _NodeGridSliver(
-        nodes: group.nodes,
-        summaries: summaries,
-        previews: previews,
-        onOpenNode: onOpenNode,
-        onThumbnailEntityNeeded: onThumbnailEntityNeeded,
-        selectedNodeIds: selectedNodeIds,
-        selectionMode: selectionMode,
-        onToggleNodeSelection: onToggleNodeSelection,
-        onStartNodeSelection: onStartNodeSelection,
-      ),
-    );
-    if (index < visibleGroups.length - 1) {
-      slivers.add(
-        const SliverPadding(
-          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          sliver: SliverToBoxAdapter(
-            child: Divider(height: 1),
-          ),
-        ),
-      );
-    }
-  }
-  return slivers;
 }
 
 class _BrowserScrollShell extends StatefulWidget {
@@ -845,7 +808,7 @@ class _EntityMasonryGridSliver extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final gap = immersive ? 2.0 : 8.0;
+    final gap = immersive ? 1.0 : 8.0;
     return SliverLayoutBuilder(
       builder: (context, constraints) {
         final layout = CollectionGridLayout.calculate(
@@ -911,7 +874,7 @@ class _SpanningEntityGridSliver extends StatelessWidget {
         targetCellWidth: GalleryMetrics.cardWidth,
         targetRowHeight: GalleryMetrics.cardHeight,
         crossRowMode: false,
-        gap: immersive ? 2 : 8,
+        gap: immersive ? 1 : 8,
         horizontalPadding: immersive ? 2 : 8,
         aspectRatio: _entityAspectRatio,
         itemBuilder: (context, entity) => EntityCard(
@@ -955,7 +918,7 @@ class _SquareEntityGridSliver extends StatelessWidget {
       SliverLayoutBuilder(builder: (context, constraints) {
         final layout = CollectionGridLayout.calculate(
             availableWidth: constraints.crossAxisExtent,
-            gap: immersive ? 2 : 8,
+            gap: immersive ? 1 : 8,
             targetItemWidth: GalleryMetrics.squareSize);
         return SliverPadding(
             padding: EdgeInsets.fromLTRB(
@@ -977,8 +940,8 @@ class _SquareEntityGridSliver extends StatelessWidget {
                 }, childCount: entities.length),
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: layout.columnCount,
-                    mainAxisSpacing: immersive ? 2 : 8,
-                    crossAxisSpacing: immersive ? 2 : 8,
+                    mainAxisSpacing: immersive ? 1 : 8,
+                    crossAxisSpacing: immersive ? 1 : 8,
                     childAspectRatio: 1)));
       });
 }
@@ -1088,78 +1051,134 @@ class _EntityListSliver extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final rowCount = (entities.length + 2) ~/ 3;
+    final background = Theme.of(context).scaffoldBackgroundColor;
     return SliverPadding(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-      sliver: SliverGrid.builder(
-        itemCount: entities.length,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          mainAxisExtent: 76,
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 8,
-        ),
+      sliver: SliverList.builder(
+        itemCount: rowCount,
         itemBuilder: (context, index) {
-          final entity = entities[index];
-          final isSelected = selectedEntityIds.contains(entity.id);
-          return Material(
-            color: Theme.of(context).colorScheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(16),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(16),
-              onTap: selectionMode
-                  ? () => onToggleEntitySelection(entity)
-                  : () => onOpenEntity(entity),
-              onLongPress: () => onStartEntitySelection(entity),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 44,
-                      height: 44,
-                      child: EntityArtwork(
-                        entityType: entity.entityType,
-                        format: entity.format,
-                        title: entity.title,
-                        contentExcerpt: entity.contentExcerpt,
-                        thumbnailPath: entity.thumbnailPath,
-                        onThumbnailNeeded: () => onThumbnailNeeded(entity),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    const SizedBox(width: 7),
-                    Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            entity.title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            '${entity.format.toUpperCase()} · ${formatTime(entity.modifiedAtMs)}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.labelSmall,
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (isSelected)
-                      const Padding(
-                        padding: EdgeInsets.only(left: 4),
-                        child: Icon(Icons.check_circle_rounded, size: 18),
-                      ),
-                  ],
+          final start = index * 3;
+          return ColoredBox(
+            color: background,
+            child: Column(
+              children: [
+                SizedBox(
+                  height: 76,
+                  child: Row(
+                    children: [
+                      for (var slot = 0; slot < 3; slot++)
+                        Expanded(
+                          child: start + slot < entities.length
+                              ? _EntityListCell(
+                                  entity: entities[start + slot],
+                                  selectionMode: selectionMode,
+                                  selected: selectedEntityIds
+                                      .contains(entities[start + slot].id),
+                                  onOpen: onOpenEntity,
+                                  onShowMenu: onShowEntityMenu,
+                                  onThumbnailNeeded: onThumbnailNeeded,
+                                  onToggleSelection: onToggleEntitySelection,
+                                  onStartSelection: onStartEntitySelection,
+                                )
+                              : const SizedBox.shrink(),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
+                if (index < rowCount - 1)
+                  Divider(
+                    height: 1,
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
+              ],
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+class _EntityListCell extends StatelessWidget {
+  const _EntityListCell({
+    required this.entity,
+    required this.selectionMode,
+    required this.selected,
+    required this.onOpen,
+    required this.onShowMenu,
+    required this.onThumbnailNeeded,
+    required this.onToggleSelection,
+    required this.onStartSelection,
+  });
+
+  final EntityListItem entity;
+  final bool selectionMode;
+  final bool selected;
+  final ValueChanged<EntityListItem> onOpen;
+  final ValueChanged<EntityListItem> onShowMenu;
+  final ValueChanged<EntityListItem> onThumbnailNeeded;
+  final ValueChanged<EntityListItem> onToggleSelection;
+  final ValueChanged<EntityListItem> onStartSelection;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: selectionMode
+            ? () => onToggleSelection(entity)
+            : () => onOpen(entity),
+        onLongPress: () => onStartSelection(entity),
+        onSecondaryTap: () => onShowMenu(entity),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 44,
+                height: 44,
+                child: EntityArtwork(
+                  entityType: entity.entityType,
+                  format: entity.format,
+                  title: entity.title,
+                  contentExcerpt: entity.contentExcerpt,
+                  thumbnailPath: entity.thumbnailPath,
+                  onThumbnailNeeded: () => onThumbnailNeeded(entity),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      entity.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${entity.format.toUpperCase()} · ${formatTime(entity.modifiedAtMs)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelSmall,
+                    ),
+                  ],
+                ),
+              ),
+              if (selected)
+                const Padding(
+                  padding: EdgeInsets.only(left: 4),
+                  child: Icon(Icons.check_circle_rounded, size: 18),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1287,6 +1306,157 @@ class _IndexPathRail extends StatelessWidget {
             onTap: () => onPathNodeSelected(node),
           ),
       ],
+    );
+  }
+}
+
+bool _rootTabMatchesNode(BrowserRootTab tab, IndexNode node) {
+  return switch (tab) {
+    BrowserRootTab.directory => node.nodeType == NodeType.directoryIndexRoot,
+    BrowserRootTab.tree => node.nodeType == NodeType.customIndexRoot,
+    BrowserRootTab.graph => node.nodeType == NodeType.graphIndexRoot,
+  };
+}
+
+class _NodeListSliver extends StatelessWidget {
+  const _NodeListSliver({
+    required this.nodes,
+    required this.summaries,
+    required this.onOpenNode,
+    required this.selectedNodeIds,
+    required this.selectionMode,
+    required this.onToggleNodeSelection,
+    required this.onStartNodeSelection,
+  });
+
+  final List<IndexNode> nodes;
+  final Map<String, IndexNodeSummary> summaries;
+  final ValueChanged<IndexNode> onOpenNode;
+  final Set<String> selectedNodeIds;
+  final bool selectionMode;
+  final ValueChanged<IndexNode> onToggleNodeSelection;
+  final ValueChanged<IndexNode> onStartNodeSelection;
+
+  @override
+  Widget build(BuildContext context) {
+    final rowCount = (nodes.length + 2) ~/ 3;
+    final background = Theme.of(context).scaffoldBackgroundColor;
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      sliver: SliverList.builder(
+        itemCount: rowCount,
+        itemBuilder: (context, index) {
+          final start = index * 3;
+          return ColoredBox(
+            color: background,
+            child: Column(
+              children: [
+                SizedBox(
+                  height: 76,
+                  child: Row(
+                    children: [
+                      for (var slot = 0; slot < 3; slot++)
+                        Expanded(
+                          child: start + slot < nodes.length
+                              ? _NodeListCard(
+                                  node: nodes[start + slot],
+                                  summary: summaries[nodes[start + slot].id],
+                                  selected: selectedNodeIds
+                                      .contains(nodes[start + slot].id),
+                                  onTap: selectionMode
+                                      ? () => onToggleNodeSelection(
+                                            nodes[start + slot],
+                                          )
+                                      : () => onOpenNode(nodes[start + slot]),
+                                  onLongPress: () => onStartNodeSelection(
+                                    nodes[start + slot],
+                                  ),
+                                )
+                              : const SizedBox.shrink(),
+                        ),
+                    ],
+                  ),
+                ),
+                if (index < rowCount - 1)
+                  Divider(
+                    height: 1,
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _NodeListCard extends StatelessWidget {
+  const _NodeListCard({
+    required this.node,
+    required this.summary,
+    required this.selected,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final IndexNode node;
+  final IndexNodeSummary? summary;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final icon = switch (node.nodeType) {
+      NodeType.directoryIndexRoot => Icons.folder_copy_outlined,
+      NodeType.customIndexRoot => Icons.account_tree_outlined,
+      NodeType.graphIndexRoot || NodeType.graphNode => Icons.hub_outlined,
+      _ => Icons.folder_outlined,
+    };
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+          child: Row(
+            children: [
+              Icon(icon, size: 27, color: theme.colorScheme.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      node.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${summary?.childNodeCount ?? 0} 个节点 · '
+                      '${summary?.directEntityCount ?? 0} 个实体',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelSmall,
+                    ),
+                  ],
+                ),
+              ),
+              if (selected)
+                const Padding(
+                  padding: EdgeInsets.only(left: 4),
+                  child: Icon(Icons.check_circle_rounded, size: 18),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
