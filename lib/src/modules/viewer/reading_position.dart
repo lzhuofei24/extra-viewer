@@ -4,6 +4,19 @@ import 'package:crypto/crypto.dart';
 String readingBlockKey(String content) =>
     sha256.convert(utf8.encode(content.trim())).toString();
 
+int pageForReadingAnchor(
+    List<List<(int, double)>> pages, int block, double fraction) {
+  var selected = 0;
+  for (var i = 0; i < pages.length; i++) {
+    for (final anchor in pages[i]) {
+      if (anchor.$1 < block || (anchor.$1 == block && anchor.$2 <= fraction)) {
+        selected = i;
+      }
+    }
+  }
+  return selected;
+}
+
 /// Separate page and scroll coordinates; neither is interpreted as the other.
 class ReadingPosition {
   const ReadingPosition(

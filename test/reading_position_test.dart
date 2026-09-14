@@ -3,6 +3,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:best_viewer/src/modules/viewer/reading_position.dart';
 
 void main() {
+  test('repagination restores the fragment containing the saved anchor', () {
+    expect(
+        pageForReadingAnchor([
+          [(0, 0.0)],
+          [(0, .4)],
+          [(0, .8), (1, 0.0)]
+        ], 0, .6),
+        1);
+    expect(
+        pageForReadingAnchor([
+          [(0, 0.0), (0, .5)],
+          [(1, 0.0)]
+        ], 0, .6),
+        0);
+    expect(pageForReadingAnchor([], 2, .5), 0);
+  });
   test('content anchors survive inserted blocks and choose nearest duplicate',
       () {
     final key = readingBlockKey('paragraph:original');

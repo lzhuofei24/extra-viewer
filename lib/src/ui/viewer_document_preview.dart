@@ -63,6 +63,13 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
   int _block = 0;
   double _blockFraction = 0;
   bool _anchorRestoring = false;
+  int _restoreGeneration = 0;
+  bool _hasAnchor = false;
+
+  void _cancelAnchorRestore() {
+    _restoreGeneration++;
+    _anchorRestoring = false;
+  }
 
   String _contentKey(ReflowBlock block) => readingBlockKey(
       '${block.kind.name}:${block.text ?? block.imageArchivePath ?? block.imageEpubPath ?? block.altText ?? ''}');
@@ -79,6 +86,7 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
       if (y + box.size.height <= top) continue;
       if (y >= top + viewport.size.height) continue;
       _block = entry.key;
+      _hasAnchor = true;
       _blockFraction =
           box.size.height > 0 ? ((top - y) / box.size.height).clamp(0, 1) : 0;
       break;
@@ -87,11 +95,16 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
   }
 
   Future<void> _restoreAnchor(int target, double fraction) async {
+    final generation = ++_restoreGeneration;
     _anchorRestoring = true;
     try {
       for (var attempt = 0; attempt < 40 && mounted; attempt++) {
         await WidgetsBinding.instance.endOfFrame;
-        if (!mounted || !_controller.hasClients) return;
+        if (!mounted ||
+            generation != _restoreGeneration ||
+            !_controller.hasClients) {
+          return;
+        }
         final box = _blockWidgets[target]?.currentContext?.findRenderObject();
         final viewport = _viewportKey.currentContext?.findRenderObject();
         if (box is RenderBox && viewport is RenderBox) {
@@ -116,7 +129,7 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
         _controller.jumpTo(next.toDouble());
       }
     } finally {
-      _anchorRestoring = false;
+      if (generation == _restoreGeneration) _anchorRestoring = false;
     }
   }
 
@@ -140,6 +153,7 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
   @override
   void dispose() {
     _saveState();
+    _cancelAnchorRestore();
     unawaited(widget.documentFuture.then<void>(
       (document) => document?.close(),
       onError: (_, __) {},
@@ -149,6 +163,10 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
   }
 
   bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification is ScrollStartNotification &&
+        notification.dragDetails != null) {
+      _cancelAnchorRestore();
+    }
     // Save at interaction boundaries; avoid writes for every scroll event.
     if (notification is ScrollEndNotification) {
       _saveState();
@@ -179,6 +197,7 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
   void _selectChapter(int index) {
     if (index == _chapterIndex) return;
     _saveState();
+    _cancelAnchorRestore();
     setState(() {
       _chapterIndex = index;
       _page = 0;
@@ -186,6 +205,7 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
       _blockWidgets.clear();
       _block = 0;
       _blockFraction = 0;
+      _hasAnchor = true;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_controller.hasClients) _controller.jumpTo(0);
@@ -193,6 +213,7 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
   }
 
   void _jumpToBookmark(int offset) {
+    _cancelAnchorRestore();
     if (_controller.hasClients) {
       _controller.animateTo(
           offset.toDouble().clamp(0, _controller.position.maxScrollExtent),
@@ -243,6 +264,7 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
         if (firstLayout &&
             widget.initialPosition?.blockKey.isNotEmpty == true) {
           _block = widget.initialPosition!.resolveBlock(_blockKeys);
+          _hasAnchor = true;
           _blockFraction = widget.initialPosition!.blockFraction;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && !_bookMode) {
@@ -267,9 +289,17 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
               Expanded(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
+                    final wasBookMode = _bookMode;
                     _bookMode =
                         widget.settings.layoutMode == _ReaderLayoutMode.book &&
                             constraints.maxWidth > constraints.maxHeight;
+                    if (wasBookMode && !_bookMode) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) {
+                          unawaited(_restoreAnchor(_block, _blockFraction));
+                        }
+                      });
+                    }
                     final blocks = visibleBlocks;
                     if (widget.settings.layoutMode ==
                             _ReaderLayoutMode.scroll ||
@@ -303,6 +333,14 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
                     return _ReflowBookSpread(
                       key: ValueKey(chapterIndex),
                       initialPage: _page,
+                      initialBlock: _block,
+                      hasAnchor: _hasAnchor,
+                      initialFraction: _blockFraction,
+                      onAnchorChanged: (block, fraction) {
+                        _hasAnchor = true;
+                        _block = block;
+                        _blockFraction = fraction;
+                      },
                       blocks: blocks,
                       settings: widget.settings,
                       viewport: constraints.biggest,
@@ -346,12 +384,20 @@ class _ReflowBookSpread extends StatefulWidget {
   const _ReflowBookSpread(
       {super.key,
       this.initialPage = 0,
+      this.initialBlock = 0,
+      this.hasAnchor = false,
+      this.initialFraction = 0,
+      required this.onAnchorChanged,
       required this.blocks,
       required this.settings,
       required this.viewport,
       required this.onPageChanged});
   final List<ReflowBlock> blocks;
   final int initialPage;
+  final int initialBlock;
+  final bool hasAnchor;
+  final double initialFraction;
+  final void Function(int, double) onAnchorChanged;
   final _TextReaderSettings settings;
   final Size viewport;
   final ValueChanged<int> onPageChanged;
@@ -364,6 +410,9 @@ class _ReflowBookSpreadState extends State<_ReflowBookSpread> {
   PageController? _controller;
   String? _layoutKey;
   List<List<ReflowBlock>> _pages = const [];
+  final _anchors = <ReflowBlock, (int, double)>{};
+  int? _activeBlock;
+  double _activeFraction = 0;
 
   @override
   void dispose() {
@@ -376,13 +425,24 @@ class _ReflowBookSpreadState extends State<_ReflowBookSpread> {
     final pageWidth = (widget.viewport.width - 76) / 2;
     final pageHeight = widget.viewport.height - 38;
     final key =
-        '${pageWidth.round()}:${pageHeight.round()}:${widget.settings.fontSize}:${widget.settings.lineHeight}:${widget.blocks.length}';
+        '${pageWidth.round()}:${pageHeight.round()}:${widget.settings.fontSize}:${widget.settings.lineHeight}:${widget.settings.padding}:${widget.settings.fontFamily}:${widget.blocks.length}';
     if (_layoutKey != key) {
       _layoutKey = key;
+      _anchors.clear();
       _pages = _paginateBookBlocks(
-          widget.blocks, widget.settings, pageWidth, pageHeight);
-      final previousPage = _controller?.hasClients == true
-          ? (_controller!.page ?? 0).round()
+          widget.blocks, widget.settings, pageWidth, pageHeight, _anchors);
+      final targetBlock = _activeBlock ?? widget.initialBlock;
+      final targetFraction =
+          _activeBlock == null ? widget.initialFraction : _activeFraction;
+      final targetPage = pageForReadingAnchor(
+          _pages
+              .map((page) =>
+                  page.map((fragment) => _anchors[fragment]!).toList())
+              .toList(),
+          targetBlock,
+          targetFraction);
+      final previousPage = _activeBlock != null || widget.hasAnchor
+          ? targetPage ~/ 2
           : widget.initialPage ~/ 2;
       _controller?.dispose();
       _controller = PageController(
@@ -394,7 +454,16 @@ class _ReflowBookSpreadState extends State<_ReflowBookSpread> {
     return PageView.builder(
       controller: _controller,
       itemCount: spreadCount,
-      onPageChanged: (spread) => widget.onPageChanged(spread * 2),
+      onPageChanged: (spread) {
+        final fragments = pages[spread * 2];
+        if (fragments.isNotEmpty) {
+          final anchor = _anchors[fragments.first]!;
+          _activeBlock = anchor.$1;
+          _activeFraction = anchor.$2;
+          widget.onAnchorChanged(anchor.$1, anchor.$2);
+        }
+        widget.onPageChanged(spread * 2);
+      },
       itemBuilder: (context, spread) {
         final left = pages[spread * 2];
         final rightIndex = spread * 2 + 1;
@@ -438,8 +507,12 @@ class _BookPage extends StatelessWidget {
       );
 }
 
-List<List<ReflowBlock>> _paginateBookBlocks(List<ReflowBlock> source,
-    _TextReaderSettings settings, double width, double height) {
+List<List<ReflowBlock>> _paginateBookBlocks(
+    List<ReflowBlock> source,
+    _TextReaderSettings settings,
+    double width,
+    double height,
+    Map<ReflowBlock, (int, double)> anchors) {
   final pages = <List<ReflowBlock>>[];
   var page = <ReflowBlock>[];
   var remaining = height - settings.padding * 2;
@@ -449,7 +522,9 @@ List<List<ReflowBlock>> _paginateBookBlocks(List<ReflowBlock> source,
     remaining = height - settings.padding * 2;
   }
 
-  for (final sourceBlock in source) {
+  for (var sourceIndex = 0; sourceIndex < source.length; sourceIndex++) {
+    final sourceBlock = source[sourceIndex];
+    anchors[sourceBlock] = (sourceIndex, 0);
     if (sourceBlock.kind == ReflowBlockKind.image) {
       if (page.isNotEmpty) finish();
       page.add(sourceBlock);
@@ -457,6 +532,19 @@ List<List<ReflowBlock>> _paginateBookBlocks(List<ReflowBlock> source,
       continue;
     }
     var text = sourceBlock.text ?? '';
+    final originalLength = text.length;
+    void addFragment(String value) {
+      final fragment = ReflowBlock(
+          kind: sourceBlock.kind, text: value, level: sourceBlock.level);
+      anchors[fragment] = (
+        sourceIndex,
+        originalLength == 0
+            ? 0
+            : (originalLength - text.length) / originalLength
+      );
+      page.add(fragment);
+    }
+
     if (text.isEmpty) {
       page.add(sourceBlock);
       continue;
@@ -474,12 +562,12 @@ List<List<ReflowBlock>> _paginateBookBlocks(List<ReflowBlock> source,
           : style.fontSize! * style.height!;
       final allowed = ((remaining - spacing) / lineHeight).floor();
       if (allowed <= 0 && page.isNotEmpty) {
+        painter.dispose();
         finish();
         continue;
       }
       if (metrics.length <= allowed || allowed <= 0) {
-        page.add(ReflowBlock(
-            kind: sourceBlock.kind, text: text, level: sourceBlock.level));
+        addFragment(text);
         remaining -= painter.height + spacing;
         text = '';
       } else {
@@ -489,13 +577,11 @@ List<List<ReflowBlock>> _paginateBookBlocks(List<ReflowBlock> source,
             .offset
             .clamp(1, text.length)
             .toInt();
-        page.add(ReflowBlock(
-            kind: sourceBlock.kind,
-            text: text.substring(0, end).trimRight(),
-            level: sourceBlock.level));
+        addFragment(text.substring(0, end).trimRight());
         text = text.substring(end).trimLeft();
         finish();
       }
+      painter.dispose();
     }
   }
   if (page.isNotEmpty) pages.add(page);

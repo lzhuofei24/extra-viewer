@@ -8,6 +8,21 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Baseline
 
+### Book fragment anchors and restoration cancellation
+
+- Book pagination records original block and text-fragment position. Font,
+  padding and viewport changes resolve the anchor into the new pagination;
+  legacy records without anchors continue to use their stored page.
+- Captured first-block anchors are explicitly tracked instead of being mistaken
+  for missing positions. Chapter changes, user drags, bookmarks and disposal
+  invalidate pending scroll restoration; stale continuations cannot move the
+  new chapter or clear a newer restoration's state.
+- Pagination TextPainters are disposed after measurement. Cross-mode fractions
+  remain approximate (text offset versus rendered height), and far lazy-list
+  restoration is still bounded to 40 frames. Full reader acceptance is pending.
+- Validation after cancellation hardening: all 111 Flutter tests passed,
+  static analysis and git diff --check passed. No device installation performed.
+
 ### Scroll content anchors
 
 - ReadingPosition now persists content digest, block index and within-block
