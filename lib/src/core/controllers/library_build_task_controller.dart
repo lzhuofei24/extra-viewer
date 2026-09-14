@@ -4,9 +4,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
-import '../database/library_build_repository.dart';
-import '../database/library_repository.dart';
-import '../database/library_write_worker.dart';
+import '../../modules/build/build_access.dart';
+import '../../modules/library/library_access.dart';
 import '../diagnostics/app_diagnostic_log.dart';
 import '../domain/models.dart';
 import '../formats/file_format_handlers.dart';
@@ -23,7 +22,6 @@ import '../thumbnails/node_preview_composite_service.dart';
 import '../thumbnails/thumbnail_service.dart';
 import '../thumbnails/windows_wic_webp_thumbnail_backend.dart';
 import '../utils/file_fingerprint.dart';
-import '../utils/ids.dart';
 
 class LibraryBuildProgress {
   const LibraryBuildProgress({
@@ -71,21 +69,22 @@ class LibraryBuildControl {
 /// restart manifest/index/finalize safely and resumes derived assets at the
 /// most recently committed group of at most 100 work rows.
 class LibraryBuildTaskController extends ChangeNotifier {
-  LibraryBuildTaskController(this.library)
-      : builds = LibraryBuildRepository(library),
-        _thumbnails = ThumbnailService(
+  LibraryBuildTaskController(this.library, {required this.builds})
+      : _thumbnails = ThumbnailService(
           library,
           androidImageBackend: AndroidImageThumbnailBackend(),
           androidVideoBackend: AndroidVideoThumbnailBackend(),
           nativeImageBackend: NativeImageThumbnailBackend(),
           windowsWicBackend: WindowsWicWebpThumbnailBackend(),
-        ) {
-    builds.markInterruptedRecoverable();
-    refresh();
+        );
+
+  Future<void> initialize() async {
+    await builds.markInterruptedRecoverable();
+    await refresh();
   }
 
-  final LibraryRepository library;
-  final LibraryBuildRepository builds;
+  final LibraryAccess library;
+  final BuildAccess builds;
   final ThumbnailService _thumbnails;
 
   LibraryBuildControl? _control;
@@ -95,25 +94,30 @@ class LibraryBuildTaskController extends ChangeNotifier {
   List<LibraryBuildJob> _history = const [];
   String? _error;
   Timer? _progressNotifyTimer;
+  bool _disposed = false;
+  bool _closing = false;
+  Future<LibraryBuildJob?>? _activeRun;
   DateTime _lastProgressNotification = DateTime.fromMillisecondsSinceEpoch(0);
 
   static const _progressNotificationInterval = Duration(milliseconds: 150);
 
-  bool get isRunning => _control != null;
+  bool get isRunning => _control != null || _closing || _disposed;
   LibraryBuildProgress? get progress => _progress;
   LibraryBuildJob? get activeJob => _activeJob;
   List<LibraryBuildJob> get recoverableJobs => _recoverable;
   List<LibraryBuildJob> get history => _history;
   String? get errorMessage => _error;
 
-  void refresh() {
-    _recoverable = builds.listRecoverable();
-    _history = builds.listHistory();
-    notifyListeners();
+  Future<void> refresh() async {
+    _recoverable = (await builds.listRecoverable());
+    _history = (await builds.listHistory());
+    if (!_disposed) notifyListeners();
   }
 
   @override
   void dispose() {
+    _disposed = true;
+    _control?.pause();
     _progressNotifyTimer?.cancel();
     super.dispose();
   }
@@ -121,33 +125,40 @@ class LibraryBuildTaskController extends ChangeNotifier {
   void pause() => _control?.pause();
   void abandonActive() => _control?.abandon();
 
+  Future<void> close() async {
+    _closing = true;
+    _control?.pause();
+    await _activeRun;
+    _progressNotifyTimer?.cancel();
+  }
+
   Future<LibraryBuildJob?> startRoot(
     String sourcePath, {
     String? displayName,
   }) async {
     if (isRunning || sourcePath.trim().isEmpty) return null;
-    final job = builds.create(
+    final job = (await builds.create(
       sourcePath: _normalizeSource(sourcePath),
       operation: LibraryBuildOperation.rootScan,
-    );
+    ));
     return _run(job, displayName: displayName);
   }
 
   Future<LibraryBuildJob?> updateNode(IndexNode node) async {
     if (isRunning) return null;
-    final root = library.directoryIndexRootForNode(node.id);
+    final root = (await library.directoryIndexRootForNode(node.id));
     if (root == null || root.sourcePath == null) return null;
     final source = SourceHandle.parse(root.sourcePath!).isAndroidContentUri
         ? root.sourcePath!
         : p.join(
             root.sourcePath!,
-            library.directoryNodeRelativePath(node.id) ?? '',
+            (await library.directoryNodeRelativePath(node.id)) ?? '',
           );
-    final job = builds.create(
+    final job = (await builds.create(
       sourcePath: _normalizeSource(source),
       operation: LibraryBuildOperation.subtreeRefresh,
       targetNodeId: node.id,
-    );
+    ));
     return _run(job);
   }
 
@@ -158,23 +169,23 @@ class LibraryBuildTaskController extends ChangeNotifier {
 
   Future<LibraryBuildJob?> retryFailed(LibraryBuildJob job) async {
     if (isRunning) return null;
-    builds.retryFailedAssets(job.id);
-    return _run(builds.get(job.id) ?? job);
+    (await builds.retryFailedAssets(job.id));
+    return _run((await builds.get(job.id)) ?? job);
   }
 
   Future<LibraryBuildJob?> recheck(LibraryBuildJob job) async {
     if (isRunning) return null;
-    builds.restartFromManifest(job.id);
-    return _run(builds.get(job.id) ?? job);
+    (await builds.restartFromManifest(job.id));
+    return _run((await builds.get(job.id)) ?? job);
   }
 
-  void abandon(LibraryBuildJob job) {
+  Future<void> abandon(LibraryBuildJob job) async {
     if (isRunning) {
       _control?.abandon();
       return;
     }
-    builds.abandon(job.id);
-    refresh();
+    (await builds.abandon(job.id));
+    await refresh();
   }
 
   /// Queues an explicit node-preview refresh through the same durable node
@@ -184,28 +195,28 @@ class LibraryBuildTaskController extends ChangeNotifier {
     IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,
   }) async {
     if (isRunning) return null;
-    final root = library.owningIndexRootForNode(nodeId);
+    final root = (await library.owningIndexRootForNode(nodeId));
     if (root == null) return null;
-    final job = builds.create(
+    final job = (await builds.create(
       sourcePath: root.sourcePath ?? 'index://${root.id}',
       kind: LibraryBuildKind.rebuildPreviews,
       operation: LibraryBuildOperation.subtreeRefresh,
       targetNodeId: nodeId,
-    );
-    builds.setRoots(jobId: job.id, indexRootId: root.id);
-    builds.prepareNodePreviewWork(
+    ));
+    (await builds.setRoots(jobId: job.id, indexRootId: root.id));
+    (await builds.prepareNodePreviewWork(
       job.id,
       scopeNodeId: nodeId,
       rootNodeId: root.id,
       scope: scope,
-    );
-    final prepared = builds.get(job.id)!;
-    builds.checkpointStage(
+    ));
+    final prepared = (await builds.get(job.id))!;
+    (await builds.checkpointStage(
       jobId: job.id,
       stage: LibraryBuildStage.nodePreviews,
       nodePreviewTotal: prepared.nodePreviewTotal,
-    );
-    return _run(builds.get(job.id)!);
+    ));
+    return _run((await builds.get(job.id))!);
   }
 
   /// Repairs EPUB excerpts created by older builds that completed before the
@@ -214,7 +225,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
   /// owns the repository.
   Future<int> repairMissingEpubMetadataPreviews({int limit = 200}) async {
     if (isRunning) return 0;
-    final entities = library.listEpubsMissingMetadataPreview(limit: limit);
+    final entities = (await library.listEpubsMissingMetadataPreview(limit: limit));
     if (entities.isEmpty) return 0;
     var repaired = 0;
     await _forEachConcurrent(entities, 2, (entity) async {
@@ -226,7 +237,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
         if (metadata.$1 == null || metadata.$1!.trim().isEmpty) {
           throw StateError('EPUB 中没有可用于预览的正文');
         }
-        library.updateEntityMetadataPreview(entity.id, metadata.$1, null);
+        (await library.updateEntityMetadataPreview(entity.id, metadata.$1, null));
         repaired++;
       } catch (error, stackTrace) {
         AppDiagnosticLog.instance.error(
@@ -253,27 +264,36 @@ class LibraryBuildTaskController extends ChangeNotifier {
   Future<LibraryBuildJob?> _run(
     LibraryBuildJob initial, {
     String? displayName,
+  }) {
+    if (isRunning) return Future.value(null);
+    return _activeRun = _execute(initial, displayName: displayName);
+  }
+
+  Future<LibraryBuildJob?> _execute(
+    LibraryBuildJob initial, {
+    String? displayName,
   }) async {
     _control = LibraryBuildControl();
     _error = null;
-    var job = builds.setRunning(initial.id);
+    var job = initial;
+    try {
+    job = await builds.setRunning(initial.id);
     _activeJob = job;
     _report(
       job,
-      _storedStageCompleted(job),
+      await _storedStageCompleted(job),
       _storedStageTotal(job),
       initial.status == LibraryBuildStatus.paused
           ? '正在继续任务：已恢复已保存进度'
           : '正在启动索引任务',
     );
-    try {
       while (job.stage != LibraryBuildStage.completed) {
         _control!.check();
         try {
-          builds.validateScope(job);
+          (await builds.validateScope(job));
         } catch (error) {
-          builds.block(job.id, error);
-          return builds.get(job.id);
+          (await builds.block(job.id, error));
+          return (await builds.get(job.id));
         }
         switch (job.stage) {
           case LibraryBuildStage.manifest:
@@ -291,7 +311,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
           case LibraryBuildStage.completed:
             break;
         }
-        job = builds.get(job.id)!;
+        job = (await builds.get(job.id))!;
         _activeJob = job;
         _notifyProgress(force: true);
         if (job.status != LibraryBuildStatus.running &&
@@ -304,32 +324,32 @@ class LibraryBuildTaskController extends ChangeNotifier {
       }
       return job;
     } on LibraryBuildPausedException {
-      builds.releaseProcessingWork(
+      (await builds.releaseProcessingWork(
         job.id,
         stage: job.stage,
-      );
-      builds.pause(job.id);
+      ));
+      (await builds.pause(job.id));
       return null;
     } on LibraryBuildAbandonedException {
       if (job.stage == LibraryBuildStage.documentPreviews ||
           job.stage == LibraryBuildStage.entityPreviews ||
           job.stage == LibraryBuildStage.nodePreviews) {
-        builds.releaseProcessingWork(
+        (await builds.releaseProcessingWork(
           job.id,
           stage: job.stage,
-        );
+        ));
       }
-      builds.abandon(job.id);
+      (await builds.abandon(job.id));
       return null;
     } catch (error) {
       _error = '索引构建失败：$error';
-      builds.fail(job.id, _error!);
+      (await builds.fail(job.id, _error!));
       return null;
     } finally {
       _control = null;
       _progress = null;
       _activeJob = null;
-      refresh();
+      await refresh();
     }
   }
 
@@ -339,25 +359,23 @@ class LibraryBuildTaskController extends ChangeNotifier {
         source.isAndroidContentUri ? SafSourceAdapter() : LocalSourceAdapter();
     final scope = job.scopeNodeId == null
         ? null
-        : library.directoryNodeRelativePath(job.scopeNodeId!);
-    _report(job, builds.manifestItemCount(job.id), 0, '正在校验来源并恢复目录队列');
+        : (await library.directoryNodeRelativePath(job.scopeNodeId!));
+    _report(job, (await builds.manifestItemCount(job.id)), 0, '正在校验来源并恢复目录队列');
     final root =
         await adapter.resolveRoot(job.sourcePath, relativeScope: scope);
-    if (builds.nextDirectory(job.id) == null && !job.manifestComplete) {
-      final existing = library.database.db.select(
-          'SELECT 1 FROM scan_directories WHERE job_id = ? LIMIT 1', [job.id]);
-      if (existing.isEmpty) {
-        builds.resetManifest(job.id);
-        builds.seedDirectory(job.id, root);
+    if ((await builds.nextDirectory(job.id)) == null && !job.manifestComplete) {
+      if (!await builds.hasDirectoryFrontier(job.id)) {
+        (await builds.resetManifest(job.id));
+        (await builds.seedDirectory(job.id, root));
       }
     }
     try {
       while (true) {
         _control!.check();
-        final directory = builds.nextDirectory(job.id);
+        final directory = (await builds.nextDirectory(job.id));
         if (directory == null) break;
-        var sequence = builds.beginDirectory(
-            job.id, directory.locator, directory.relativePath);
+        var sequence = (await builds.beginDirectory(
+            job.id, directory.locator, directory.relativePath));
         await for (final entries in adapter.listDirectory(directory.locator)) {
           _control!.check();
           final items = <LibraryBuildManifestItem>[];
@@ -384,22 +402,22 @@ class LibraryBuildTaskController extends ChangeNotifier {
                 sourceCreatedAtMs: entry.modifiedAtMs,
                 sourceModifiedAtMs: entry.modifiedAtMs));
           }
-          builds.commitDirectoryPage(
-              job.id, directory.locator, items, children);
+          (await builds.commitDirectoryPage(
+              job.id, directory.locator, items, children));
           _report(job, sequence, 0,
               '已发现 $sequence 项，正在枚举 ${directory.relativePath}');
           await Future<void>.delayed(Duration.zero);
         }
         _control!.check();
-        builds.completeDirectory(job.id, directory.locator);
+        (await builds.completeDirectory(job.id, directory.locator));
       }
-      builds.completeManifest(job.id, builds.manifestItemCount(job.id));
+      (await builds.completeManifest(job.id, (await builds.manifestItemCount(job.id))));
     } on LibraryBuildPausedException {
       rethrow;
     } on LibraryBuildAbandonedException {
       rethrow;
     } catch (error) {
-      builds.block(job.id, '目录枚举未完成：$error');
+      (await builds.block(job.id, '目录枚举未完成：$error'));
     }
   }
 
@@ -410,34 +428,34 @@ class LibraryBuildTaskController extends ChangeNotifier {
     _control!.check();
     final target = job.targetNodeId == null
         ? null
-        : library.getIndexNode(job.targetNodeId!);
+        : (await library.getIndexNode(job.targetNodeId!));
     if (job.targetNodeId != null && target == null) {
       throw StateError('目录节点已不存在');
     }
     final existingRoot = target == null
-        ? library.directoryIndexRootForSource(job.sourcePath)
-        : library.directoryIndexRootForNode(target.id);
+        ? (await library.directoryIndexRootForSource(job.sourcePath))
+        : (await library.directoryIndexRootForNode(target.id));
     final root = existingRoot ??
-        library.ensureDirectoryIndexRoot(
+        (await library.ensureDirectoryIndexRoot(
           job.sourcePath,
           staging: target == null,
           displayName: displayName,
-        );
-    builds.setRoots(
+        ));
+    (await builds.setRoots(
       jobId: job.id,
       indexRootId: root.id,
       stagingRootId: target == null && existingRoot == null ? root.id : null,
-    );
+    ));
     final attachNode = target ?? root;
     final directoryCache = <String, IndexNode>{'': attachNode};
     var cursor = job.indexCursor;
     var written = job.indexedTotal;
     while (true) {
       _control!.check();
-      final page = builds.listManifestPage(job.id, afterSequence: cursor);
+      final page = (await builds.listManifestPage(job.id, afterSequence: cursor));
       if (page.isEmpty) break;
       final existing =
-          library.getEntitiesByPaths(page.map((item) => item.sourcePath));
+          (await library.getEntitiesByPaths(page.map((item) => item.sourcePath)));
       final detailsBySequence = <int, (String, int, int, int, String?, int?)>{};
       // SAF reads are latency-bound. Keep up to eight in flight, then leave
       // all SQLite work to the single writer transaction below.
@@ -456,7 +474,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
           cache: directoryCache,
         );
       }
-      final indexedInPage = await _commitIndexPage(
+      final indexedInPage = await library.commitInspectedPage(
         job: job,
         page: page,
         rootId: root.id,
@@ -471,223 +489,26 @@ class LibraryBuildTaskController extends ChangeNotifier {
           '正在写入索引：$written/${job.manifestTotal}');
     }
     _control!.check();
-    builds.checkpointStage(
+    (await builds.checkpointStage(
       jobId: job.id,
       stage: LibraryBuildStage.finalize,
       indexedTotal: written,
-    );
-  }
-
-  /// Builds one serializable SQLite transaction for a manifest page. File
-  /// inspection and directory-node discovery happen on this isolate, but all
-  /// entity, relation, and checkpoint writes are committed by the dedicated
-  /// writer isolate as one durable page.
-  Future<int> _commitIndexPage({
-    required LibraryBuildJob job,
-    required List<LibraryBuildManifestItem> page,
-    required String rootId,
-    required Map<String, Entity> existing,
-    required Map<int, (String, int, int, int, String?, int?)> detailsBySequence,
-    required Map<int, IndexNode> nodesBySequence,
-    required int indexedBefore,
-  }) async {
-    final statements = <LibraryWriteStatement>[];
-    final now = nowMillis();
-    final touchedNodes = <String>{};
-    var completed = 0;
-    for (final item in page) {
-      final details = detailsBySequence[item.sequence];
-      final node = nodesBySequence[item.sequence];
-      if (details == null || node == null) continue;
-      final current = existing[item.sourcePath];
-      final entityId = current?.id ?? newId();
-      if (current == null) {
-        statements.add(LibraryWriteStatement(
-          '''
-          INSERT INTO entities(
-            id, path, local_path, name, format, media_type, hash,
-            metadata_preview, thumbnail_status, thumbnail_key,
-            thumbnail_format, thumbnail_width, thumbnail_height,
-            thumbnail_error, size, source_created_at_ms,
-            source_modified_at_ms, duration_ms, directory_root_id,
-            created_at, updated_at
-          ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'none', NULL, NULL, NULL,
-                    NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
-          ''',
-          [
-            entityId,
-            item.sourcePath,
-            item.name,
-            item.format,
-            item.entityType.value,
-            details.$1,
-            details.$5,
-            details.$2,
-            details.$3,
-            details.$4,
-            details.$6,
-            rootId,
-            now,
-            now,
-          ],
-        ));
-      } else if (!_isUnchangedIndexEntity(
-        current,
-        item: item,
-        details: details,
-        rootId: rootId,
-      )) {
-        final preserveThumbnail = (item.entityType == EntityType.image ||
-                item.entityType == EntityType.video ||
-                item.entityType == EntityType.document) &&
-            current.entityType == item.entityType &&
-            current.hash == details.$1;
-        final status = preserveThumbnail
-            ? current.thumbnailStatus.value
-            : ThumbnailStatus.none.value;
-        final preserveFields = status == ThumbnailStatus.success.value;
-        statements.add(LibraryWriteStatement(
-          '''
-          UPDATE entities
-          SET name = ?, format = ?, media_type = ?, hash = ?,
-              metadata_preview = ?, thumbnail_status = ?,
-              thumbnail_key = CASE WHEN ? THEN thumbnail_key ELSE NULL END,
-              thumbnail_format = CASE WHEN ? THEN thumbnail_format ELSE NULL END,
-              thumbnail_width = CASE WHEN ? THEN thumbnail_width ELSE NULL END,
-              thumbnail_height = CASE WHEN ? THEN thumbnail_height ELSE NULL END,
-              thumbnail_error = CASE WHEN ? THEN thumbnail_error ELSE NULL END,
-              size = ?, source_created_at_ms = ?, source_modified_at_ms = ?,
-              duration_ms = ?, directory_root_id = ?, local_path = NULL,
-              updated_at = ?
-          WHERE id = ?
-          ''',
-          [
-            item.name,
-            item.format,
-            item.entityType.value,
-            details.$1,
-            details.$5,
-            status,
-            preserveFields ? 1 : 0,
-            preserveFields ? 1 : 0,
-            preserveFields ? 1 : 0,
-            preserveFields ? 1 : 0,
-            status == ThumbnailStatus.failed.value ? 1 : 0,
-            details.$2,
-            details.$3,
-            details.$4,
-            details.$6,
-            rootId,
-            now,
-            entityId,
-          ],
-        ));
-      }
-      statements.add(LibraryWriteStatement(
-        '''
-        INSERT OR IGNORE INTO index_node_entities(
-          index_node_id, entity_id, sort_name, created_at
-        ) SELECT ?, id, lower(name), ? FROM entities WHERE id = ?
-        ''',
-        [node.id, now, entityId],
-      ));
-      touchedNodes.add(node.id);
-      completed++;
-    }
-    for (final nodeId in touchedNodes) {
-      statements.add(LibraryWriteStatement(
-        'UPDATE index_nodes SET updated_at = ? WHERE id = ?',
-        [now, nodeId],
-      ));
-    }
-    statements.add(LibraryWriteStatement(
-      'UPDATE library_build_jobs SET indexed_total = ?, index_cursor = ?, updated_at = ? WHERE id = ?',
-      [indexedBefore + completed, page.last.sequence, now, job.id],
     ));
-    final worker = library.writeWorker;
-    if (worker == null) {
-      library.writeTransaction(() {
-        for (final statement in statements) {
-          library.database.db.execute(statement.sql, statement.parameters);
-        }
-      });
-    } else {
-      await worker.executeBatch(statements);
-    }
-    return completed;
   }
 
-  bool _isUnchangedIndexEntity(
-    Entity entity, {
-    required LibraryBuildManifestItem item,
-    required (String, int, int, int, String?, int?) details,
-    required String rootId,
-  }) {
-    final needsGeneratedThumbnail = item.entityType == EntityType.image ||
-        item.entityType == EntityType.video ||
-        item.entityType == EntityType.document;
-    return entity.hash == details.$1 &&
-        entity.contentExcerpt == details.$5 &&
-        entity.entityType == item.entityType &&
-        entity.format == item.format &&
-        entity.size == details.$2 &&
-        entity.durationMs == details.$6 &&
-        entity.directoryRootId == rootId &&
-        entity.localPath == null &&
-        (!needsGeneratedThumbnail ||
-            entity.thumbnailStatus == ThumbnailStatus.none);
-  }
 
   Future<void> _finalizeIndex(LibraryBuildJob job) async {
-    builds.validateScope(job);
-    if (!job.manifestComplete) {
-      throw StateError('目录尚未完整枚举，不能对账移除资料');
-    }
     _report(job, 0, 1, '正在整理并提交索引');
     _control!.check();
-    final rootId = job.indexRootId;
-    if (rootId == null) throw StateError('索引根节点缺失');
-    final scopeId = job.targetNodeId ?? rootId;
-    final seen = <String>[];
-    var cursor = -1;
-    while (true) {
-      final page = builds.listManifestPage(job.id, afterSequence: cursor);
-      if (page.isEmpty) break;
-      seen.addAll(page.map((item) => item.sourcePath));
-      cursor = page.last.sequence;
-    }
-    if (job.targetNodeId == null) {
-      library.reconcileDirectoryIndexRoot(rootId: rootId, seenPaths: seen);
-      if (job.stagingRootId != null) {
-        library.replaceOverlappingDirectoryIndexRoots(
-          keepRootId: rootId,
-          sourcePath: job.sourcePath,
-        );
-      }
-    } else {
-      library.reconcileDirectoryIndexSubtree(
-        nodeId: scopeId,
-        rootId: rootId,
-        seenPaths: seen,
-      );
-      library.pruneEmptyDirectoryNodes(rootId);
-    }
-    library.rebuildIndexNodeStats();
-    builds.prepareDocumentPreviewWork(job.id, scopeId);
-    final refreshed = builds.get(job.id)!;
-    builds.checkpointStage(
-      jobId: job.id,
-      stage: LibraryBuildStage.documentPreviews,
-      documentPreviewTotal: refreshed.documentPreviewTotal,
-    );
+    await builds.finalizeIndex(job);
   }
 
   Future<void> _buildDocumentPreviews(LibraryBuildJob job) async {
     while (true) {
       _control!.check();
-      final entityIds = builds.claimDocumentPreviewWork(job.id);
+      final entityIds = (await builds.claimDocumentPreviewWork(job.id));
       if (entityIds.isEmpty) break;
-      final entities = library.getEntitiesByIds(entityIds);
+      final entities = (await library.getEntitiesByIds(entityIds));
       final results =
           <String, ({LibraryBuildWorkState state, String? error})>{};
       await _forEachConcurrent(entityIds, 4, (id) async {
@@ -703,7 +524,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
             return;
           }
           final metadata = await _metadataForEntity(entity, handler);
-          library.updateEntityMetadataPreview(id, metadata.$1, metadata.$2);
+          (await library.updateEntityMetadataPreview(id, metadata.$1, metadata.$2));
           results[id] = (state: LibraryBuildWorkState.completed, error: null);
         } on LibraryBuildPausedException {
           rethrow;
@@ -713,8 +534,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
           results[id] = (state: LibraryBuildWorkState.failed, error: '$error');
         }
       });
-      builds.completeDocumentPreviewWork(job.id, results);
-      final current = builds.get(job.id)!;
+      (await builds.completeDocumentPreviewWork(job.id, results));
+      final current = (await builds.get(job.id))!;
       _report(
         current,
         current.documentPreviewDone + current.documentPreviewFailed,
@@ -725,21 +546,21 @@ class LibraryBuildTaskController extends ChangeNotifier {
     }
     final rootId = job.indexRootId;
     if (rootId == null) throw StateError('索引根节点缺失');
-    builds.prepareEntityPreviewWork(job.id, job.targetNodeId ?? rootId);
-    final refreshed = builds.get(job.id)!;
-    builds.checkpointStage(
+    (await builds.prepareEntityPreviewWork(job.id, job.targetNodeId ?? rootId));
+    final refreshed = (await builds.get(job.id))!;
+    (await builds.checkpointStage(
       jobId: job.id,
       stage: LibraryBuildStage.entityPreviews,
       entityPreviewTotal: refreshed.entityPreviewTotal,
-    );
+    ));
   }
 
   Future<void> _buildEntityPreviews(LibraryBuildJob job) async {
     while (true) {
       _control!.check();
-      final entityIds = builds.claimEntityPreviewWork(job.id);
+      final entityIds = (await builds.claimEntityPreviewWork(job.id));
       if (entityIds.isEmpty) break;
-      final entities = library.getEntitiesByIds(entityIds);
+      final entities = (await library.getEntitiesByIds(entityIds));
       final results =
           <String, ({LibraryBuildWorkState state, String? error})>{};
       final imageConcurrency = _thumbnails.recommendedImageConcurrency;
@@ -773,8 +594,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
           () => (state: LibraryBuildWorkState.failed, error: '实体不存在或类型不支持'),
         );
       }
-      builds.completeEntityPreviewWork(job.id, results);
-      final current = builds.get(job.id)!;
+      (await builds.completeEntityPreviewWork(job.id, results));
+      final current = (await builds.get(job.id))!;
       _report(
         current,
         current.entityPreviewDone + current.entityPreviewFailed,
@@ -785,18 +606,18 @@ class LibraryBuildTaskController extends ChangeNotifier {
     }
     final rootId = job.indexRootId;
     if (rootId == null) throw StateError('索引根节点缺失');
-    builds.prepareNodePreviewWork(
+    (await builds.prepareNodePreviewWork(
       job.id,
       scopeNodeId: job.targetNodeId ?? rootId,
       rootNodeId: rootId,
       scope: IndexPreviewRebuildScope.subtree,
-    );
-    final refreshed = builds.get(job.id)!;
-    builds.checkpointStage(
+    ));
+    final refreshed = (await builds.get(job.id))!;
+    (await builds.checkpointStage(
       jobId: job.id,
       stage: LibraryBuildStage.nodePreviews,
       nodePreviewTotal: refreshed.nodePreviewTotal,
-    );
+    ));
   }
 
   Future<void> _buildOneEntityPreview(
@@ -823,7 +644,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
         await _thumbnails.ensureThumbnailFromFile(entity, transientDocument);
       }
       _control!.check();
-      final refreshed = library.getEntity(id);
+      final refreshed = (await library.getEntity(id));
       if (refreshed?.thumbnailStatus == ThumbnailStatus.success) {
         results[id] = (state: LibraryBuildWorkState.completed, error: null);
         return;
@@ -883,16 +704,16 @@ class LibraryBuildTaskController extends ChangeNotifier {
     await Future<void>.delayed(const Duration(milliseconds: 16));
     final scopeNodeId = job.targetNodeId ?? rootId;
     final rebuildSubtree = job.targetNodeId == null ||
-        builds.nodePreviewWorkIncludesDescendants(job.id, scopeNodeId);
+        (await builds.nodePreviewWorkIncludesDescendants(job.id, scopeNodeId));
     if (rebuildSubtree) {
-      library.rebuildIndexNodePreviewCache(scopeNodeId);
+      (await library.rebuildIndexNodePreviewCache(scopeNodeId));
     } else {
-      library.rebuildIndexNodePreviewCacheChain(scopeNodeId);
+      (await library.rebuildIndexNodePreviewCacheChain(scopeNodeId));
     }
     final compositor = NodePreviewCompositeService(library);
     while (true) {
       _control!.check();
-      final nodeIds = builds.claimNodePreviewWork(job.id);
+      final nodeIds = (await builds.claimNodePreviewWork(job.id));
       if (nodeIds.isEmpty) break;
       final results =
           <String, ({LibraryBuildWorkState state, String? error})>{};
@@ -929,8 +750,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
               (state: LibraryBuildWorkState.completed, error: null);
         }
       }
-      builds.completeNodePreviewWork(job.id, results);
-      final current = builds.get(job.id)!;
+      (await builds.completeNodePreviewWork(job.id, results));
+      final current = (await builds.get(job.id))!;
       _report(
         current,
         current.nodePreviewDone + current.nodePreviewFailed,
@@ -942,22 +763,22 @@ class LibraryBuildTaskController extends ChangeNotifier {
       // database claim so taps and the progress card remain responsive.
       await Future<void>.delayed(const Duration(milliseconds: 1));
     }
-    final nodeComplete = builds.get(job.id)!;
+    final nodeComplete = (await builds.get(job.id))!;
     final failed = nodeComplete.documentPreviewFailed +
         nodeComplete.entityPreviewFailed +
         nodeComplete.nodePreviewFailed;
     if (failed > 0) {
-      builds.fail(
+      (await builds.fail(
         job.id,
         '索引已写入；有 $failed 项预览失败，可使用“仅重试失败项”恢复。',
-      );
+      ));
       return;
     }
-    builds.checkpointStage(
+    (await builds.checkpointStage(
       jobId: job.id,
       stage: LibraryBuildStage.completed,
-    );
-    library.database.checkpointWriteAheadLog();
+    ));
+    await builds.checkpoint();
   }
 
   Future<IndexNode> _ensureDirectoryNode({
@@ -1125,8 +946,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
     await Future.wait(List.generate(concurrency, (_) => worker()));
   }
 
-  int _storedStageCompleted(LibraryBuildJob job) => switch (job.stage) {
-        LibraryBuildStage.manifest => builds.manifestItemCount(job.id),
+  Future<int> _storedStageCompleted(LibraryBuildJob job) async => switch (job.stage) {
+        LibraryBuildStage.manifest => (await builds.manifestItemCount(job.id)),
         LibraryBuildStage.indexWrite => job.indexedTotal,
         LibraryBuildStage.finalize => 0,
         LibraryBuildStage.documentPreviews =>
@@ -1155,7 +976,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
     String message, {
     int failed = 0,
   }) {
-    final current = builds.get(job.id) ?? job;
+    if (_disposed || _closing) return;
+    final current = job;
     _activeJob = current;
     final stageChanged = _progress?.stage != current.stage;
     _progress = LibraryBuildProgress(
@@ -1173,6 +995,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
   /// rebuilding the full index-management page while retaining the latest
   /// in-memory progress value for the next frame.
   void _notifyProgress({bool force = false}) {
+    if (_disposed || _closing) return;
     if (force) {
       _progressNotifyTimer?.cancel();
       _progressNotifyTimer = null;

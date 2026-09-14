@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 
-import '../database/library_repository.dart';
+import '../../modules/library/library_access.dart';
 import '../domain/models.dart';
 import '../formats/file_format_handlers.dart';
 import 'android_image_thumbnail_backend.dart';
@@ -26,7 +26,7 @@ class BrowsingThumbnailController {
           windowsWicBackend: WindowsWicWebpThumbnailBackend(),
         );
 
-  final LibraryRepository repository;
+  final LibraryAccess repository;
   final void Function(String? entityId) onCacheChanged;
   final int maxConcurrent;
   final ThumbnailService _service;
@@ -43,9 +43,9 @@ class BrowsingThumbnailController {
     _enqueue(item.id);
   }
 
-  void requestEntityId(String entityId) {
+  Future<void> requestEntityId(String entityId) async {
     if (_closed) return;
-    final entity = repository.getEntity(entityId);
+    final entity = (await repository.getEntity(entityId));
     if (entity == null) return;
     final handler = FileFormatRegistry.resolveFormat(entity.format);
     if (handler == null || !handler.supportsGeneratedThumbnail) return;
@@ -76,7 +76,7 @@ class BrowsingThumbnailController {
 
   Future<void> _generate(String entityId, {required bool force}) async {
     try {
-      final entity = repository.getEntity(entityId);
+      final entity = (await repository.getEntity(entityId));
       if (entity == null) return;
       final generated = await _service.ensureThumbnail(
         entity,

@@ -4,7 +4,7 @@ import 'dart:collection';
 
 import 'package:image/image.dart' as img;
 
-import '../database/library_repository.dart';
+import '../../modules/library/library_access.dart';
 import '../domain/models.dart';
 import '../formats/file_format_handlers.dart';
 import 'image_thumbnail_worker_pool.dart';
@@ -27,7 +27,7 @@ class ThumbnailService {
     this.updateBuffer,
   }) : store = repository.thumbnailStore;
 
-  final LibraryRepository repository;
+  final LibraryAccess repository;
   final ThumbnailStore store;
   final ImageThumbnailWorkerPool? imageWorkerPool;
   final AndroidImageThumbnailBackend? androidImageBackend;
@@ -90,7 +90,7 @@ class ThumbnailService {
       return false;
     }
 
-    _recordUpdate(ThumbnailDatabaseUpdate.pending(entity.id));
+    await _recordUpdate(ThumbnailDatabaseUpdate.pending(entity.id));
     ThumbnailArtifact? artifact;
     try {
       final sourceFile =
@@ -179,7 +179,7 @@ class ThumbnailService {
         }
       }
       if (artifact == null) {
-        _recordUpdate(ThumbnailDatabaseUpdate.none(entity.id));
+        await _recordUpdate(ThumbnailDatabaseUpdate.none(entity.id));
         return true;
       }
       cancellationToken?.throwIfCancelled();
@@ -193,14 +193,14 @@ class ThumbnailService {
         throw FileSystemException(
             'Native thumbnail output was missing', artifact.persistedPath);
       }
-      repository.recordThumbnailAsset(
+      (await repository.recordThumbnailAsset(
         key: expectedKey,
         format: 'webp',
         byteSize: artifact.persistedPath == null
             ? artifact.bytes.length
             : await File(artifact.persistedPath!).length(),
-      );
-      _recordUpdate(ThumbnailDatabaseUpdate.success(
+      ));
+      await _recordUpdate(ThumbnailDatabaseUpdate.success(
         entityId: entity.id,
         key: expectedKey,
         format: 'webp',
@@ -212,7 +212,7 @@ class ThumbnailService {
     } on ThumbnailTaskCanceledException {
       rethrow;
     } catch (error) {
-      _recordUpdate(ThumbnailDatabaseUpdate.failed(entity.id, '$error'));
+      await _recordUpdate(ThumbnailDatabaseUpdate.failed(entity.id, '$error'));
       return true;
     } finally {
       stopwatch.stop();
@@ -225,12 +225,12 @@ class ThumbnailService {
     return ensureThumbnail(entity, force: true);
   }
 
-  void _recordUpdate(ThumbnailDatabaseUpdate update) {
+  Future<void> _recordUpdate(ThumbnailDatabaseUpdate update) async {
     final buffer = updateBuffer;
     if (buffer != null) {
       buffer.add(update);
     } else {
-      repository.applyThumbnailUpdates([update]);
+      (await repository.applyThumbnailUpdates([update]));
     }
   }
 }
@@ -276,7 +276,7 @@ class ThumbnailUpdateBuffer {
     this.useWriteWorker = false,
   });
 
-  final LibraryRepository repository;
+  final LibraryAccess repository;
   final int batchSize;
   final bool useWriteWorker;
   final List<ThumbnailDatabaseUpdate> _pending = <ThumbnailDatabaseUpdate>[];
@@ -292,11 +292,11 @@ class ThumbnailUpdateBuffer {
     }
   }
 
-  void flush() {
+  Future<void> flush() async {
     if (_pending.isEmpty) return;
     final batch = List<ThumbnailDatabaseUpdate>.of(_pending);
     _pending.clear();
-    repository.applyThumbnailUpdates(batch);
+    (await repository.applyThumbnailUpdates(batch));
   }
 
   Future<void> flushAsync() async {

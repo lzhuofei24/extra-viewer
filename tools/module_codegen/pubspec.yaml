@@ -1,0 +1,7 @@
+name: best_viewer_module_codegen
+publish_to: none
+environment:
+  sdk: '>=3.10.0 <4.0.0'
+dependencies:
+  analyzer: 10.2.0
+  path: ^1.9.1

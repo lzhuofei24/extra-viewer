@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../core/database/app_database.dart';
+import '../modules/infrastructure/database_runtime.dart';
 import '../core/diagnostics/app_diagnostic_log.dart';
 import '../core/domain/models.dart';
 import '../core/controllers/library_build_task_controller.dart';
@@ -21,7 +21,7 @@ class DiagnosticsPage extends StatefulWidget {
     this.progress,
   });
 
-  final AppDatabase database;
+  final DatabaseDescriptor database;
   final AppDiagnosticLog log;
   final List<LibraryBuildJob> recoverableJobs;
   final List<LibraryBuildJob> history;
@@ -67,7 +67,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
     final buffer = StringBuffer()
       ..writeln('Best Viewer 诊断摘要')
       ..writeln('平台: ${Platform.operatingSystem} ${Platform.operatingSystemVersion}')
-      ..writeln('Schema: ${AppDatabase.currentSchemaVersion}')
+      ..writeln('Schema: ${DatabaseDescriptor.schemaVersion}')
       ..writeln('日志目录: ${_redact(widget.log.directoryPath ?? '不可用')}')
       ..writeln()
       ..writeln('可恢复任务: ${widget.recoverableJobs.length}')
@@ -165,7 +165,7 @@ class _StatusCard extends StatelessWidget {
     required this.recoverableCount,
   });
 
-  final AppDatabase database;
+  final DatabaseDescriptor database;
   final LibraryBuildProgress? progress;
   final int recoverableCount;
 
@@ -184,16 +184,16 @@ class _StatusCard extends StatelessWidget {
             runSpacing: 10,
             children: [
               _StatusItem('平台', Platform.operatingSystem),
-              const _StatusItem('Schema', '${AppDatabase.currentSchemaVersion}'),
+              const _StatusItem('Schema', '${DatabaseDescriptor.schemaVersion}'),
               _StatusItem('可恢复任务', '$recoverableCount'),
               _StatusItem('内存图片缓存', '${cache.currentSize}/${cache.maximumSize}'),
               _StatusItem('缓存容量', _formatBytes(cache.currentSizeBytes)),
             ],
           ),
-          if (database.databasePath != null) ...[
+          if (database.databasePath.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(
-              database.databasePath!,
+              database.databasePath,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodySmall?.copyWith(

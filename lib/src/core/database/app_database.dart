@@ -6,8 +6,7 @@ import 'package:sqlite3/sqlite3.dart';
 
 import 'schema_v6.dart';
 
-/// The current schema is a clean baseline. Index storage is derived from user
-/// files, so incompatible schema revisions require resetting app-owned data.
+/// SQLite storage and additive migrations, owned by database workers.
 class AppDatabase {
   AppDatabase._(this.db, this.storageDirectoryPath, this.databasePath);
 
@@ -16,6 +15,7 @@ class AppDatabase {
   final Database db;
   final String storageDirectoryPath;
   final String? databasePath;
+  bool _closed = false;
 
   static Future<AppDatabase> open() async {
     final dir = await getApplicationSupportDirectory();
@@ -34,6 +34,10 @@ class AppDatabase {
   }
 
   static AppDatabase openAtPathForTesting(String dbPath) {
+    return openAtPath(dbPath);
+  }
+
+  static AppDatabase openAtPath(String dbPath) {
     final file = File(dbPath);
     file.parent.createSync(recursive: true);
     return _openAtPathSync(file.path, file.parent.path);
@@ -86,7 +90,11 @@ class AppDatabase {
     }
   }
 
-  void close() => db.dispose();
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    db.dispose();
+  }
 
   /// Flushes pages that are no longer needed by active readers without
   /// blocking them. Large index tasks call this at stable boundaries so WAL

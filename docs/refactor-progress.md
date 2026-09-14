@@ -15,6 +15,23 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Remaining batches
 
+### Database transport foundation (2026-09-15)
+
+- Production bootstrap opens/migrates SQLite inside DatabaseHost, not the UI.
+- Library and build typed clients route calls to one supervised writer;
+  the existing read worker remains dedicated to paged browsing.
+- Index-page transaction and finalization now execute in the host.
+- Widgets hold a storage descriptor, not a SQLite connection. Async reads are
+  moved out of WidgetBuilder/setState; graph selection ignores stale results.
+- Progress rendering no longer queries a job on every callback.
+- Shutdown waits for database close and worker exit before releasing ports;
+  a regression test caught and fixed a Windows database-handle leak.
+- Validation: flutter analyze clean; all 58 tests passed.
+- This is the transport foundation, not completion of batch 2: generated broad
+  access remains transitional. Capability interfaces, domain command receipts,
+  durable change notifications and removal of repository worker branches remain.
+- All later preview/runtime/navigation/release gates remain outstanding.
+
 ### Implemented safety/frontier foundation
 
 - Schema 6 additive migration, schema-5 snapshot before file-backed migration.

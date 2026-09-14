@@ -10,7 +10,7 @@ import 'media_player_lifecycle.dart';
 
 typedef AudioProgressSaver = void Function(
     String entityId, int positionMs, int durationMs);
-typedef AudioSessionCreator = AudioPlaybackSession Function({
+typedef AudioSessionCreator = FutureOr<AudioPlaybackSession> Function({
   required List<EntityListItem> entries,
   required int currentIndex,
   String? sourceNodeId,
@@ -117,7 +117,7 @@ class AppAudioController extends ChangeNotifier {
     if (!inCurrentSession) {
       final entries =
           candidates.isEmpty ? <EntityListItem>[entity] : candidates;
-      _session = _onSessionCreated(
+      _session = await _onSessionCreated(
         entries: entries,
         currentIndex: entries
             .indexWhere((item) => item.id == entity.id)

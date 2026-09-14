@@ -2,17 +2,61 @@ import '../domain/models.dart';
 import '../utils/ids.dart';
 import 'library_repository.dart';
 import 'library_write_worker.dart';
+import '../../modules/build/build_access.dart';
 
 enum _WorkCounter { document, entity, node }
 
 /// Persistence boundary for the single parent build task. It deliberately
 /// contains no rollback API: cancelling a build only stops future work and
 /// never mutates already committed entities, nodes, or derived assets.
-class LibraryBuildRepository {
+class LibraryBuildRepository implements BuildAccess {
+  @override
+  void finalizeIndex(LibraryBuildJob job) {
+    validateScope(job);
+    if (!job.manifestComplete) {
+      throw StateError('目录尚未完整枚举，不能对账移除资料');
+    }
+    final rootId = job.indexRootId;
+    if (rootId == null) throw StateError('索引根节点缺失');
+    final scopeId = job.targetNodeId ?? rootId;
+    final seen = <String>[];
+    var cursor = -1;
+    while (true) {
+      final page = listManifestPage(job.id, afterSequence: cursor);
+      if (page.isEmpty) break;
+      seen.addAll(page.map((item) => item.sourcePath));
+      cursor = page.last.sequence;
+    }
+    if (job.targetNodeId == null) {
+      library.reconcileDirectoryIndexRoot(rootId: rootId, seenPaths: seen);
+      if (job.stagingRootId != null) {
+        library.replaceOverlappingDirectoryIndexRoots(
+          keepRootId: rootId,
+          sourcePath: job.sourcePath,
+        );
+      }
+    } else {
+      library.reconcileDirectoryIndexSubtree(
+        nodeId: scopeId,
+        rootId: rootId,
+        seenPaths: seen,
+      );
+      library.pruneEmptyDirectoryNodes(rootId);
+    }
+    library.rebuildIndexNodeStats();
+    prepareDocumentPreviewWork(job.id, scopeId);
+    final refreshed = get(job.id)!;
+    checkpointStage(
+      jobId: job.id,
+      stage: LibraryBuildStage.documentPreviews,
+      documentPreviewTotal: refreshed.documentPreviewTotal,
+    );
+  }
   LibraryBuildRepository(this.library);
 
   final LibraryRepository library;
 
+  @override
   LibraryBuildJob create({
     required String sourcePath,
     required LibraryBuildOperation operation,
@@ -63,6 +107,7 @@ class LibraryBuildRepository {
     return job;
   }
 
+  @override
   LibraryBuildJob? get(String jobId) {
     final rows = library.database.db.select(
       'SELECT * FROM library_build_jobs WHERE id = ? LIMIT 1',
@@ -71,6 +116,7 @@ class LibraryBuildRepository {
     return rows.isEmpty ? null : _jobFromRow(rows.single);
   }
 
+  @override
   List<LibraryBuildJob> listRecoverable() => library.database.db.select('''
         SELECT * FROM library_build_jobs
         WHERE status IN ('pending', 'running', 'pauseRequested', 'paused', 'blocked', 'failed', 'completedWithErrors')
@@ -78,6 +124,7 @@ class LibraryBuildRepository {
         ORDER BY updated_at DESC
       ''').map(_jobFromRow).toList(growable: false);
 
+  @override
   List<LibraryBuildJob> listHistory({int limit = 100}) => library.database.db
       .select('''
         SELECT * FROM library_build_jobs
@@ -87,6 +134,7 @@ class LibraryBuildRepository {
       .map(_jobFromRow)
       .toList(growable: false);
 
+  @override
   void markInterruptedRecoverable() {
     library.writeTransaction(() {
       final now = nowMillis();
@@ -113,29 +161,34 @@ class LibraryBuildRepository {
     });
   }
 
+  @override
   LibraryBuildJob setRunning(String jobId) => _update(
         jobId,
         status: LibraryBuildStatus.running,
         clearError: true,
       );
 
+  @override
   LibraryBuildJob pause(String jobId) => _update(
         jobId,
         status: LibraryBuildStatus.paused,
       );
 
+  @override
   LibraryBuildJob fail(String jobId, Object error) => _update(
         jobId,
         status: LibraryBuildStatus.failed,
         error: '$error',
       );
 
+  @override
   LibraryBuildJob block(String jobId, Object error) => _update(
         jobId,
         status: LibraryBuildStatus.blocked,
         error: '$error',
       );
 
+  @override
   void validateScope(LibraryBuildJob job) {
     if (job.scopeNodeId != null &&
         (job.targetNodeId != job.scopeNodeId ||
@@ -150,6 +203,7 @@ class LibraryBuildRepository {
     }
   }
 
+  @override
   void completeManifest(String jobId, int total) {
     library.writeTransaction(() {
       library.database.db.execute(
@@ -162,11 +216,13 @@ class LibraryBuildRepository {
     });
   }
 
+  @override
   void abandon(String jobId) {
     _update(jobId, status: LibraryBuildStatus.abandoned);
     library.database.checkpointWriteAheadLog();
   }
 
+  @override
   LibraryBuildJob setRoots({
     required String jobId,
     required String indexRootId,
@@ -178,6 +234,7 @@ class LibraryBuildRepository {
         stagingRootId: stagingRootId,
       );
 
+  @override
   LibraryBuildJob checkpointStage({
     required String jobId,
     required LibraryBuildStage stage,
@@ -200,6 +257,7 @@ class LibraryBuildRepository {
         nodePreviewTotal: nodePreviewTotal,
       );
 
+  @override
   void resetManifest(String jobId) {
     library.writeTransaction(() {
       library.database.db.execute(
@@ -215,6 +273,7 @@ class LibraryBuildRepository {
     });
   }
 
+  @override
   void upsertManifest(Iterable<LibraryBuildManifestItem> values) {
     final items = values.toList(growable: false);
     if (items.isEmpty) return;
@@ -263,6 +322,7 @@ class LibraryBuildRepository {
   /// Directory enumeration can produce many small pages. Keep the durable
   /// manifest writes off Flutter's isolate when the application writer is
   /// available; the main isolate only continues after the page is committed.
+  @override
   Future<void> upsertManifestAsync(
     Iterable<LibraryBuildManifestItem> values,
   ) async {
@@ -315,9 +375,18 @@ class LibraryBuildRepository {
         .toList(growable: false));
   }
 
+  @override
   int manifestItemCount(String jobId) =>
       _count('library_build_manifest', jobId);
 
+  @override
+  bool hasDirectoryFrontier(String jobId) => library.database.db.select(
+    'SELECT 1 FROM scan_directories WHERE job_id = ? LIMIT 1', [jobId]).isNotEmpty;
+
+  @override
+  void checkpoint() => library.database.checkpointWriteAheadLog();
+
+  @override
   void seedDirectory(String jobId, String locator) {
     library.database.db.execute('''
       INSERT OR IGNORE INTO scan_directories(job_id, locator, relative_path)
@@ -325,6 +394,7 @@ class LibraryBuildRepository {
     ''', [jobId, locator]);
   }
 
+  @override
   ({String locator, String relativePath})? nextDirectory(String jobId) {
     final rows = library.database.db.select('''
       SELECT locator, relative_path FROM scan_directories
@@ -337,6 +407,7 @@ class LibraryBuildRepository {
     );
   }
 
+  @override
   int beginDirectory(String jobId, String locator, String relativePath) {
     library.writeTransaction(() {
       library.database.db.execute(
@@ -354,6 +425,7 @@ class LibraryBuildRepository {
         [jobId]).single['next'] as int;
   }
 
+  @override
   void commitDirectoryPage(
       String jobId,
       String locator,
@@ -382,16 +454,19 @@ class LibraryBuildRepository {
     });
   }
 
+  @override
   void completeDirectory(String jobId, String locator) {
     library.database.db.execute(
         "UPDATE scan_directories SET state = 'completed', error = NULL WHERE job_id = ? AND locator = ?",
         [jobId, locator]);
   }
 
+  @override
   void updateIndexedProgress(String jobId, int indexedTotal) {
     _update(jobId, indexedTotal: indexedTotal);
   }
 
+  @override
   List<LibraryBuildManifestItem> listManifestPage(
     String jobId, {
     required int afterSequence,
@@ -406,6 +481,7 @@ class LibraryBuildRepository {
           .map(_manifestFromRow)
           .toList(growable: false);
 
+  @override
   void prepareEntityPreviewWork(String jobId, String scopeNodeId) {
     final now = nowMillis();
     library.database.db.execute('''
@@ -435,6 +511,7 @@ class LibraryBuildRepository {
     _update(jobId, entityPreviewTotal: count);
   }
 
+  @override
   void prepareDocumentPreviewWork(String jobId, String scopeNodeId) {
     final now = nowMillis();
     library.database.db.execute('''
@@ -460,6 +537,7 @@ class LibraryBuildRepository {
     _update(jobId, documentPreviewTotal: count);
   }
 
+  @override
   void prepareNodePreviewWork(
     String jobId, {
     required String scopeNodeId,
@@ -492,6 +570,7 @@ class LibraryBuildRepository {
     _update(jobId, nodePreviewTotal: count);
   }
 
+  @override
   bool nodePreviewWorkIncludesDescendants(
     String jobId,
     String scopeNodeId,
@@ -511,6 +590,7 @@ class LibraryBuildRepository {
     ''', [scopeNodeId, jobId]).isNotEmpty;
   }
 
+  @override
   List<String> claimEntityPreviewWork(String jobId, {int limit = 100}) =>
       _claimWork(
         table: 'library_entity_preview_work',
@@ -519,6 +599,7 @@ class LibraryBuildRepository {
         limit: limit,
       );
 
+  @override
   List<String> claimDocumentPreviewWork(String jobId, {int limit = 100}) =>
       _claimWork(
         table: 'library_document_preview_work',
@@ -527,6 +608,7 @@ class LibraryBuildRepository {
         limit: limit,
       );
 
+  @override
   List<String> claimNodePreviewWork(String jobId, {int limit = 8}) =>
       _claimWork(
         table: 'library_node_preview_work',
@@ -535,6 +617,7 @@ class LibraryBuildRepository {
         limit: limit,
       );
 
+  @override
   void completeEntityPreviewWork(
     String jobId,
     Map<String, ({LibraryBuildWorkState state, String? error})> results,
@@ -547,6 +630,7 @@ class LibraryBuildRepository {
         counter: _WorkCounter.entity,
       );
 
+  @override
   void completeDocumentPreviewWork(
     String jobId,
     Map<String, ({LibraryBuildWorkState state, String? error})> results,
@@ -559,6 +643,7 @@ class LibraryBuildRepository {
         counter: _WorkCounter.document,
       );
 
+  @override
   void completeNodePreviewWork(
     String jobId,
     Map<String, ({LibraryBuildWorkState state, String? error})> results,
@@ -571,15 +656,19 @@ class LibraryBuildRepository {
         counter: _WorkCounter.node,
       );
 
+  @override
   bool hasPendingEntityPreviewWork(String jobId) =>
       _hasPending('library_entity_preview_work', jobId);
 
+  @override
   bool hasPendingNodePreviewWork(String jobId) =>
       _hasPending('library_node_preview_work', jobId);
 
+  @override
   bool hasPendingDocumentPreviewWork(String jobId) =>
       _hasPending('library_document_preview_work', jobId);
 
+  @override
   void releaseProcessingWork(String jobId, {required LibraryBuildStage stage}) {
     final table = switch (stage) {
       LibraryBuildStage.documentPreviews => 'library_document_preview_work',
@@ -594,6 +683,7 @@ class LibraryBuildRepository {
     ''', [nowMillis(), jobId]);
   }
 
+  @override
   void retryFailedAssets(String jobId) {
     final job = get(jobId);
     if (job == null) return;
@@ -623,6 +713,7 @@ class LibraryBuildRepository {
     });
   }
 
+  @override
   void restartFromManifest(String jobId) {
     final job = get(jobId);
     if (job == null) return;

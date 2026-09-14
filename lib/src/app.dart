@@ -10,8 +10,10 @@ import 'package:path/path.dart' as p;
 import 'package:window_manager/window_manager.dart';
 
 import 'core/database/app_database.dart';
+import 'modules/infrastructure/database_runtime.dart';
 import 'core/database/library_write_worker.dart';
-import 'core/database/library_repository.dart';
+import 'modules/library/library_client.dart';
+import 'modules/build/build_client.dart';
 import 'core/database/library_read_worker.dart';
 import 'core/diagnostics/app_diagnostic_log.dart';
 import 'core/controllers/library_build_task_controller.dart';
@@ -120,13 +122,14 @@ class _AppShellState extends State<AppShell> {
   static const _entityPageSize = 200;
   late final TextEditingController _indexPathController;
 
-  AppDatabase? _database;
+  DatabaseDescriptor? _database;
   LibraryWriteWorker? _writeWorker;
-  LibraryRepository? _repository;
+  LibraryClient? _repository;
   LibraryReadWorker? _readWorker;
   Future<LibraryReadWorker>? _readWorkerStart;
   BrowsingThumbnailController? _browsingThumbnails;
   AppAudioController? _audioController;
+  List<AudioPlaybackSession> _audioSessions = const [];
   LibraryBuildTaskController? _buildTasks;
   bool _loading = true;
   int? _incompatibleSchemaVersion;
@@ -197,7 +200,8 @@ class _AppShellState extends State<AppShell> {
     final node = _currentIndexNode;
     return repository != null &&
         node != null &&
-        repository.directoryIndexRootForNode(node.id) != null;
+        (node.nodeType == NodeType.directoryIndexRoot ||
+            node.nodeType == NodeType.folder);
   }
 
   bool get _canRemoveEntityReferencesFromCurrentNode {
@@ -239,11 +243,11 @@ class _AppShellState extends State<AppShell> {
     _thumbnailRefreshTimer?.cancel();
     _lifecycleListener.dispose();
     unawaited(_closeRuntimeResources());
-    unawaited(AppDiagnosticLog.instance.close());
     super.dispose();
   }
 
   Future<void> _closeRuntimeResources() async {
+    await _buildTasks?.close();
     final audioController = _audioController;
     audioController?.removeListener(_handlePetAudioChanged);
     if (audioController != null) await audioController.close();
@@ -252,14 +256,14 @@ class _AppShellState extends State<AppShell> {
     if (readWorker != null) await readWorker.close();
     final writeWorker = _writeWorker;
     if (writeWorker != null) await writeWorker.close();
-    _database?.close();
+    await AppDiagnosticLog.instance.close();
   }
 
   Future<LibraryReadWorker> _ensureReadWorker() async {
     final existing = _readWorker;
     if (existing != null) return existing;
     final database = _database;
-    final databasePath = database?.databasePath;
+    final databasePath = _writeWorker?.databasePath;
     if (database == null || databasePath == null) {
       throw StateError('读取服务不可用：当前数据库没有可供读 Isolate 使用的文件路径');
     }
@@ -362,9 +366,9 @@ class _AppShellState extends State<AppShell> {
 
   Future<void> _bootstrap() async {
     AppDiagnosticLog.instance.info('app_bootstrap_started');
-    final AppDatabase database;
+    final DatabaseRuntime runtime;
     try {
-      database = await (widget.databaseFactory?.call() ?? AppDatabase.open());
+      runtime = await DatabaseRuntime.open(testDatabaseFactory: widget.databaseFactory);
     } on AppDatabaseResetRequired catch (error) {
       AppDiagnosticLog.instance.warning('database_reset_required', fields: {
         'foundSchemaVersion': error.foundVersion,
@@ -388,32 +392,24 @@ class _AppShellState extends State<AppShell> {
       });
       return;
     }
+    final database = runtime.descriptor;
+    final writeWorker = runtime.host;
+    if (!mounted) {
+      await writeWorker.close();
+      return;
+    }
     AppDiagnosticLog.instance.info('database_opened', fields: {
       'databasePath': database.databasePath,
       'storageDirectoryPath': database.storageDirectoryPath,
     });
-    LibraryWriteWorker? writeWorker;
-    if (database.databasePath != null) {
-      try {
-        writeWorker = await LibraryWriteWorker.start(
-          databasePath: database.databasePath!,
-        );
-      } catch (error, stackTrace) {
-        AppDiagnosticLog.instance.warning(
-          'database_write_worker_unavailable',
-          fields: {'error': '$error', 'stackTrace': '$stackTrace'},
-        );
-      }
-    }
-    final repository = LibraryRepository(
-      database,
-      writeWorker: writeWorker,
-    );
+    final databasePath = database.databasePath;
+    final repository = LibraryClient(writeWorker);
     final browsingThumbnails = BrowsingThumbnailController(
       repository,
       onCacheChanged: (_) => _scheduleThumbnailRefresh(),
     );
-    final buildTasks = LibraryBuildTaskController(repository);
+    final buildTasks = LibraryBuildTaskController(repository, builds: BuildClient(writeWorker));
+    await buildTasks.initialize();
     buildTasks.addListener(_handleBuildTaskChanged);
     final imageCache = PaintingBinding.instance.imageCache;
     imageCache.maximumSizeBytes =
@@ -423,26 +419,26 @@ class _AppShellState extends State<AppShell> {
     // crossed an arbitrary card count.
     imageCache.maximumSize = Platform.isAndroid ? 5000 : 1200;
     final audioController = AppAudioController(
-      onProgressSaved: (entityId, positionMs, durationMs) {
-        repository.savePlaybackState(
+      onProgressSaved: (entityId, positionMs, durationMs) async {
+        (await repository.savePlaybackState(
           entityId: entityId,
           positionMs: positionMs,
           durationMs: durationMs,
-        );
+        ));
       },
       onSessionCreated: (
               {required entries,
               required currentIndex,
               sourceNodeId,
               sourceNodeName,
-              required AudioPlaybackMode mode}) =>
-          repository.createAudioPlaybackSession(
+              required AudioPlaybackMode mode}) async =>
+          (await repository.createAudioPlaybackSession(
         entries: entries,
         currentIndex: currentIndex,
         sourceNodeId: sourceNodeId,
         sourceNodeName: sourceNodeName,
         mode: mode,
-      ),
+      )),
       onSessionUpdated: (
               {required id,
               currentIndex,
@@ -450,8 +446,8 @@ class _AppShellState extends State<AppShell> {
               mode,
               shuffleRemaining,
               history,
-              active}) =>
-          repository.updateAudioPlaybackSession(
+              active}) async =>
+          (await repository.updateAudioPlaybackSession(
         id: id,
         currentIndex: currentIndex,
         positionMs: positionMs,
@@ -459,13 +455,13 @@ class _AppShellState extends State<AppShell> {
         shuffleRemaining: shuffleRemaining,
         history: history,
         active: active,
-      ),
+      )),
     );
     LibraryReadWorker? readWorker;
-    if (database.databasePath != null) {
+    if (databasePath.isNotEmpty) {
       try {
         readWorker = await LibraryReadWorker.start(
-          databasePath: database.databasePath!,
+          databasePath: databasePath,
           storageDirectoryPath: database.storageDirectoryPath,
         );
       } catch (error, stackTrace) {
@@ -487,7 +483,9 @@ class _AppShellState extends State<AppShell> {
       _loading = false;
     });
     audioController.addListener(_handlePetAudioChanged);
-    final activeSessions = repository.listAudioPlaybackSessions();
+    final activeSessions = (await repository.listAudioPlaybackSessions());
+    if (!mounted) return;
+    setState(() => _audioSessions = activeSessions);
     final activeSession =
         activeSessions.where((session) => session.active).firstOrNull;
     if (activeSession != null) {
@@ -624,7 +622,6 @@ class _AppShellState extends State<AppShell> {
       _buildTasks?.removeListener(_handleBuildTaskChanged);
       _buildTasks?.dispose();
       _buildTasks = null;
-      _database?.close();
       _database = null;
       _repository = null;
       await AppDatabase.resetLocalIndexStorage();
@@ -1286,9 +1283,10 @@ class _AppShellState extends State<AppShell> {
     if (!mounted) return;
     final createdIndex = result?.indexRootId == null
         ? null
-        : _repository?.getIndexNode(result!.indexRootId!);
+        : (await _repository?.getIndexNode(result!.indexRootId!));
     if (result?.status == LibraryBuildStatus.completed &&
         createdIndex != null) {
+      if (!mounted) return;
       setState(() {
         _selectedIndexRoot = createdIndex;
         _selectedItem = null;
@@ -1328,7 +1326,9 @@ class _AppShellState extends State<AppShell> {
   Future<void> _chooseDirectoryUpdateNode(IndexNode root) async {
     final repository = _repository;
     if (repository == null || _scanning) return;
-    final tree = repository.listIndexTree(root.id);
+    final tree = (await repository.listIndexTree(root.id));
+    final entityCount = await repository.countEntitiesUnderIndexNode(root.id);
+    if (!mounted) return;
     final selected = await showDialog<IndexNode>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -1342,7 +1342,7 @@ class _AppShellState extends State<AppShell> {
                 node: IndexTreeNode(
                   item: root,
                   children: tree,
-                  entityCount: repository.countEntitiesUnderIndexNode(root.id),
+                  entityCount: entityCount,
                 ),
                 initiallyExpanded: true,
                 isRoot: true,
@@ -1390,7 +1390,7 @@ class _AppShellState extends State<AppShell> {
         _selectedNodeIds.length != 1) {
       return;
     }
-    final node = repository.getIndexNode(_selectedNodeIds.single);
+    final node = (await repository.getIndexNode(_selectedNodeIds.single));
     if (node == null) {
       return;
     }
@@ -1412,7 +1412,7 @@ class _AppShellState extends State<AppShell> {
       nodeId: nodeId,
     );
     if (selected == null || selected.isEmpty) return;
-    repository.setNodePreviewOverride(
+    (await repository.setNodePreviewOverride(
       nodeId,
       jsonEncode(selected
           .map((tile) => {
@@ -1425,7 +1425,7 @@ class _AppShellState extends State<AppShell> {
                 'aspectRatio': tile.aspectRatio,
               })
           .toList()),
-    );
+    ));
     await _refreshNodePreview(nodeId, reason: 'override_set');
     _reload(indexNodeId: _currentIndexNode?.id, invalidateBrowserCache: true);
   }
@@ -1438,7 +1438,7 @@ class _AppShellState extends State<AppShell> {
       return;
     }
     final nodeId = _selectedNodeIds.single;
-    repository.clearNodePreviewOverride(nodeId);
+    (await repository.clearNodePreviewOverride(nodeId));
     await _refreshNodePreview(nodeId, reason: 'override_cleared');
     _reload(indexNodeId: _currentIndexNode?.id, invalidateBrowserCache: true);
   }
@@ -1506,7 +1506,8 @@ class _AppShellState extends State<AppShell> {
     if (result?.status != LibraryBuildStatus.completed) return;
     final targetNode = result?.indexRootId == null
         ? null
-        : _repository?.getIndexNode(result!.indexRootId!);
+        : (await _repository?.getIndexNode(result!.indexRootId!));
+    if (!mounted) return;
     if (targetNode != null) _openIndexNode(targetNode);
     _reload(indexNodeId: targetNode?.id, invalidateBrowserCache: true);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1560,16 +1561,16 @@ class _AppShellState extends State<AppShell> {
     final repository = _repository;
     final audioController = _audioController;
     if (repository == null || audioController == null) return;
-    repository.markOpened(entity.id);
-    final detail = repository.getEntity(entity.id);
+    (await repository.markOpened(entity.id));
+    final detail = (await repository.getEntity(entity.id));
     setState(() => _detail = detail);
     final sourceNode = _currentIndexNode;
     final playbackQueue =
         entity.entityType == EntityType.audio && sourceNode != null
-            ? repository.listEntitiesDirectlyUnderNode(
+            ? (await repository.listEntitiesDirectlyUnderNode(
                 sourceNode.id,
                 sortMode: _browserState.sortMode,
-              )
+              ))
             : _entities;
     final libraryOverlay = entity.entityType == EntityType.image ||
         entity.entityType == EntityType.video;
@@ -1580,36 +1581,38 @@ class _AppShellState extends State<AppShell> {
           libraryOverlay: libraryOverlay,
           onClose: libraryOverlay ? _closeMediaOverlay : null,
           audioWaveformService: AudioWaveformService(
-            AudioWaveformStore(repository.database.storageDirectoryPath),
+            AudioWaveformStore(repository.storageDirectoryPath),
           ),
           audioController: audioController,
-          onEntityOpened: (opened) {
-            repository.markOpened(opened.id);
-            setState(() => _detail = repository.getEntity(opened.id));
+          onEntityOpened: (opened) async {
+            (await repository.markOpened(opened.id));
+            final detail = await repository.getEntity(opened.id);
+            if (mounted) setState(() => _detail = detail);
           },
           onShowDetails: (opened) => _showEntityDetail(opened),
           onOpenDirectoryRoot: _openDirectoryRootForEntity,
-          onPlaybackStateChanged: (entityId, positionMs, durationMs) {
-            repository.savePlaybackState(
+          onPlaybackStateChanged: (entityId, positionMs, durationMs) async {
+            (await repository.savePlaybackState(
               entityId: entityId,
               positionMs: positionMs,
               durationMs: durationMs,
-            );
+            ));
           },
           onReaderStateChanged: ({
             required entityId,
             scrollOffset,
             zoomScale,
             extraStateJson,
-          }) {
-            repository.saveReaderState(
+          }) async {
+            (await repository.saveReaderState(
               entityId: entityId,
               scrollOffset: scrollOffset,
               zoomScale: zoomScale,
               extraStateJson: extraStateJson,
-            );
+            ));
           },
         );
+    if (!mounted) return;
     if (libraryOverlay) {
       setState(() {
         _mediaOverlayRequiresLibraryRefresh = false;
@@ -1622,11 +1625,11 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
-  void _openDirectoryRootForEntity(EntityListItem item) {
+  Future<void> _openDirectoryRootForEntity(EntityListItem item) async {
     final repository = _repository;
-    final rootId = repository?.getEntity(item.id)?.directoryRootId;
+    final rootId = (await repository?.getEntity(item.id))?.directoryRootId;
     if (rootId == null) return;
-    final root = repository?.getIndexNode(rootId);
+    final root = (await repository?.getIndexNode(rootId));
     if (root?.nodeType != NodeType.directoryIndexRoot) return;
     _closeMediaOverlay();
     _openIndexRoot(root!);
@@ -1696,7 +1699,7 @@ class _AppShellState extends State<AppShell> {
       builder: (_) => NowPlayingPage(
         controller: controller,
         waveformService: AudioWaveformService(
-          AudioWaveformStore(repository.database.storageDirectoryPath),
+          AudioWaveformStore(repository.storageDirectoryPath),
         ),
       ),
     ));
@@ -1705,8 +1708,8 @@ class _AppShellState extends State<AppShell> {
   Future<void> _showEntityDetail(EntityListItem entity) async {
     final repository = _repository;
     if (repository == null) return;
-    final detail = repository.getEntity(entity.id);
-    if (detail == null) return;
+    final detail = (await repository.getEntity(entity.id));
+    if (detail == null || !mounted) return;
     setState(() => _detail = detail);
     await showGeneralDialog<void>(
       context: context,
@@ -1855,8 +1858,8 @@ class _AppShellState extends State<AppShell> {
   Future<void> _regenerateThumbnail(EntityListItem item) async {
     final repository = _repository;
     if (repository == null || !_regeneratingThumbnailIds.add(item.id)) return;
-    final entity = repository.getEntity(item.id);
-    if (entity == null) {
+    final entity = (await repository.getEntity(item.id));
+    if (entity == null || !mounted) {
       _regeneratingThumbnailIds.remove(item.id);
       return;
     }
@@ -1871,10 +1874,10 @@ class _AppShellState extends State<AppShell> {
         nativeImageBackend: NativeImageThumbnailBackend(),
         windowsWicBackend: WindowsWicWebpThumbnailBackend(),
       ).regenerateThumbnail(entity);
-      for (final nodeId in repository.listIndexNodeIdsForEntity(entity.id)) {
+      for (final nodeId in (await repository.listIndexNodeIdsForEntity(entity.id))) {
         await _refreshNodePreview(nodeId, reason: 'thumbnail_regenerated');
       }
-      final refreshed = repository.getEntity(item.id);
+      final refreshed = (await repository.getEntity(item.id));
       if (!mounted) return;
       final message = refreshed?.thumbnailStatus == ThumbnailStatus.success
           ? '缩略图已重新生成'
@@ -1929,10 +1932,10 @@ class _AppShellState extends State<AppShell> {
     if (trimmed == null || trimmed.isEmpty) return;
     try {
       final node =
-          repository.createCustomNode(parentId: parent.id, name: trimmed);
+          (await repository.createCustomNode(parentId: parent.id, name: trimmed));
       if (entityIds.isNotEmpty) {
-        repository.linkEntitiesToIndexNode(
-            entityIds: entityIds, indexNodeId: node.id);
+        (await repository.linkEntitiesToIndexNode(
+            entityIds: entityIds, indexNodeId: node.id));
       }
       await _refreshNodePreview(node.id, reason: 'custom_node_created');
       setState(_selection.exit);
@@ -1968,10 +1971,10 @@ class _AppShellState extends State<AppShell> {
     final trimmed = name?.trim();
     if (trimmed == null || trimmed.isEmpty) return;
     try {
-      final collection = repository.createCollectionWithEntities(
+      final collection = (await repository.createCollectionWithEntities(
         name: trimmed,
         entityIds: entityIds,
-      );
+      ));
       await _refreshNodePreview(
         collection.id,
         scope: IndexPreviewRebuildScope.subtree,
@@ -1998,7 +2001,7 @@ class _AppShellState extends State<AppShell> {
       ),
     );
     if (name == null || name.trim().isEmpty) return;
-    final graph = repository.ensureGraphIndexRoot(name.trim());
+    final graph = (await repository.ensureGraphIndexRoot(name.trim()));
     _browserNodeCache.clear();
     _openIndexRoot(graph);
   }
@@ -2009,8 +2012,8 @@ class _AppShellState extends State<AppShell> {
         (_selectedEntityIds.isEmpty && _selectedNodeIds.isEmpty)) {
       return;
     }
-    final collections = repository
-        .listIndexRoots()
+    final collections = (await repository
+        .listIndexRoots())
         .where((node) => node.nodeType == NodeType.customIndexRoot)
         .toList(growable: false);
     if (collections.isEmpty) {
@@ -2021,10 +2024,10 @@ class _AppShellState extends State<AppShell> {
         initialValue: '',
       );
       if (name == null || name.trim().isEmpty) return;
-      final collection = repository.createCollectionWithEntities(
+      final collection = (await repository.createCollectionWithEntities(
         name: name.trim(),
         entityIds: _selectedEntityIds,
-      );
+      ));
       final previewRefreshes = <Future<void>>[
         _refreshNodePreview(
           collection.id,
@@ -2032,10 +2035,10 @@ class _AppShellState extends State<AppShell> {
         ),
       ];
       for (final nodeId in _selectedNodeIds) {
-        final cloned = repository.cloneIndexNodeTree(
+        final cloned = (await repository.cloneIndexNodeTree(
           sourceNodeId: nodeId,
           targetParentId: collection.id,
-        );
+        ));
         previewRefreshes.add(
           _refreshNodePreview(
             cloned.id,
@@ -2052,19 +2055,16 @@ class _AppShellState extends State<AppShell> {
       return;
     }
     final selected = <String>{};
+    final trees = await Future.wait(collections.map((root) async => IndexTreeNode(
+      item: root,
+      children: await repository.listIndexTree(root.id),
+      entityCount: await repository.countEntitiesUnderIndexNode(root.id),
+    )));
+    if (!mounted) return;
     final targets = await showDialog<Set<String>>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
-          final trees = collections
-              .map(
-                (root) => IndexTreeNode(
-                  item: root,
-                  children: repository.listIndexTree(root.id),
-                  entityCount: repository.countEntitiesUnderIndexNode(root.id),
-                ),
-              )
-              .toList(growable: false);
           return AlertDialog(
             title: const Text('加入自定义索引'),
             content: SizedBox(
@@ -2096,10 +2096,10 @@ class _AppShellState extends State<AppShell> {
                           initialValue: '',
                         );
                         if (name == null || name.trim().isEmpty) return;
-                        final node = repository.createCustomNode(
+                        final node = (await repository.createCustomNode(
                           parentId: selected.single,
                           name: name.trim(),
-                        );
+                        ));
                         setDialogState(() {
                           selected
                             ..clear()
@@ -2131,16 +2131,16 @@ class _AppShellState extends State<AppShell> {
       final previewRefreshes = <Future<void>>[];
       for (final targetId in targets) {
         if (_selectedEntityIds.isNotEmpty) {
-          repository.linkEntitiesToIndexNode(
+          (await repository.linkEntitiesToIndexNode(
             entityIds: _selectedEntityIds,
             indexNodeId: targetId,
-          );
+          ));
         }
         for (final nodeId in _selectedNodeIds) {
-          final cloned = repository.cloneIndexNodeTree(
+          final cloned = (await repository.cloneIndexNodeTree(
             sourceNodeId: nodeId,
             targetParentId: targetId,
-          );
+          ));
           previewRefreshes.add(
             _refreshNodePreview(
               cloned.id,
@@ -2186,10 +2186,11 @@ class _AppShellState extends State<AppShell> {
     final repository = _repository;
     final source = _currentIndexNode;
     if (repository == null || source == null) return;
-    final targets = repository
-        .listIndexRoots()
+    final targets = (await repository
+        .listIndexRoots())
         .where((node) => node.nodeType == NodeType.customIndexRoot)
         .toList(growable: false);
+    if (!mounted) return;
     if (targets.isEmpty) {
       setState(() => _indexError = '请先创建一个自定义索引作为复制目标。');
       return;
@@ -2253,11 +2254,11 @@ class _AppShellState extends State<AppShell> {
     Overlay.of(context, rootOverlay: true).insert(overlay);
     await WidgetsBinding.instance.endOfFrame;
     try {
-      final cloned = repository.cloneIndexNodeTree(
+      final cloned = (await repository.cloneIndexNodeTree(
         sourceNodeId: source.id,
         targetParentId: targetId,
-      );
-      final target = repository.getIndexNode(targetId)!;
+      ));
+      final target = (await repository.getIndexNode(targetId))!;
       await _refreshNodePreview(
         cloned.id,
         scope: IndexPreviewRebuildScope.subtree,
@@ -2296,11 +2297,11 @@ class _AppShellState extends State<AppShell> {
     );
     if (!confirmed) return;
     for (final entityId in _selectedEntityIds) {
-      repository.unlinkEntityFromIndexNode(
-          entityId: entityId, indexNodeId: node.id);
+      (await repository.unlinkEntityFromIndexNode(
+          entityId: entityId, indexNodeId: node.id));
     }
     for (final nodeId in _selectedNodeIds) {
-      repository.deleteIndexNode(nodeId);
+      (await repository.deleteIndexNode(nodeId));
     }
     await _refreshNodePreview(node.id, reason: 'references_removed');
     _clearEntitySelection();
@@ -2323,7 +2324,7 @@ class _AppShellState extends State<AppShell> {
     final trimmed = newName?.trim();
     if (trimmed == null || trimmed.isEmpty || trimmed == index.name) return;
     try {
-      repository.renameIndexNode(index.id, trimmed);
+      (await repository.renameIndexNode(index.id, trimmed));
       await _refreshNodePreview(index.id, reason: 'node_renamed');
       _reload(
         indexNodeId: _currentIndexNode?.id,
@@ -2338,10 +2339,10 @@ class _AppShellState extends State<AppShell> {
     final repository = _repository;
     if (repository == null || _scanning) return;
     if (index.nodeType == NodeType.directoryIndexRoot) {
-      final report = repository.inspectDirectoryIndexDeletion(index.id);
+      final report = (await repository.inspectDirectoryIndexDeletion(index.id));
       final force = await _confirmDirectoryIndexDeletion(report);
       if (force == null) return;
-      repository.deleteDirectoryIndex(index.id, force: force);
+      (await repository.deleteDirectoryIndex(index.id, force: force));
       setState(() {
         if (_selectedIndexRoot?.id == index.id) {
           _selectedIndexRoot = null;
@@ -2352,9 +2353,9 @@ class _AppShellState extends State<AppShell> {
       _reload(invalidateBrowserCache: true);
       return;
     }
-    final deletesEntities = repository.willDeleteEntitiesWhenDeletingNode(
+    final deletesEntities = (await repository.willDeleteEntitiesWhenDeletingNode(
       index.id,
-    );
+    ));
     final message = deletesEntities
         ? '删除后会递归删除索引节点和索引关系；其中未被其它索引引用的实体数据库记录也会删除，不会删除真实源文件。确定删除“${index.name}”？'
         : '只会删除索引节点和索引关系，不会删除实体数据库记录。确定删除“${index.name}”？';
@@ -2362,8 +2363,8 @@ class _AppShellState extends State<AppShell> {
     if (!confirmed) return;
     final fallbackParent = index.parentId == null
         ? null
-        : repository.getIndexNode(index.parentId!);
-    repository.deleteIndexNode(index.id);
+        : (await repository.getIndexNode(index.parentId!));
+    (await repository.deleteIndexNode(index.id));
     if (fallbackParent != null) {
       await _refreshNodePreview(fallbackParent.id, reason: 'node_deleted');
     }
@@ -2639,7 +2640,7 @@ class _AppShellState extends State<AppShell> {
           onThumbnailNeeded: _requestBrowseThumbnail,
         ),
       AppSection.music => MusicPage(
-          sessions: _repository!.listAudioPlaybackSessions(),
+          sessions: _audioSessions,
           controller: _audioController!,
           onRestore: (session) async {
             await _audioController!.restoreSession(session, autoplay: true);
@@ -2649,9 +2650,10 @@ class _AppShellState extends State<AppShell> {
             await _audioController!.playSessionEntry(session, index);
             if (mounted) setState(() {});
           },
-          onDelete: (session) {
-            _repository!.deleteAudioPlaybackSession(session.id);
-            setState(() {});
+          onDelete: (session) async {
+            await _repository!.deleteAudioPlaybackSession(session.id);
+            final sessions = await _repository!.listAudioPlaybackSessions();
+            if (mounted) setState(() => _audioSessions = sessions);
           },
         ),
       AppSection.indexes => IndexManagementPage(

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../core/database/library_repository.dart';
+import '../modules/library/library_access.dart';
 import '../core/domain/models.dart';
 import 'justified_entity_gallery.dart';
 
@@ -17,7 +17,7 @@ class MediaShelfPage extends StatefulWidget {
   });
 
   final MediaShelfKind kind;
-  final LibraryRepository repository;
+  final LibraryAccess repository;
   final ValueChanged<EntityListItem> onOpenEntity;
   final ValueChanged<EntityListItem> onThumbnailNeeded;
   final ValueChanged<bool>? onImmersiveChanged;
@@ -73,11 +73,11 @@ class _MediaShelfPageState extends State<MediaShelfPage> {
     widget.onImmersiveChanged?.call(next);
   }
 
-  void _reload() {
-    final items = widget.repository.listRecentOpenedEntities(
+  Future<void> _reload() async {
+    final items = (await widget.repository.listRecentOpenedEntities(
       limit: 1000,
       entityTypes: _types,
-    );
+    ));
     if (!mounted) return;
     setState(() => _items = items);
   }

@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
-import '../core/database/library_repository.dart';
+import '../modules/library/library_access.dart';
 import '../core/domain/models.dart';
 
 /// Lazily expanded tree picker for manually composing an index-node preview.
@@ -13,12 +13,12 @@ class NodePreviewPicker extends StatefulWidget {
     required this.nodeId,
   });
 
-  final LibraryRepository repository;
+  final LibraryAccess repository;
   final String nodeId;
 
   static Future<List<IndexNodePreviewTile>?> show(
     BuildContext context, {
-    required LibraryRepository repository,
+    required LibraryAccess repository,
     required String nodeId,
   }) {
     return showDialog<List<IndexNodePreviewTile>>(
@@ -63,8 +63,8 @@ class _NodePreviewPickerState extends State<NodePreviewPicker> {
     await Future<void>.delayed(Duration.zero);
     final childNodes = loadMore
         ? existing!.nodes
-        : widget.repository.listChildNodes(widget.nodeId, parentId: nodeId);
-    final page = widget.repository.listEntityPageDirectlyUnderNode(
+        : (await widget.repository.listChildNodes(widget.nodeId, parentId: nodeId));
+    final page = (await widget.repository.listEntityPageDirectlyUnderNode(
       nodeId,
       after: loadMore && existing!.entities.isNotEmpty
           ? EntityPageCursor.fromEntity(
@@ -73,7 +73,7 @@ class _NodePreviewPickerState extends State<NodePreviewPicker> {
             )
           : null,
       limit: _pageSize,
-    );
+    ));
     if (!mounted) return;
     setState(() {
       _childrenByNodeId[nodeId] = _PreviewTreeChildren(

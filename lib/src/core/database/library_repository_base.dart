@@ -10,6 +10,7 @@ class LibraryRepositoryBase {
   final AppDatabase database;
   final LibraryWriteWorker? writeWorker;
   final ThumbnailStore thumbnailStore;
+  String get storageDirectoryPath => database.storageDirectoryPath;
 
   int _transactionSequence = 0;
   var _indexStatsBatchDepth = 0;

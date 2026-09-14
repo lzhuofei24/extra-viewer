@@ -6,7 +6,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:image/image.dart' as img;
 
-import '../database/library_repository.dart';
+import '../../modules/library/library_access.dart';
 import '../domain/models.dart';
 import 'lossy_webp_encoder.dart';
 
@@ -16,14 +16,14 @@ import 'lossy_webp_encoder.dart';
 class NodePreviewCompositeService {
   NodePreviewCompositeService(this.repository);
 
-  final LibraryRepository repository;
+  final LibraryAccess repository;
 
   Future<Map<String, NodePreviewCompositeOutcome>> rebuildNodesAsync(
     Iterable<String> nodeIds,
   ) async {
     final outcomes = <String, NodePreviewCompositeOutcome>{};
     final requests = <Map<String, Object?>>[];
-    for (final preview in repository.listIndexNodePreviews(nodeIds).values) {
+    for (final preview in (await repository.listIndexNodePreviews(nodeIds)).values) {
       if (preview.kind != IndexNodePreviewKind.singleVisual &&
           preview.kind != IndexNodePreviewKind.visualGrid) {
         outcomes[preview.nodeId] = const NodePreviewCompositeOutcome.remove();
@@ -75,10 +75,10 @@ class NodePreviewCompositeService {
         'nodeId': preview.nodeId,
         'signature': signature,
         'assetKey': assetKey,
-        'outputPath': repository.nodePreviewAssetPath(
+        'outputPath': (await repository.nodePreviewAssetPath(
           assetKey,
           'webp',
-        ),
+        )),
         'height': Platform.isAndroid ? 640 : 440,
         'tiles': tiles,
       });
@@ -126,16 +126,16 @@ class NodePreviewCompositeService {
     for (final entry in outcomes.entries) {
       final outcome = entry.value;
       if (outcome.removeAsset) {
-        repository.removeNodePreviewAsset(entry.key);
+        (await repository.removeNodePreviewAsset(entry.key));
       } else if (outcome.succeeded) {
-        repository.recordNodePreviewAsset(
+        (await repository.recordNodePreviewAsset(
           nodeId: entry.key,
           signature: outcome.signature!,
           assetKey: outcome.assetKey!,
           format: 'webp',
           width: outcome.width!,
           height: outcome.height!,
-        );
+        ));
       }
     }
     return outcomes;

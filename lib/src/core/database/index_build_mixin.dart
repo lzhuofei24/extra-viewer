@@ -3,6 +3,159 @@ part of 'library_repository.dart';
 /// Directory index lifecycle: create roots, reconcile scans, prune empties,
 /// inspect and delete directory indexes.
 mixin IndexBuildMixin on LibraryRepositoryBase {
+  int commitInspectedPage({
+    required LibraryBuildJob job,
+    required List<LibraryBuildManifestItem> page,
+    required String rootId,
+    required Map<String, Entity> existing,
+    required Map<int, (String, int, int, int, String?, int?)> detailsBySequence,
+    required Map<int, IndexNode> nodesBySequence,
+    required int indexedBefore,
+  }) {
+    final statements = <LibraryWriteStatement>[];
+    final now = nowMillis();
+    final touchedNodes = <String>{};
+    var completed = 0;
+    for (final item in page) {
+      final details = detailsBySequence[item.sequence];
+      final node = nodesBySequence[item.sequence];
+      if (details == null || node == null) continue;
+      final current = existing[item.sourcePath];
+      final entityId = current?.id ?? newId();
+      if (current == null) {
+        statements.add(LibraryWriteStatement(
+          '''
+          INSERT INTO entities(
+            id, path, local_path, name, format, media_type, hash,
+            metadata_preview, thumbnail_status, thumbnail_key,
+            thumbnail_format, thumbnail_width, thumbnail_height,
+            thumbnail_error, size, source_created_at_ms,
+            source_modified_at_ms, duration_ms, directory_root_id,
+            created_at, updated_at
+          ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'none', NULL, NULL, NULL,
+                    NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
+          ''',
+          [
+            entityId,
+            item.sourcePath,
+            item.name,
+            item.format,
+            item.entityType.value,
+            details.$1,
+            details.$5,
+            details.$2,
+            details.$3,
+            details.$4,
+            details.$6,
+            rootId,
+            now,
+            now,
+          ],
+        ));
+      } else if (!_isUnchangedIndexEntity(
+        current,
+        item: item,
+        details: details,
+        rootId: rootId,
+      )) {
+        final preserveThumbnail = (item.entityType == EntityType.image ||
+                item.entityType == EntityType.video ||
+                item.entityType == EntityType.document) &&
+            current.entityType == item.entityType &&
+            current.hash == details.$1;
+        final status = preserveThumbnail
+            ? current.thumbnailStatus.value
+            : ThumbnailStatus.none.value;
+        final preserveFields = status == ThumbnailStatus.success.value;
+        statements.add(LibraryWriteStatement(
+          '''
+          UPDATE entities
+          SET name = ?, format = ?, media_type = ?, hash = ?,
+              metadata_preview = ?, thumbnail_status = ?,
+              thumbnail_key = CASE WHEN ? THEN thumbnail_key ELSE NULL END,
+              thumbnail_format = CASE WHEN ? THEN thumbnail_format ELSE NULL END,
+              thumbnail_width = CASE WHEN ? THEN thumbnail_width ELSE NULL END,
+              thumbnail_height = CASE WHEN ? THEN thumbnail_height ELSE NULL END,
+              thumbnail_error = CASE WHEN ? THEN thumbnail_error ELSE NULL END,
+              size = ?, source_created_at_ms = ?, source_modified_at_ms = ?,
+              duration_ms = ?, directory_root_id = ?, local_path = NULL,
+              updated_at = ?
+          WHERE id = ?
+          ''',
+          [
+            item.name,
+            item.format,
+            item.entityType.value,
+            details.$1,
+            details.$5,
+            status,
+            preserveFields ? 1 : 0,
+            preserveFields ? 1 : 0,
+            preserveFields ? 1 : 0,
+            preserveFields ? 1 : 0,
+            status == ThumbnailStatus.failed.value ? 1 : 0,
+            details.$2,
+            details.$3,
+            details.$4,
+            details.$6,
+            rootId,
+            now,
+            entityId,
+          ],
+        ));
+      }
+      statements.add(LibraryWriteStatement(
+        '''
+        INSERT OR IGNORE INTO index_node_entities(
+          index_node_id, entity_id, sort_name, created_at
+        ) SELECT ?, id, lower(name), ? FROM entities WHERE id = ?
+        ''',
+        [node.id, now, entityId],
+      ));
+      touchedNodes.add(node.id);
+      completed++;
+    }
+    for (final nodeId in touchedNodes) {
+      statements.add(LibraryWriteStatement(
+        'UPDATE index_nodes SET updated_at = ? WHERE id = ?',
+        [now, nodeId],
+      ));
+    }
+    statements.add(LibraryWriteStatement(
+      'UPDATE library_build_jobs SET indexed_total = ?, index_cursor = ?, updated_at = ? WHERE id = ?',
+      [indexedBefore + completed, page.last.sequence, now, job.id],
+    ));
+    writeTransaction(() {
+      final prepared = <String, PreparedStatement>{};
+      try {
+        for (final statement in statements) {
+          prepared.putIfAbsent(statement.sql, () => database.db.prepare(statement.sql)).execute(statement.parameters);
+        }
+      } finally { for (final statement in prepared.values) { statement.dispose(); } }
+    });
+    return completed;
+  }
+
+  bool _isUnchangedIndexEntity(
+    Entity entity, {
+    required LibraryBuildManifestItem item,
+    required (String, int, int, int, String?, int?) details,
+    required String rootId,
+  }) {
+    final needsGeneratedThumbnail = item.entityType == EntityType.image ||
+        item.entityType == EntityType.video ||
+        item.entityType == EntityType.document;
+    return entity.hash == details.$1 &&
+        entity.contentExcerpt == details.$5 &&
+        entity.entityType == item.entityType &&
+        entity.format == item.format &&
+        entity.size == details.$2 &&
+        entity.durationMs == details.$6 &&
+        entity.directoryRootId == rootId &&
+        entity.localPath == null &&
+        (!needsGeneratedThumbnail ||
+            entity.thumbnailStatus == ThumbnailStatus.none);
+  }
   IndexNode ensureDirectoryIndexRoot(
     String sourcePath, {
     bool staging = false,

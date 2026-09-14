@@ -2,7 +2,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
-import '../core/database/library_repository.dart';
+import '../modules/library/library_access.dart';
 import '../core/domain/models.dart';
 import 'index_node_thumbnail.dart';
 
@@ -17,7 +17,7 @@ class GraphIndexPage extends StatefulWidget {
     required this.onThumbnailEntityNeeded,
   });
 
-  final LibraryRepository repository;
+  final LibraryAccess repository;
   final IndexNode graphRoot;
   final ValueChanged<IndexNode> onOpenNode;
   final VoidCallback onReturnToRootIndex;
@@ -40,6 +40,7 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
   Map<String, IndexNodePreview> _previews = const {};
   Map<String, IndexNodeSummary> _summaries = const {};
   String? _selectedId;
+  List<EntityListItem> _selectedEntities = const [];
   bool _linkMode = false;
 
   @override
@@ -48,25 +49,25 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
     _reload();
   }
 
-  void _reload() {
-    final nodes = widget.repository.listGraphNodes(widget.graphRoot.id);
-    final saved = widget.repository.listGraphNodePositions(widget.graphRoot.id);
+  Future<void> _reload() async {
+    final nodes = (await widget.repository.listGraphNodes(widget.graphRoot.id));
+    final saved = (await widget.repository.listGraphNodePositions(widget.graphRoot.id));
     final positions = <String, Offset>{
       for (var index = 0; index < nodes.length; index++)
         nodes[index].id: saved[nodes[index].id] == null
             ? _defaultPosition(index)
             : Offset(saved[nodes[index].id]!.x, saved[nodes[index].id]!.y),
     };
+    final edges = await widget.repository.listGraphEdges(widget.graphRoot.id);
+    final previews = await widget.repository.listIndexNodePreviews(nodes.map((node) => node.id));
+    final summaries = await widget.repository.listIndexNodeSummaries(nodes.map((node) => node.id));
+    if (!mounted) return;
     setState(() {
       _nodes = nodes;
-      _edges = widget.repository.listGraphEdges(widget.graphRoot.id);
+      _edges = edges;
       _positions = positions;
-      _previews = widget.repository.listIndexNodePreviews(
-        nodes.map((node) => node.id),
-      );
-      _summaries = widget.repository.listIndexNodeSummaries(
-        nodes.map((node) => node.id),
-      );
+      _previews = previews;
+      _summaries = summaries;
     });
   }
 
@@ -100,18 +101,18 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
     );
     controller.dispose();
     if (name == null || name.trim().isEmpty) return;
-    final node = widget.repository.ensureGraphNode(
+    final node = (await widget.repository.ensureGraphNode(
       parentId: _selectedId ?? widget.graphRoot.id,
       name: name.trim(),
       sortOrder: _nodes.length,
-    );
+    ));
     final parentPosition =
         _selectedId == null ? null : _positions[_selectedId!];
     final position = parentPosition == null
         ? _defaultPosition(_nodes.length)
         : parentPosition + const Offset(230, 0);
-    widget.repository
-        .setGraphNodePosition(nodeId: node.id, x: position.dx, y: position.dy);
+    (await widget.repository
+        .setGraphNodePosition(nodeId: node.id, x: position.dx, y: position.dy));
     await widget.onPreviewDirty(node.id, reason: 'graph_node_created');
     _reload();
   }
@@ -122,10 +123,10 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
       builder: (context) => _GraphEntityPicker(repository: widget.repository),
     );
     if (selectedIds == null || selectedIds.isEmpty) return;
-    widget.repository.linkEntitiesToIndexNode(
+    (await widget.repository.linkEntitiesToIndexNode(
       entityIds: selectedIds,
       indexNodeId: node.id,
-    );
+    ));
     await widget.onPreviewDirty(node.id, reason: 'graph_entities_linked');
     _reload();
   }
@@ -160,7 +161,7 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
     );
     if (confirmed != true) return;
     final parentId = node.parentId;
-    widget.repository.deleteIndexNode(nodeId);
+    (await widget.repository.deleteIndexNode(nodeId));
     if (parentId != null) {
       await widget.onPreviewDirty(parentId, reason: 'graph_node_deleted');
     }
@@ -171,10 +172,10 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
     _reload();
   }
 
-  void _selectNode(IndexNode node) {
+  Future<void> _selectNode(IndexNode node) async {
     final sourceId = _selectedId;
     if (_linkMode && sourceId != null && sourceId != node.id) {
-      widget.repository.linkIndexNodes(fromNodeId: sourceId, toNodeId: node.id);
+      (await widget.repository.linkIndexNodes(fromNodeId: sourceId, toNodeId: node.id));
       setState(() {
         _linkMode = false;
         _selectedId = node.id;
@@ -183,6 +184,9 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
       return;
     }
     setState(() => _selectedId = node.id);
+    final entities = await widget.repository.listEntitiesDirectlyUnderNode(node.id);
+    if (!mounted || _selectedId != node.id) return;
+    setState(() => _selectedEntities = entities);
   }
 
   void _updatePosition(IndexNode node, Offset delta) {
@@ -190,10 +194,10 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
     setState(() => _positions = {..._positions, node.id: next});
   }
 
-  void _savePosition(IndexNode node) {
+  Future<void> _savePosition(IndexNode node) async {
     final position = _positions[node.id]!;
-    widget.repository
-        .setGraphNodePosition(nodeId: node.id, x: position.dx, y: position.dy);
+    (await widget.repository
+        .setGraphNodePosition(nodeId: node.id, x: position.dx, y: position.dy));
   }
 
   @override
@@ -211,7 +215,7 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
         : _nodes.where((node) => node.parentId == selected!.id).toList();
     final selectedEntities = selected == null
         ? const <EntityListItem>[]
-        : widget.repository.listEntitiesDirectlyUnderNode(selected.id);
+        : _selectedEntities;
     return Stack(
       children: [
         InteractiveViewer(
@@ -558,7 +562,7 @@ class _GraphCurve {
 class _GraphEntityPicker extends StatefulWidget {
   const _GraphEntityPicker({required this.repository});
 
-  final LibraryRepository repository;
+  final LibraryAccess repository;
 
   @override
   State<_GraphEntityPicker> createState() => _GraphEntityPickerState();
@@ -567,6 +571,23 @@ class _GraphEntityPicker extends StatefulWidget {
 class _GraphEntityPickerState extends State<_GraphEntityPicker> {
   final _queryController = TextEditingController();
   final Set<String> _selectedIds = <String>{};
+  List<EntityListItem> _items = const [];
+  int _generation = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final generation = ++_generation;
+    final items = await widget.repository.listEntitiesForNodeLinkPicker(
+      query: _queryController.text.trim().toLowerCase(),
+    );
+    if (!mounted || generation != _generation) return;
+    setState(() => _items = items);
+  }
 
   @override
   void dispose() {
@@ -576,10 +597,7 @@ class _GraphEntityPickerState extends State<_GraphEntityPicker> {
 
   @override
   Widget build(BuildContext context) {
-    final query = _queryController.text.trim().toLowerCase();
-    final items = widget.repository.listEntitiesForNodeLinkPicker(
-      query: query,
-    );
+    final items = _items;
     return AlertDialog(
       title: const Text('添加实体到图节点'),
       content: SizedBox(
@@ -594,7 +612,7 @@ class _GraphEntityPickerState extends State<_GraphEntityPicker> {
                 prefixIcon: Icon(Icons.filter_list_rounded),
                 hintText: '按名称筛选',
               ),
-              onChanged: (_) => setState(() {}),
+              onChanged: (_) => _load(),
             ),
             const SizedBox(height: 8),
             Expanded(

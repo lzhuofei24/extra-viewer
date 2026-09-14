@@ -9,6 +9,7 @@ import '../domain/models.dart';
 import '../diagnostics/app_diagnostic_log.dart';
 import '../thumbnails/thumbnail_store.dart';
 import '../utils/ids.dart';
+import '../../modules/library/library_access.dart';
 import 'app_database.dart';
 import 'library_write_worker.dart';
 
@@ -44,6 +45,6 @@ class LibraryRepository extends LibraryRepositoryBase
         IndexBuildMixin,
         NodePreviewRepositoryMixin,
         IndexStatsRepositoryMixin,
-        AudioPlaybackRepositoryMixin {
+        AudioPlaybackRepositoryMixin implements LibraryAccess {
   LibraryRepository(super.database, {super.writeWorker});
 }
