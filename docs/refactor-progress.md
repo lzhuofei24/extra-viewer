@@ -8,6 +8,18 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Baseline
 
+### Original-image decode admission
+
+- Read encoded image dimensions through ImageDescriptor before speculative
+  decode. Reserve width * height * 4 against half the global image cache budget;
+  remove farthest neighbors first, preserving the displayed image. Retain the
+  global ImageCache byte limit and six-image window.
+- The admission policy is a pure browser module function with regressions for
+  distance ordering and an oversized displayed image. Header buffers/descriptors
+  are disposed; SAF provider keys are tracked for actual eviction.
+- Targeted budget and shell tests passed (3 tests). This bounds decoded prefetch
+  admission, not native encoded-buffer memory or the necessary displayed image.
+
 ### Runtime, source cancellation, reconciliation and navigation integration
 
 - Bootstrap is tracked and drained during shutdown; services finishing startup

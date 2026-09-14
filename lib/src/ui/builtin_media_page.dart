@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ import 'package:pdfrx/pdfrx.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/domain/models.dart';
+import '../modules/browser/original_image_budget.dart';
 import '../core/formats/file_format_handlers.dart';
 import '../core/media/audio_waveform_service.dart';
 import '../core/media/app_audio_controller.dart';
@@ -125,6 +127,20 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
   final _originalBytes = <String, int>{};
   final _originalProviders = <String, FileImage>{};
 
+  Future<int> _originalDecodeBytes(File file) async {
+    final buffer = await ui.ImmutableBuffer.fromFilePath(file.path);
+    try {
+      final descriptor = await ui.ImageDescriptor.encoded(buffer);
+      try {
+        return descriptor.width * descriptor.height * 4;
+      } finally {
+        descriptor.dispose();
+      }
+    } finally {
+      buffer.dispose();
+    }
+  }
+
   Future<int> _warmOriginal(FileImage provider) async {
     final stream = provider.resolve(createLocalImageConfiguration(context));
     final loaded = Completer<int>();
@@ -146,22 +162,22 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
   }
 
   void _enforceOriginalBudget() {
-    final budget = PaintingBinding.instance.imageCache.maximumSizeBytes ~/ 2;
-    var used = _originalBytes.values.fold<int>(0, (sum, bytes) => sum + bytes);
-    final candidates =
-        _activePrefetchWindow.values.where((e) => e.id != _current.id).toList()
-          ..sort((a, b) {
-            int distance(EntityListItem e) =>
-                (_navigationQueue.indexWhere((item) => item.id == e.id) -
-                        _currentIndex)
-                    .abs();
-            return distance(b).compareTo(distance(a));
-          });
-    for (final entity in candidates) {
-      if (used <= budget) break;
-      used -= _originalBytes[entity.id] ?? 0;
-      _evictPrefetchedImage(entity);
-      _imagePrefetchQueue.removeWhere((item) => item.id == entity.id);
+    final removals = originalImageEvictions(
+      currentId: _current.id,
+      budgetBytes: PaintingBinding.instance.imageCache.maximumSizeBytes ~/ 2,
+      decodedBytes: _originalBytes,
+      distances: {
+        for (final entity in _activePrefetchWindow.values)
+          entity.id:
+              (_navigationQueue.indexWhere((item) => item.id == entity.id) -
+                      _currentIndex)
+                  .abs()
+      },
+    );
+    for (final id in removals) {
+      final entity = _activePrefetchWindow[id];
+      if (entity != null) _evictPrefetchedImage(entity);
+      _imagePrefetchQueue.removeWhere((item) => item.id == id);
     }
   }
 
@@ -360,6 +376,13 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
           if (!_activePrefetchWindow.containsKey(entity.id)) continue;
           if (await file.exists()) {
             if (!mounted) return;
+            final expected = await _originalDecodeBytes(file);
+            if (!mounted || !_activePrefetchWindow.containsKey(entity.id)) {
+              continue;
+            }
+            _originalBytes[entity.id] = expected;
+            _enforceOriginalBudget();
+            if (!_originalBytes.containsKey(entity.id)) continue;
             final provider = FileImage(file);
             _originalProviders[entity.id] = provider;
             _originalBytes[entity.id] = await _warmOriginal(provider);
