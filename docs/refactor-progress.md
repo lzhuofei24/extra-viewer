@@ -15,6 +15,16 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Remaining batches
 
+### Implemented safety/frontier foundation
+
+- Schema 6 additive migration, schema-5 snapshot before file-backed migration.
+- Immutable task scope, explicit preview task kind and blocked status.
+- SAF null cursor fails enumeration; document failures expose retry action.
+- Durable per-directory frontier; incomplete directory pages are replaced on resume.
+- Android per-directory cursor bridge; standalone full-tree count no longer invoked.
+- Targeted suite: 8 tests passed; analyze passed before the final test additions.
+- Android native changes still require the release build/native-device checks.
+
 1. Scope and scan failure safety.
 2. DatabaseHost, module interfaces and supervised workers.
 3. Durable directory frontier and per-item recovery.

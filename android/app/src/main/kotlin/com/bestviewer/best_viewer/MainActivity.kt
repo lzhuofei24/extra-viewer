@@ -45,6 +45,7 @@ class MainActivity : FlutterActivity() {
         ConcurrentHashMap<String, MediaMetadataRetriever>()
     private var scanProgressSink: EventChannel.EventSink? = null
     private var directoryScanSession: DirectoryScanSession? = null
+    private val directoryReaders = ConcurrentHashMap<String, SafDirectoryReader>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,6 +63,31 @@ class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "pickDirectory" -> openDirectoryPicker(result)
+                "resolveSourceDirectory", "openSourceDirectory", "readSourceDirectory", "closeSourceDirectory" -> {
+                    scanExecutor.execute {
+                        try {
+                            val value: Any? = when (call.method) {
+                                "resolveSourceDirectory" -> {
+                                    val uri = Uri.parse(call.argument<String>("source")!!)
+                                    val id = resolveDirectoryId(uri, call.argument<String>("relativeScope") ?: "")
+                                    DocumentsContract.buildDocumentUriUsingTree(uri, id).toString()
+                                }
+                                "openSourceDirectory" -> {
+                                    val reader = SafDirectoryReader(contentResolver, Uri.parse(call.argument<String>("source")!!))
+                                    val token = java.util.UUID.randomUUID().toString()
+                                    directoryReaders[token] = reader
+                                    token
+                                }
+                                "readSourceDirectory" -> directoryReaders[call.argument<String>("token")]
+                                    ?.readPage() ?: throw IllegalStateException("Directory session closed")
+                                else -> { directoryReaders.remove(call.argument<String>("token"))?.close(); null }
+                            }
+                            runOnUiThread { result.success(value) }
+                        } catch (error: Exception) {
+                            runOnUiThread { result.error("source_unavailable", "Directory enumeration incomplete", error.message) }
+                        }
+                    }
+                }
                 "listDirectoryTree" -> listDirectory(call.argument<String>("source"), result)
                 "startDirectoryTreeScan" -> startDirectoryTreeScan(
                     call.argument<String>("source"),
@@ -137,7 +163,6 @@ class MainActivity : FlutterActivity() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
             addFlags(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
                     Intent.FLAG_GRANT_PREFIX_URI_PERMISSION,
             )
@@ -181,7 +206,7 @@ class MainActivity : FlutterActivity() {
                 // Count without retaining document metadata. The following
                 // pull session is independent, so Dart can show a stable
                 // total while it persists the durable manifest in batches.
-                val total = countDirectoryTree(uri, startDocumentId, scope)
+                val total = 0
                 directoryScanSession = DirectoryScanSession(uri, total, startDocumentId, scope)
                 runOnUiThread { result.success(mapOf("total" to total)) }
             } catch (error: Exception) {
@@ -588,6 +613,8 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        directoryReaders.values.forEach { it.close() }
+        directoryReaders.clear()
         sourceExecutor.shutdownNow()
         scanExecutor.shutdownNow()
         directoryScanSession?.close()
@@ -805,7 +832,7 @@ class MainActivity : FlutterActivity() {
                     null,
                     null,
                     null,
-                ) ?: continue
+                ) ?: throw IllegalStateException("Directory provider unavailable: $path")
                 cursor = nextCursor
                 relativeDirectory = path
                 return true

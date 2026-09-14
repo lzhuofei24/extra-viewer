@@ -3,6 +3,29 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 void main() {
+  test('schema 5 migration preserves records and captures immutable task scope',
+      () {
+    final raw = sqlite3.openInMemory();
+    raw.execute('''
+      CREATE TABLE entities(id TEXT PRIMARY KEY, name TEXT);
+      CREATE TABLE index_nodes(id TEXT PRIMARY KEY, source_path TEXT);
+      CREATE TABLE library_build_jobs(id TEXT PRIMARY KEY, target_node_id TEXT,
+        source_path TEXT, stage TEXT, status TEXT, indexed_total INTEGER, error TEXT);
+      CREATE TABLE library_build_manifest(job_id TEXT, sequence INTEGER);
+      INSERT INTO entities VALUES ('original', 'keep');
+      INSERT INTO index_nodes VALUES ('root', '/original');
+      INSERT INTO library_build_jobs VALUES ('job', 'root', '/original', 'manifest', 'paused', 0, NULL);
+    ''');
+    raw.userVersion = 5;
+    final database = AppDatabase.openForTesting(raw);
+    addTearDown(database.close);
+    expect(raw.userVersion, 6);
+    expect(raw.select('SELECT name FROM entities').single['name'], 'keep');
+    final job = raw.select('SELECT * FROM library_build_jobs').single;
+    expect(job['scope_node_id'], 'root');
+    expect(job['status'], 'blocked');
+    expect(raw.select('PRAGMA foreign_key_check'), isEmpty);
+  });
   test('fresh database creates the current clean schema baseline', () {
     final database = AppDatabase.openInMemory();
     addTearDown(database.close);
@@ -36,5 +59,4 @@ void main() {
       throwsA(isA<AppDatabaseResetRequired>()),
     );
   });
-
 }

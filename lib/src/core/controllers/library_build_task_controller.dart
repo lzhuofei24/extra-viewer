@@ -13,7 +13,7 @@ import '../formats/file_format_handlers.dart';
 import '../formats/text_decoder.dart';
 import '../readers/docx_decoder.dart';
 import '../readers/epub_decoder.dart';
-import '../scanner/candidate_source.dart';
+import '../../modules/sources/source_adapter.dart';
 import '../sources/platform_directory_picker.dart';
 import '../sources/source_handle.dart';
 import '../thumbnails/android_image_thumbnail_backend.dart';
@@ -188,6 +188,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
     if (root == null) return null;
     final job = builds.create(
       sourcePath: root.sourcePath ?? 'index://${root.id}',
+      kind: LibraryBuildKind.rebuildPreviews,
       operation: LibraryBuildOperation.subtreeRefresh,
       targetNodeId: nodeId,
     );
@@ -268,6 +269,12 @@ class LibraryBuildTaskController extends ChangeNotifier {
     try {
       while (job.stage != LibraryBuildStage.completed) {
         _control!.check();
+        try {
+          builds.validateScope(job);
+        } catch (error) {
+          builds.block(job.id, error);
+          return builds.get(job.id);
+        }
         switch (job.stage) {
           case LibraryBuildStage.manifest:
             await _buildManifest(job);
@@ -327,111 +334,72 @@ class LibraryBuildTaskController extends ChangeNotifier {
   }
 
   Future<void> _buildManifest(LibraryBuildJob job) async {
-    final resumeAfter = builds.manifestItemCount(job.id);
-    if (resumeAfter == 0) {
-      builds.resetManifest(job.id);
-    }
-    _report(
-      job,
-      resumeAfter,
-      0,
-      resumeAfter == 0 ? '正在建立清单' : '正在继续建立清单：已保留 $resumeAfter 项',
-    );
     final source = SourceHandle.parse(job.sourcePath);
-    final total = source.isAndroidContentUri
-        ? await _buildAndroidManifest(job, resumeAfter: resumeAfter)
-        : await _buildLocalManifest(job, resumeAfter: resumeAfter);
-    _control!.check();
-    builds.checkpointStage(
-      jobId: job.id,
-      stage: LibraryBuildStage.indexWrite,
-      manifestTotal: total,
-    );
-  }
-
-  Future<int> _buildLocalManifest(
-    LibraryBuildJob job, {
-    required int resumeAfter,
-  }) async {
-    final root = Directory(job.sourcePath);
-    if (!await root.exists()) {
-      throw FileSystemException('目录不存在', job.sourcePath);
-    }
-    var sequence = 0;
-    var batch = <LibraryBuildManifestItem>[];
-    await for (final entry in root.list(recursive: true, followLinks: false)) {
-      _control!.check();
-      if (entry is! File) continue;
-      final handler = FileFormatRegistry.resolvePath(entry.path);
-      if (handler == null) continue;
-      final itemSequence = sequence++;
-      if (itemSequence < resumeAfter) continue;
-      batch.add(LibraryBuildManifestItem(
-        jobId: job.id,
-        sourcePath: p.normalize(entry.path),
-        relativePath:
-            p.relative(entry.path, from: job.sourcePath).replaceAll('\\', '/'),
-        sequence: itemSequence,
-        name: p.basename(entry.path),
-        format: handler.formatFor(entry.path),
-        entityType: handler.entityType,
-        // The manifest is deliberately a cheap, resumable directory listing.
-        // Hashing and document decoding belong to index writing, not here.
-        size: 0,
-        sourceCreatedAtMs: 0,
-        sourceModifiedAtMs: 0,
-      ));
-      if (batch.length == 200) {
-        await builds.upsertManifestAsync(batch);
-        batch = <LibraryBuildManifestItem>[];
-        _report(job, sequence, 0, '正在建立清单：$sequence 个实体');
-      }
-    }
-    if (batch.isNotEmpty) await builds.upsertManifestAsync(batch);
-    _report(job, sequence, sequence, '清单已建立：$sequence 个实体');
-    return sequence;
-  }
-
-  Future<int> _buildAndroidManifest(
-    LibraryBuildJob job, {
-    required int resumeAfter,
-  }) async {
-    final provider = SafCandidateSourceProvider(job.sourcePath);
-    final scope = job.targetNodeId == null
+    final SourceAdapter adapter =
+        source.isAndroidContentUri ? SafSourceAdapter() : LocalSourceAdapter();
+    final scope = job.scopeNodeId == null
         ? null
-        : library.directoryNodeRelativePath(job.targetNodeId!);
-    await provider.clearTransientDocuments();
-    try {
-      final total = await provider.begin(relativeScope: scope);
-      var sequence = 0;
-      await for (final sources in provider.readBatches()) {
-        _control!.check();
-        final items = <LibraryBuildManifestItem>[];
-        for (final source in sources) {
-          final handler = FileFormatRegistry.resolvePath(source.name);
-          if (handler == null) continue;
-          final itemSequence = sequence++;
-          if (itemSequence < resumeAfter) continue;
-          items.add(LibraryBuildManifestItem(
-            jobId: job.id,
-            sourcePath: source.sourcePath,
-            relativePath: source.relativePath,
-            sequence: itemSequence,
-            name: source.name,
-            format: handler.formatFor(source.name),
-            entityType: handler.entityType,
-            size: source.document.size,
-            sourceCreatedAtMs: source.document.modifiedAtMs,
-            sourceModifiedAtMs: source.document.modifiedAtMs,
-          ));
-        }
-        if (items.isNotEmpty) await builds.upsertManifestAsync(items);
-        _report(job, sequence, total, '正在建立清单：$sequence/$total');
+        : library.directoryNodeRelativePath(job.scopeNodeId!);
+    _report(job, builds.manifestItemCount(job.id), 0, '正在校验来源并恢复目录队列');
+    final root =
+        await adapter.resolveRoot(job.sourcePath, relativeScope: scope);
+    if (builds.nextDirectory(job.id) == null && !job.manifestComplete) {
+      final existing = library.database.db.select(
+          'SELECT 1 FROM scan_directories WHERE job_id = ? LIMIT 1', [job.id]);
+      if (existing.isEmpty) {
+        builds.resetManifest(job.id);
+        builds.seedDirectory(job.id, root);
       }
-      return sequence;
-    } finally {
-      await provider.cancel();
-      await provider.clearTransientDocuments();
+    }
+    try {
+      while (true) {
+        _control!.check();
+        final directory = builds.nextDirectory(job.id);
+        if (directory == null) break;
+        var sequence = builds.beginDirectory(
+            job.id, directory.locator, directory.relativePath);
+        await for (final entries in adapter.listDirectory(directory.locator)) {
+          _control!.check();
+          final items = <LibraryBuildManifestItem>[];
+          final children = <({String locator, String relativePath})>[];
+          for (final entry in entries) {
+            final relative = directory.relativePath.isEmpty
+                ? entry.name
+                : '${directory.relativePath}/${entry.name}';
+            if (entry.isDirectory) {
+              children.add((locator: entry.locator, relativePath: relative));
+              continue;
+            }
+            final handler = FileFormatRegistry.resolvePath(entry.name);
+            if (handler == null) continue;
+            items.add(LibraryBuildManifestItem(
+                jobId: job.id,
+                sourcePath: entry.locator,
+                relativePath: relative,
+                sequence: sequence++,
+                name: entry.name,
+                format: handler.formatFor(entry.name),
+                entityType: handler.entityType,
+                size: entry.size,
+                sourceCreatedAtMs: entry.modifiedAtMs,
+                sourceModifiedAtMs: entry.modifiedAtMs));
+          }
+          builds.commitDirectoryPage(
+              job.id, directory.locator, items, children);
+          _report(job, sequence, 0,
+              '已发现 $sequence 项，正在枚举 ${directory.relativePath}');
+          await Future<void>.delayed(Duration.zero);
+        }
+        _control!.check();
+        builds.completeDirectory(job.id, directory.locator);
+      }
+      builds.completeManifest(job.id, builds.manifestItemCount(job.id));
+    } on LibraryBuildPausedException {
+      rethrow;
+    } on LibraryBuildAbandonedException {
+      rethrow;
+    } catch (error) {
+      builds.block(job.id, '目录枚举未完成：$error');
     }
   }
 
@@ -462,7 +430,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
     );
     final attachNode = target ?? root;
     final directoryCache = <String, IndexNode>{'': attachNode};
-    var cursor = job.indexedTotal - 1;
+    var cursor = job.indexCursor;
     var written = job.indexedTotal;
     while (true) {
       _control!.check();
@@ -633,8 +601,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
       ));
     }
     statements.add(LibraryWriteStatement(
-      'UPDATE library_build_jobs SET indexed_total = ?, updated_at = ? WHERE id = ?',
-      [indexedBefore + completed, now, job.id],
+      'UPDATE library_build_jobs SET indexed_total = ?, index_cursor = ?, updated_at = ? WHERE id = ?',
+      [indexedBefore + completed, page.last.sequence, now, job.id],
     ));
     final worker = library.writeWorker;
     if (worker == null) {
@@ -671,6 +639,10 @@ class LibraryBuildTaskController extends ChangeNotifier {
   }
 
   Future<void> _finalizeIndex(LibraryBuildJob job) async {
+    builds.validateScope(job);
+    if (!job.manifestComplete) {
+      throw StateError('目录尚未完整枚举，不能对账移除资料');
+    }
     _report(job, 0, 1, '正在整理并提交索引');
     _control!.check();
     final rootId = job.indexRootId;

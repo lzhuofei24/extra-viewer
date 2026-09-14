@@ -553,11 +553,14 @@ class _IndexTaskCard extends StatelessWidget {
                 onPressed: disabled ? null : onResume,
                 child: const Text('继续任务'),
               ),
-              OutlinedButton(
-                onPressed: disabled ? null : onRecheck,
-                child: const Text('重新检查并更新'),
-              ),
-              if (value.entityPreviewFailed > 0 || value.nodePreviewFailed > 0)
+              if (value.kind == LibraryBuildKind.scanScope)
+                OutlinedButton(
+                  onPressed: disabled ? null : onRecheck,
+                  child: const Text('重新检查并更新'),
+                ),
+              if (value.documentPreviewFailed > 0 ||
+                  value.entityPreviewFailed > 0 ||
+                  value.nodePreviewFailed > 0)
                 OutlinedButton(
                   onPressed: disabled ? null : onRetryFailed,
                   child: const Text('仅重试失败项'),
@@ -778,6 +781,9 @@ class _IndexCard extends StatelessWidget {
 String _buildStatusLabel(LibraryBuildStatus status) => switch (status) {
       LibraryBuildStatus.pending => '等待中',
       LibraryBuildStatus.running => '运行中',
+      LibraryBuildStatus.pauseRequested => '正在暂停',
+      LibraryBuildStatus.blocked => '等待处理',
+      LibraryBuildStatus.completedWithErrors => '已完成，有待修复项',
       LibraryBuildStatus.paused => '已暂停',
       LibraryBuildStatus.completed => '已完成',
       LibraryBuildStatus.failed => '失败',

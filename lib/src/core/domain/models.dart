@@ -176,6 +176,7 @@ class Entity {
   final int? thumbnailHeight;
   final String? thumbnailError;
   final String? thumbnailPath;
+
   /// Internal visibility compatibility flag. There is no user-facing archive
   /// workflow; normal queries expose only non-archived entities.
   final bool archived;
@@ -492,6 +493,7 @@ class EntityListItem {
   final int? thumbnailWidth;
   final int? thumbnailHeight;
   final int modifiedAtMs;
+
   /// Internal visibility compatibility flag. There is no user-facing archive
   /// workflow; normal queries expose only non-archived entities.
   final bool archived;
@@ -608,9 +610,12 @@ enum LibraryBuildStage {
 enum LibraryBuildStatus {
   pending,
   running,
+  pauseRequested,
   paused,
+  blocked,
   failed,
   abandoned,
+  completedWithErrors,
   completed;
 
   static LibraryBuildStatus fromStorageValue(String value) =>
@@ -621,6 +626,8 @@ enum LibraryBuildStatus {
 }
 
 enum LibraryBuildOperation { rootScan, subtreeRefresh }
+
+enum LibraryBuildKind { scanScope, rebuildPreviews }
 
 enum LibraryBuildWorkState { pending, processing, completed, failed, skipped }
 
@@ -648,9 +655,17 @@ class LibraryBuildJob {
     this.indexRootId,
     this.stagingRootId,
     this.error,
+    this.kind = LibraryBuildKind.scanScope,
+    this.scopeNodeId,
+    this.manifestComplete = false,
+    this.indexCursor = -1,
   });
 
   final String id;
+  final LibraryBuildKind kind;
+  final String? scopeNodeId;
+  final bool manifestComplete;
+  final int indexCursor;
   final String sourcePath;
   final LibraryBuildOperation operation;
   final String? targetNodeId;

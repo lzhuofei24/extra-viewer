@@ -4,12 +4,14 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/sqlite3.dart';
 
+import 'schema_v6.dart';
+
 /// The current schema is a clean baseline. Index storage is derived from user
 /// files, so incompatible schema revisions require resetting app-owned data.
 class AppDatabase {
   AppDatabase._(this.db, this.storageDirectoryPath, this.databasePath);
 
-  static const currentSchemaVersion = 5;
+  static const currentSchemaVersion = 6;
 
   final Database db;
   final String storageDirectoryPath;
@@ -105,6 +107,25 @@ class AppDatabase {
       db.execute('PRAGMA optimize;');
       return;
     }
+    if (version == 5) {
+      final path = databasePath;
+      if (path != null) {
+        final backup = '$path.schema5.backup';
+        if (!File(backup).existsSync()) {
+          db.execute('VACUUM INTO ?', [backup]);
+        }
+      }
+      db.execute('BEGIN IMMEDIATE');
+      try {
+        db.execute(schemaV6Upgrade);
+        db.userVersion = currentSchemaVersion;
+        db.execute('COMMIT');
+      } catch (_) {
+        db.execute('ROLLBACK');
+        rethrow;
+      }
+      return;
+    }
     if (version != 0 || _hasUserTables()) {
       throw AppDatabaseResetRequired(version);
     }
@@ -112,6 +133,7 @@ class AppDatabase {
     db.execute('BEGIN IMMEDIATE;');
     try {
       db.execute(_schema);
+      db.execute(schemaV6Upgrade);
       db.userVersion = currentSchemaVersion;
       db.execute('COMMIT;');
       db.execute('PRAGMA optimize;');
