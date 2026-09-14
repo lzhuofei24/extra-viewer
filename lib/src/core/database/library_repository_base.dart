@@ -559,16 +559,6 @@ LEFT JOIN child_counts ON child_counts.id = node.id
 
   // --- Thumbnail file cleanup (called from IndexBuildMixin) ----------------
 
-  void removeThumbnailAssets(Iterable<String> keys) {
-    final unique = keys.where((key) => key.isNotEmpty).toSet().toList();
-    if (unique.isEmpty) return;
-    final placeholders = List.filled(unique.length, '?').join(', ');
-    database.db.execute(
-      'DELETE FROM thumbnail_assets WHERE asset_key IN ($placeholders)',
-      unique,
-    );
-  }
-
   void _deleteUnreferencedThumbnailFiles(Iterable<String> keys) {
     for (final key in keys.toSet()) {
       final referenced = database.db.select(

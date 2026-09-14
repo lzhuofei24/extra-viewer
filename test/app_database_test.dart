@@ -7,12 +7,15 @@ void main() {
       () {
     final raw = sqlite3.openInMemory();
     raw.execute('''
-      CREATE TABLE entities(id TEXT PRIMARY KEY, name TEXT);
+      CREATE TABLE entities(id TEXT PRIMARY KEY, name TEXT,
+        thumbnail_key TEXT, thumbnail_format TEXT);
       CREATE TABLE index_nodes(id TEXT PRIMARY KEY, source_path TEXT);
+      CREATE TABLE node_preview_assets(node_id TEXT PRIMARY KEY,
+        asset_key TEXT, format TEXT);
       CREATE TABLE library_build_jobs(id TEXT PRIMARY KEY, target_node_id TEXT,
         source_path TEXT, stage TEXT, status TEXT, indexed_total INTEGER, error TEXT);
       CREATE TABLE library_build_manifest(job_id TEXT, sequence INTEGER);
-      INSERT INTO entities VALUES ('original', 'keep');
+      INSERT INTO entities(id, name) VALUES ('original', 'keep');
       INSERT INTO index_nodes VALUES ('root', '/original');
       INSERT INTO library_build_jobs VALUES ('job', 'root', '/original', 'manifest', 'paused', 0, NULL);
     ''');

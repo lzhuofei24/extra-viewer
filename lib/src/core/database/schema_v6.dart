@@ -41,6 +41,8 @@ CREATE INDEX idx_manifest_work ON library_build_manifest(job_id, write_state, se
 ''';
 
 const schemaV6PreviewAssets = '''
+CREATE INDEX IF NOT EXISTS idx_command_receipts_committed
+ON database_command_receipts(committed_at);
 CREATE TABLE IF NOT EXISTS document_preview_versions (
   entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
   source_revision INTEGER NOT NULL
@@ -57,4 +59,21 @@ CREATE TABLE IF NOT EXISTS retired_preview_assets (
 );
 CREATE INDEX IF NOT EXISTS idx_retired_previews_due
 ON retired_preview_assets(not_before);
+CREATE TRIGGER IF NOT EXISTS retire_deleted_entity_preview
+AFTER DELETE ON entities
+WHEN OLD.thumbnail_key IS NOT NULL
+BEGIN
+  INSERT INTO retired_preview_assets(kind, asset_key, format, not_before)
+  VALUES ('entity', OLD.thumbnail_key, COALESCE(OLD.thumbnail_format, 'webp'),
+          (CAST(strftime('%s', 'now') AS INTEGER) + 86400) * 1000)
+  ON CONFLICT(kind, asset_key) DO UPDATE SET not_before = excluded.not_before;
+END;
+CREATE TRIGGER IF NOT EXISTS retire_deleted_node_preview
+AFTER DELETE ON node_preview_assets
+BEGIN
+  INSERT INTO retired_preview_assets(kind, asset_key, format, not_before)
+  VALUES ('node', OLD.asset_key, OLD.format,
+          (CAST(strftime('%s', 'now') AS INTEGER) + 86400) * 1000)
+  ON CONFLICT(kind, asset_key) DO UPDATE SET not_before = excluded.not_before;
+END;
 ''';

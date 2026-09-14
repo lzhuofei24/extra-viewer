@@ -77,6 +77,26 @@ Local commits only; no push or tablet installation. Keep release signing compati
   scheduling, cancellation through native decode, 100-item/2-second batching,
   one-pass document cover/excerpt, cache budgets, runtime/navigation and releases.
 
+### Domain command receipts (2026-09-15)
+
+- Domain writes and receipts share one host transaction. Explicit read allowlist
+  bypasses write transactions; new operations default to commands.
+- Commands carry random IDs with issue time. Receipts survive worker restart;
+  duplicate IDs never replay. Failed/time-out calls query the serial worker for
+  committed/not-committed outcome, retaining unknown if it is unavailable.
+- Receipts expire after seven days; expired IDs cannot replay. WAL checkpoint
+  and filesystem garbage collection remain outside transactional commands.
+- Root listing no longer implicitly creates the global root. Removed unused
+  unversioned metadata repair and asset-record deletion APIs.
+- Entity and node cascade deletion records asset retirement transactionally;
+  rollback cannot leave committed pointers to immediately deleted files.
+- Validation: host restart/deduplication/rollback tests passed; full suite had
+  71 passes and one outdated minimal schema fixture failure. Updated that fixture
+  with the schema-5 preview columns/table; all 7 migration/host tests then passed.
+  Analyze clean before the fixture-only follow-up.
+- This does not finish module capability separation, native cancellation,
+  UI/runtime, cache policy or release/device acceptance.
+
 ### Implemented safety/frontier foundation
 
 - Schema 6 additive migration, schema-5 snapshot before file-backed migration.

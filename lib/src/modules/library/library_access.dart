@@ -38,9 +38,6 @@ abstract interface class LibraryAccess {
       String? localPath,
       Entity? knownExisting,
       bool existingLookupCompleted = false});
-  FutureOr<void> updateEntityMetadataPreview(
-      String entityId, String? contentExcerpt, int? durationMs);
-  FutureOr<List<Entity>> listEpubsMissingMetadataPreview({int limit = 200});
   FutureOr<void> clearEntityLocalPath(String id);
   FutureOr<Entity?> getEntityByPath(String path);
   FutureOr<Map<String, Entity>> getEntitiesByPaths(Iterable<String> paths);
@@ -187,7 +184,6 @@ abstract interface class LibraryAccess {
   FutureOr<void> markIndexNodePreviewDirty(String nodeId,
       {IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,
       String? reason});
-  FutureOr<void> removeThumbnailAssets(Iterable<String> keys);
   FutureOr<Map<String, IndexNodePreview>> listIndexNodePreviews(
       Iterable<String> nodeIds);
   FutureOr<String> nodePreviewAssetPath(String assetKey, String format);

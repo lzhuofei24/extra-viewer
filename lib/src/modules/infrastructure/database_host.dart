@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:isolate';
+import 'dart:convert';
+import 'dart:math';
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
 import '../../core/database/app_database.dart';
@@ -7,6 +9,16 @@ import '../../core/database/library_repository.dart';
 import '../../core/database/library_build_repository.dart';
 import '../library/library_dispatch.dart';
 import '../build/build_dispatch.dart';
+import 'database_operations.dart';
+
+enum DatabaseCommandOutcome { committed, notCommitted, unknown }
+
+class DatabaseCommandException extends StateError {
+  DatabaseCommandException(this.commandId, this.outcome, String message)
+      : super('$message (command=$commandId, outcome=${outcome.name})');
+  final String commandId;
+  final DatabaseCommandOutcome outcome;
+}
 
 class DatabaseHost {
   DatabaseHost._(this.databasePath);
@@ -43,7 +55,12 @@ class DatabaseHost {
       if (result['ok'] == true) {
         pending.complete(result['value']);
       } else {
-        pending.completeError(StateError(result['error'] as String));
+        pending.completeError(result['committedCommand'] is String
+            ? DatabaseCommandException(
+                result['committedCommand'] as String,
+                DatabaseCommandOutcome.committed,
+                'Command already committed; refresh state')
+            : StateError(result['error'] as String));
       }
     });
     host._errors.listen(
@@ -76,9 +93,55 @@ class DatabaseHost {
     _pending.clear();
   }
 
-  Future<Object?> call(
-          String domain, String method, Map<String, Object?> args) =>
-      _request({'domain': domain, 'method': method, 'args': args});
+  static String newCommandId() {
+    final random = Random.secure();
+    final nonce =
+        base64Url.encode(List.generate(16, (_) => random.nextInt(256)));
+    return '${DateTime.now().millisecondsSinceEpoch}:$nonce';
+  }
+
+  Future<DatabaseCommandOutcome> commandOutcome(String commandId) async {
+    final committed =
+        await _request({'domain': 'receipt', 'commandId': commandId});
+    return switch (committed) {
+      true => DatabaseCommandOutcome.committed,
+      false => DatabaseCommandOutcome.notCommitted,
+      _ => DatabaseCommandOutcome.unknown,
+    };
+  }
+
+  Future<Object?> call(String domain, String method, Map<String, Object?> args,
+      {String? commandId}) async {
+    final command = !isDatabaseQuery(domain, method) &&
+        !isDatabaseMaintenance(domain, method);
+    final ticket = command ? commandId ?? newCommandId() : null;
+    return _requestWithOutcome({
+      'domain': domain,
+      'method': method,
+      'args': args,
+      if (ticket != null) 'commandId': ticket,
+    }, ticket);
+  }
+
+  Future<Object?> _requestWithOutcome(
+      Map<String, Object?> message, String? commandId) async {
+    try {
+      return await _request(message);
+    } on DatabaseCommandException {
+      rethrow;
+    } catch (error) {
+      if (commandId == null) rethrow;
+      var outcome = DatabaseCommandOutcome.unknown;
+      try {
+        // The worker is serial: this query runs after the original command.
+        // A missing receipt therefore means that transaction did not commit.
+        outcome = await commandOutcome(commandId);
+      } catch (_) {
+        // Keep an explicit unknown outcome when the worker is unavailable.
+      }
+      throw DatabaseCommandException(commandId, outcome, '$error');
+    }
+  }
 
   Future<Object?> _request(Map<String, Object?> message,
       {bool closing = false}) async {
@@ -103,9 +166,14 @@ class DatabaseHost {
           [List<Object?> parameters = const []]) =>
       executeBatch([LibraryWriteStatement(sql, parameters)]);
   Future<LibraryWriteResult> executeBatch(
-      Iterable<LibraryWriteStatement> statements) async {
-    final value = await _request(
-        {'domain': 'sql', 'statements': statements.toList(growable: false)});
+      Iterable<LibraryWriteStatement> statements,
+      {String? commandId}) async {
+    final ticket = commandId ?? newCommandId();
+    final value = await _requestWithOutcome({
+      'domain': 'sql',
+      'commandId': ticket,
+      'statements': statements.toList(growable: false)
+    }, ticket);
     return LibraryWriteResult(changes: value as int);
   }
 
@@ -169,19 +237,35 @@ Future<void> _runDatabase(({String path, SendPort reply}) config) async {
         }
         final args = (request['args'] as Map<String, Object?>?) ??
             const <String, Object?>{};
-        final value = switch (domain) {
-          'library' => await dispatchLibrary(
-              repository, request['method']! as String, args),
-          'build' =>
-            await dispatchBuild(builds, request['method']! as String, args),
-          'sql' => _batch(app.db, id,
-              (request['statements'] as List).cast<LibraryWriteStatement>()),
-          'barrier' => null,
-          _ => throw ArgumentError('Unknown database domain $domain'),
-        };
+        final method = request['method'] as String? ?? '';
+        Future<Object?> dispatch() async => switch (domain) {
+              'library' => await dispatchLibrary(repository, method, args),
+              'build' => await dispatchBuild(builds, method, args),
+              'sql' => _batch(
+                  app.db,
+                  (request['statements'] as List)
+                      .cast<LibraryWriteStatement>()),
+              'receipt' => _receipt(app.db, request['commandId']! as String),
+              'barrier' => null,
+              _ => throw ArgumentError('Unknown database domain $domain'),
+            };
+        final transactional = domain == 'sql' ||
+            ((domain == 'library' || domain == 'build') &&
+                !isDatabaseQuery(domain as String, method) &&
+                !isDatabaseMaintenance(domain, method));
+        final value = transactional
+            ? await _command(app.db, request['commandId']! as String, dispatch)
+            : await dispatch();
         config.reply.send({'id': id, 'ok': true, 'value': value});
       } catch (error, stack) {
-        config.reply.send({'id': id, 'ok': false, 'error': '$error\n$stack'});
+        config.reply.send({
+          'id': id,
+          'ok': false,
+          'error': '$error\n$stack',
+          if (error is DatabaseCommandException &&
+              error.outcome == DatabaseCommandOutcome.committed)
+            'committedCommand': error.commandId,
+        });
       }
     }
   } finally {
@@ -190,14 +274,53 @@ Future<void> _runDatabase(({String path, SendPort reply}) config) async {
   }
 }
 
-int _batch(
-    Database db, String requestId, List<LibraryWriteStatement> statements) {
+bool? _receipt(Database db, String commandId) {
+  if (db.select('SELECT 1 FROM database_command_receipts WHERE request_id = ?',
+      [commandId]).isNotEmpty) {
+    return true;
+  }
+  final issuedAt = int.tryParse(commandId.split(':').first);
+  if (issuedAt == null ||
+      issuedAt <
+          DateTime.now().millisecondsSinceEpoch -
+              const Duration(days: 7).inMilliseconds) {
+    return null;
+  }
+  return false;
+}
+
+Future<Object?> _command(
+    Database db, String commandId, Future<Object?> Function() action) async {
   final previous = db.select(
-      'SELECT changes FROM database_command_receipts WHERE request_id = ?',
-      [requestId]);
-  if (previous.isNotEmpty) return previous.single['changes'] as int;
-  final prepared = <String, PreparedStatement>{};
+      'SELECT 1 FROM database_command_receipts WHERE request_id = ?',
+      [commandId]);
+  if (previous.isNotEmpty) {
+    throw DatabaseCommandException(commandId, DatabaseCommandOutcome.committed,
+        'Command already committed');
+  }
+  final issuedAt = int.tryParse(commandId.split(':').first);
+  final now = DateTime.now().millisecondsSinceEpoch;
+  final oldest = now - const Duration(days: 7).inMilliseconds;
+  if (issuedAt == null || issuedAt < oldest || issuedAt > now + 60000) {
+    throw ArgumentError('Expired or invalid command ID; do not replay');
+  }
   db.execute('BEGIN IMMEDIATE');
+  try {
+    final result = await action();
+    db.execute('INSERT INTO database_command_receipts VALUES (?, ?, ?)',
+        [commandId, 0, now]);
+    db.execute('DELETE FROM database_command_receipts WHERE committed_at < ?',
+        [oldest]);
+    db.execute('COMMIT');
+    return result;
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  }
+}
+
+int _batch(Database db, List<LibraryWriteStatement> statements) {
+  final prepared = <String, PreparedStatement>{};
   try {
     var changes = 0;
     for (final item in statements) {
@@ -206,13 +329,7 @@ int _batch(
       statement.execute(item.parameters);
       changes += db.updatedRows;
     }
-    db.execute('INSERT INTO database_command_receipts VALUES (?, ?, ?)',
-        [requestId, changes, DateTime.now().millisecondsSinceEpoch]);
-    db.execute('COMMIT');
     return changes;
-  } catch (_) {
-    db.execute('ROLLBACK');
-    rethrow;
   } finally {
     for (final statement in prepared.values) {
       statement.dispose();

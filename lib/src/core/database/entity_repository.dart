@@ -229,44 +229,6 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
     );
   }
 
-  void updateEntityMetadataPreview(
-    String entityId,
-    String? contentExcerpt,
-    int? durationMs,
-  ) {
-    database.db.execute(
-      '''
-      UPDATE entities
-      SET metadata_preview = ?, duration_ms = ?, updated_at = ?
-      WHERE id = ?
-      ''',
-      [
-        _normalizeOptionalText(contentExcerpt),
-        durationMs,
-        nowMillis(),
-        entityId,
-      ],
-    );
-  }
-
-  /// Returns only EPUB records whose old build did not persist a text
-  /// excerpt. This is intentionally independent from directory scanning so a
-  /// renderer upgrade can repair previews without touching index membership.
-  List<Entity> listEpubsMissingMetadataPreview({int limit = 200}) {
-    final rows = database.db.select(
-      '''
-      SELECT * FROM entities
-      WHERE archived = 0
-        AND format = 'epub'
-        AND (metadata_preview IS NULL OR trim(metadata_preview) = '')
-      ORDER BY updated_at ASC, id ASC
-      LIMIT ?
-      ''',
-      [limit],
-    );
-    return rows.map((row) => _entityFromRow(row, thumbnailStore)).toList();
-  }
-
   /// SAF scans use a temporary local file only while extracting metadata and
   /// rendering previews. It must never become persistent entity state.
   void clearEntityLocalPath(String id) {

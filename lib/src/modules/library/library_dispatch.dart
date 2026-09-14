@@ -47,13 +47,6 @@ Future<Object?> dispatchLibrary(LibraryRepository repository, String method,
           knownExisting: args['knownExisting'] as Entity?,
           existingLookupCompleted:
               (args['existingLookupCompleted'] as bool?) ?? false);
-    case 'updateEntityMetadataPreview':
-      repository.updateEntityMetadataPreview(args['entityId'] as String,
-          args['contentExcerpt'] as String?, args['durationMs'] as int?);
-      return null;
-    case 'listEpubsMissingMetadataPreview':
-      return repository.listEpubsMissingMetadataPreview(
-          limit: (args['limit'] as int?) ?? 200);
     case 'clearEntityLocalPath':
       repository.clearEntityLocalPath(args['id'] as String);
       return null;
@@ -330,9 +323,6 @@ Future<Object?> dispatchLibrary(LibraryRepository repository, String method,
           scope: (args['scope'] as IndexPreviewRebuildScope?) ??
               IndexPreviewRebuildScope.node,
           reason: args['reason'] as String?);
-      return null;
-    case 'removeThumbnailAssets':
-      repository.removeThumbnailAssets(args['keys'] as Iterable<String>);
       return null;
     case 'listIndexNodePreviews':
       return repository

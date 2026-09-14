@@ -667,7 +667,11 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
   List<IndexNode> listIndexRoots({
     EntitySortMode sortMode = EntitySortMode.nameAsc,
   }) {
-    final root = _ensureGlobalRoot();
+    final roots = database.db.select(
+      'SELECT id FROM index_nodes WHERE node_type = ? LIMIT 1',
+      [NodeType.root.value],
+    );
+    if (roots.isEmpty) return const [];
     final rows = database.db.select(
       '''
       SELECT node.* FROM index_nodes node
@@ -676,7 +680,7 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
         AND node.is_staging = 0
       ORDER BY ${_indexNodeOrderBy(sortMode)}
       ''',
-      [root.id],
+      [roots.first['id']],
     );
     return rows.map(_nodeFromRow).toList();
   }

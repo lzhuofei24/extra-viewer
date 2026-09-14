@@ -48,6 +48,37 @@ void main() {
         height: 20,
       );
 
+  test('deletion retires assets transactionally and rollback retains the image',
+      () async {
+    final original = entity('retire');
+    final ticket = library.beginEntityPreview(original);
+    await write(ticket);
+    library.commitEntityPreview(ticket, success(ticket), byteSize: 3);
+    expect(
+        () => library.writeTransaction(() {
+              library.removeEntityFromLibrary(original.id);
+              throw StateError('rollback');
+            }),
+        throwsStateError);
+    expect(library.getEntity(original.id), isNotNull);
+    expect(
+        database.db.select(
+            'SELECT * FROM retired_preview_assets WHERE asset_key = ?',
+            [ticket.assetKey]),
+        isEmpty);
+    library.removeEntityFromLibrary(original.id);
+    expect(
+        database.db.select(
+            'SELECT * FROM retired_preview_assets WHERE asset_key = ?',
+            [ticket.assetKey]),
+        hasLength(1));
+    final file = library.thumbnailStore.fileFor(ticket.assetKey, 'webp');
+    expect(await file.exists(), isTrue);
+    database.db.execute('UPDATE retired_preview_assets SET not_before = 0');
+    expect(library.collectRetiredPreviewAssets(), 1);
+    expect(await file.exists(), isFalse);
+  });
+
   test(
       'equal fast fingerprints never share assets; failed rebuild retains old image',
       () async {

@@ -232,7 +232,6 @@ class LibraryBuildRepository implements BuildAccess {
       _update(jobId, status: LibraryBuildStatus.abandoned);
       _discardFinishedDetails(jobId, abandoned: true);
     });
-    library.database.checkpointWriteAheadLog();
   }
 
   @override

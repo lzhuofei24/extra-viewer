@@ -99,24 +99,6 @@ class LibraryClient implements LibraryAccess {
   }
 
   @override
-  Future<void> updateEntityMetadataPreview(
-      String entityId, String? contentExcerpt, int? durationMs) async {
-    await host.call('library', 'updateEntityMetadataPreview', {
-      'entityId': entityId,
-      'contentExcerpt': contentExcerpt,
-      'durationMs': durationMs
-    });
-  }
-
-  @override
-  Future<List<Entity>> listEpubsMissingMetadataPreview(
-      {int limit = 200}) async {
-    return (await host.call(
-            'library', 'listEpubsMissingMetadataPreview', {'limit': limit}))
-        as List<Entity>;
-  }
-
-  @override
   Future<void> clearEntityLocalPath(String id) async {
     await host.call('library', 'clearEntityLocalPath', {'id': id});
   }
@@ -711,12 +693,6 @@ class LibraryClient implements LibraryAccess {
       String? reason}) async {
     await host.call('library', 'markIndexNodePreviewDirty',
         {'nodeId': nodeId, 'scope': scope, 'reason': reason});
-  }
-
-  @override
-  Future<void> removeThumbnailAssets(Iterable<String> keys) async {
-    await host.call('library', 'removeThumbnailAssets',
-        {'keys': keys.toList(growable: false)});
   }
 
   @override
