@@ -895,6 +895,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
         item.sourcePath,
         name: item.name,
         cacheScope: 'scan',
+        cancellationToken: _control?.thumbnailCancellation,
       );
       final file = File(localPath);
       try {
@@ -937,6 +938,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
       entity.path,
       name: entity.name,
       cacheScope: 'scan',
+      cancellationToken: _control?.thumbnailCancellation,
     );
     final file = File(path);
     try {

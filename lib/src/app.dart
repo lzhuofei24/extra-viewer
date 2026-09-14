@@ -22,8 +22,6 @@ import 'core/controllers/selection_controller.dart';
 import 'core/domain/models.dart';
 import 'core/formats/file_format_handlers.dart';
 import 'core/media/audio_waveform_service.dart';
-import 'core/pet/pet_controller.dart';
-import 'core/pet/pet_voice_player.dart';
 import 'core/media/app_audio_controller.dart';
 import 'core/sources/platform_directory_picker.dart';
 import 'core/tasks/task_scheduler.dart';
@@ -36,18 +34,15 @@ import 'core/thumbnails/browsing_thumbnail_controller.dart';
 import 'ui/browser_state.dart';
 import 'ui/browser_node_cache.dart';
 import 'ui/app_sidebar.dart';
-import 'ui/app_pet.dart';
 import 'ui/builtin_media_page.dart';
 import 'ui/collection_browser_page.dart';
 import 'ui/design_tokens.dart';
 import 'ui/entity_detail_sheet.dart';
 import 'ui/graph_index_page.dart';
 import 'ui/index_management_page.dart';
-import 'ui/library_dashboard_page.dart';
 import 'ui/music_page.dart';
 import 'ui/media_shelf_page.dart';
 import 'ui/now_playing_page.dart';
-import 'ui/pet_page.dart';
 import 'ui/node_preview_picker.dart';
 import 'ui/settings_page.dart';
 import 'ui/diagnostics_page.dart';
@@ -120,6 +115,7 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
+  Future<void>? _bootstrapFuture;
   final _runtime = AppRuntime(onFailure: (failure) {
     AppDiagnosticLog.instance.error(
         'runtime_service_close_failed', failure.error, failure.stackTrace,
@@ -143,7 +139,7 @@ class _AppShellState extends State<AppShell> {
   String? _indexError;
   String? _readError;
   bool _readRetrying = false;
-  AppSection _section = AppSection.home;
+  AppSection _section = AppSection.data;
   BrowserState _browserState = const BrowserState();
   IndexNode? _selectedIndexRoot;
   IndexNode? _selectedItem;
@@ -156,12 +152,7 @@ class _AppShellState extends State<AppShell> {
   bool _loadingMoreEntities = false;
   bool _sidebarCollapsed = false;
   bool _miniPlayerCollapsed = false;
-  bool _petWasAudioPlaying = false;
   late final SelectionController _selection;
-  late final PetController _petController;
-  final PetVoicePlayer _petVoicePlayer = PetVoicePlayer();
-  bool _petWasScanning = false;
-  int _handledPetVoiceToken = 0;
   final Set<String> _regeneratingThumbnailIds = <String>{};
   Timer? _thumbnailRefreshTimer;
   final BrowserNodeCache _browserNodeCache = BrowserNodeCache();
@@ -223,8 +214,6 @@ class _AppShellState extends State<AppShell> {
     _registerRuntimeResources();
     _indexPathController = TextEditingController();
     _selection = SelectionController();
-    _petController = PetController()..addListener(_handlePetChanged);
-    unawaited(_petController.restore());
     _lifecycleListener = AppLifecycleListener(
       onStateChange: (state) {
         AppDiagnosticLog.instance.info('app_lifecycle_changed', fields: {
@@ -242,10 +231,6 @@ class _AppShellState extends State<AppShell> {
     _indexPathController.dispose();
     _buildTasks?.removeListener(_handleBuildTaskChanged);
     _buildTasks?.dispose();
-    _petController
-      ..removeListener(_handlePetChanged)
-      ..dispose();
-    unawaited(_petVoicePlayer.dispose());
     _thumbnailRefreshTimer?.cancel();
     _lifecycleListener.dispose();
     unawaited(_closeRuntimeResources());
@@ -254,13 +239,15 @@ class _AppShellState extends State<AppShell> {
 
   void _registerRuntimeResources() {
     _runtime
+      ..register('bootstrap', RuntimeClosePhase.stopWork, () async {
+        await _bootstrapFuture;
+      })
       ..register(
           'scheduler', RuntimeClosePhase.stopWork, () => _taskScheduler.close())
       ..register('build', RuntimeClosePhase.stopWork, () async {
         await _buildTasks?.close();
       })
       ..register('audio', RuntimeClosePhase.media, () async {
-        _audioController?.removeListener(_handlePetAudioChanged);
         await _audioController?.close();
       })
       ..register('thumbnails', RuntimeClosePhase.caches, () async {
@@ -393,8 +380,14 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
-  Future<void> _bootstrap() async {
-    if (_runtime.isClosing) return;
+  Future<void> _bootstrap() {
+    if (_runtime.isClosing) return Future.value();
+    return _bootstrapFuture ??= _bootstrapImpl().whenComplete(() {
+      _bootstrapFuture = null;
+    });
+  }
+
+  Future<void> _bootstrapImpl() async {
     AppDiagnosticLog.instance.info('app_bootstrap_started');
     final DatabaseRuntime runtime;
     try {
@@ -425,7 +418,7 @@ class _AppShellState extends State<AppShell> {
     }
     final database = runtime.descriptor;
     final writeWorker = runtime.host;
-    if (!mounted) {
+    if (!mounted || _runtime.isClosing) {
       await writeWorker.close();
       return;
     }
@@ -519,7 +512,7 @@ class _AppShellState extends State<AppShell> {
         );
       }
     }
-    if (!mounted) {
+    if (!mounted || _runtime.isClosing) {
       await buildTasks.close();
       buildTasks.dispose();
       await audioController.close();
@@ -538,7 +531,6 @@ class _AppShellState extends State<AppShell> {
       _buildTasks = buildTasks;
       _loading = false;
     });
-    audioController.addListener(_handlePetAudioChanged);
     final activeSessions = (await repository.listAudioPlaybackSessions());
     if (!mounted) return;
     setState(() => _audioSessions = activeSessions);
@@ -548,24 +540,9 @@ class _AppShellState extends State<AppShell> {
       await audioController.restoreSession(activeSession);
     }
     _reload();
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _petController.trigger(PetTrigger.appStarted),
-    );
   }
 
   void _handleBuildTaskChanged() {
-    final tasks = _buildTasks;
-    final scanning = tasks?.isRunning ?? false;
-    if (scanning && !_petWasScanning) {
-      _petController.trigger(PetTrigger.indexStarted);
-    } else if (!scanning && _petWasScanning) {
-      _petController.trigger(
-        tasks?.errorMessage == null
-            ? PetTrigger.indexCompleted
-            : PetTrigger.indexFailed,
-      );
-    }
-    _petWasScanning = scanning;
     if (mounted) setState(() {});
   }
 
@@ -589,27 +566,6 @@ class _AppShellState extends State<AppShell> {
     _browsingThumbnails?.requestEntityId(entityId);
   }
 
-  void _handlePetChanged() {
-    final request = _petController.voiceRequest;
-    if (_petController.muted) {
-      unawaited(_petVoicePlayer.stop());
-    } else if (request != null && request.token != _handledPetVoiceToken) {
-      _handledPetVoiceToken = request.token;
-      unawaited(_petVoicePlayer.play(request.asset));
-    }
-    if (mounted) setState(() {});
-  }
-
-  void _handlePetAudioChanged() {
-    final playing = _audioController?.isPlaying ?? false;
-    if (playing != _petWasAudioPlaying) {
-      _petController.trigger(
-        playing ? PetTrigger.musicStarted : PetTrigger.musicPaused,
-      );
-      _petWasAudioPlaying = playing;
-    }
-  }
-
   Future<void> _resetLocalIndexStorage() async {
     if (_resettingLocalIndex) return;
     if (_scanning) {
@@ -629,7 +585,6 @@ class _AppShellState extends State<AppShell> {
       _indexError = null;
     });
     try {
-      _audioController?.removeListener(_handlePetAudioChanged);
       final audioController = _audioController;
       if (audioController != null) await audioController.close();
       await _browsingThumbnails?.close();
@@ -1164,7 +1119,7 @@ class _AppShellState extends State<AppShell> {
       _openRootIndex();
       return;
     }
-    if (section == AppSection.home || section == AppSection.indexes) {
+    if (section == AppSection.indexes) {
       _reloadDashboardData();
     }
     setState(() => _section = section);
@@ -1703,8 +1658,9 @@ class _AppShellState extends State<AppShell> {
         return;
       }
     }
-    if (_section != AppSection.home) {
-      _navigateToSection(AppSection.home);
+    if (_section != AppSection.data ||
+        _browserState.rootTab != BrowserRootTab.directory) {
+      _selectDataRootTab(BrowserRootTab.directory);
       return;
     }
     SystemNavigator.pop();
@@ -2563,11 +2519,6 @@ class _AppShellState extends State<AppShell> {
     }
 
     final pageBody = switch (_section) {
-      AppSection.home => LibraryDashboardPage(
-          rootsCount: _indexRoots.length,
-          itemsCount: _rootCounts.values.fold<int>(0, (a, b) => a + b),
-          onOpenSettings: () => setState(() => _section = AppSection.settings),
-        ),
       AppSection.data
           when _currentIndexNode?.nodeType == NodeType.graphIndexRoot =>
         GraphIndexPage(
@@ -2707,6 +2658,7 @@ class _AppShellState extends State<AppShell> {
           ),
         ),
       AppSection.settings => SettingsPage(
+          onOpenDiagnostics: () => _navigateToSection(AppSection.logs),
           themeChoice: widget.themeChoice,
           sortMode: _browserState.sortMode,
           onThemeChanged: widget.onThemeChanged,
@@ -2724,12 +2676,52 @@ class _AppShellState extends State<AppShell> {
           history: _indexTaskHistory,
           progress: _scanProgress,
         ),
-      AppSection.pet => PetPage(controller: _petController),
     };
+    final recentSections = <AppSection, String>{
+      AppSection.gallery: '图片',
+      AppSection.video: '视频',
+      AppSection.reading: '阅读',
+      AppSection.music: '音乐',
+    };
+    final tabs = <Widget>[];
+    if (recentSections.containsKey(_section)) {
+      tabs.add(Wrap(spacing: 8, children: [
+        for (final entry in recentSections.entries)
+          ChoiceChip(
+              label: Text(entry.value),
+              selected: _section == entry.key,
+              onSelected: (_) => _navigateToSection(entry.key)),
+      ]));
+    } else if (_section == AppSection.data &&
+        _browserState.rootTab != BrowserRootTab.directory) {
+      tabs.add(Wrap(spacing: 8, children: [
+        for (final tab in [BrowserRootTab.tree, BrowserRootTab.graph])
+          ChoiceChip(
+              label: Text(tab == BrowserRootTab.tree ? '自定义资料集' : '图画布'),
+              selected: _browserState.rootTab == tab,
+              onSelected: (_) => _selectDataRootTab(tab)),
+      ]));
+    } else if (_section == AppSection.logs) {
+      tabs.add(TextButton.icon(
+          onPressed: () => _navigateToSection(AppSection.settings),
+          icon: const Icon(Icons.arrow_back),
+          label: const Text('返回设置')));
+    }
+    final presentedPage = tabs.isEmpty
+        ? pageBody
+        : Column(children: [
+            Padding(
+                padding: const EdgeInsets.all(12),
+                child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Column(
+                        mainAxisSize: MainAxisSize.min, children: tabs))),
+            Expanded(child: pageBody),
+          ]);
     final body = _readError == null ||
             _section == AppSection.settings ||
             _section == AppSection.logs
-        ? pageBody
+        ? presentedPage
         : Column(
             children: [
               ReadUnavailableBanner(
@@ -2737,7 +2729,7 @@ class _AppShellState extends State<AppShell> {
                 retrying: _readRetrying,
                 onRetry: _retryReadWorker,
               ),
-              Expanded(child: pageBody),
+              Expanded(child: presentedPage),
             ],
           );
 
@@ -2801,10 +2793,6 @@ class _AppShellState extends State<AppShell> {
               ),
               if (_mediaOverlay case final overlay?)
                 Positioned.fill(child: overlay),
-              if (_petController.visible && _mediaOverlay == null)
-                Positioned.fill(
-                  child: AppPet(controller: _petController),
-                ),
               Positioned(
                 right: 0,
                 bottom: 12,

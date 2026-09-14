@@ -24,7 +24,6 @@ import '../core/readers/epub_decoder.dart';
 import '../core/readers/archive_session.dart';
 import '../core/readers/reflow_document.dart';
 import '../core/readers/reflow_text_decoder.dart';
-import '../core/sources/source_handle.dart';
 import 'collapse_grip_icon.dart';
 
 part 'viewer_text_reader.dart';
@@ -123,6 +122,48 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
   final Set<String> _inFlightPrefetchIds = <String>{};
   final Set<String> _failedImagePrefetchIds = <String>{};
   bool _imagePrefetchRunning = false;
+  final _originalBytes = <String, int>{};
+  final _originalProviders = <String, FileImage>{};
+
+  Future<int> _warmOriginal(FileImage provider) async {
+    final stream = provider.resolve(createLocalImageConfiguration(context));
+    final loaded = Completer<int>();
+    late ImageStreamListener listener;
+    listener = ImageStreamListener((info, _) {
+      if (!loaded.isCompleted) {
+        loaded.complete(info.image.width * info.image.height * 4);
+      }
+      info.dispose();
+    }, onError: (Object error, StackTrace? stack) {
+      if (!loaded.isCompleted) loaded.completeError(error, stack);
+    });
+    stream.addListener(listener);
+    try {
+      return await loaded.future;
+    } finally {
+      stream.removeListener(listener);
+    }
+  }
+
+  void _enforceOriginalBudget() {
+    final budget = PaintingBinding.instance.imageCache.maximumSizeBytes ~/ 2;
+    var used = _originalBytes.values.fold<int>(0, (sum, bytes) => sum + bytes);
+    final candidates =
+        _activePrefetchWindow.values.where((e) => e.id != _current.id).toList()
+          ..sort((a, b) {
+            int distance(EntityListItem e) =>
+                (_navigationQueue.indexWhere((item) => item.id == e.id) -
+                        _currentIndex)
+                    .abs();
+            return distance(b).compareTo(distance(a));
+          });
+    for (final entity in candidates) {
+      if (used <= budget) break;
+      used -= _originalBytes[entity.id] ?? 0;
+      _evictPrefetchedImage(entity);
+      _imagePrefetchQueue.removeWhere((item) => item.id == entity.id);
+    }
+  }
 
   EntityListItem get _current => _navigationQueue[_currentIndex];
   List<EntityListItem> get _navigationQueue =>
@@ -320,15 +361,9 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
           if (await file.exists()) {
             if (!mounted) return;
             final provider = FileImage(file);
-            await precacheImage(
-              provider,
-              context,
-              onError: (_, __) {
-                _failedImagePrefetchIds.add(entity.id);
-                _readyPrefetchIds.remove(entity.id);
-                PaintingBinding.instance.imageCache.evict(provider);
-              },
-            );
+            _originalProviders[entity.id] = provider;
+            _originalBytes[entity.id] = await _warmOriginal(provider);
+            if (mounted) _enforceOriginalBudget();
           } else {
             _failedImagePrefetchIds.add(entity.id);
           }
@@ -338,7 +373,8 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
           await lease?.close();
           _inFlightPrefetchIds.remove(entity.id);
         }
-        if (_activePrefetchWindow.containsKey(entity.id) &&
+        if (_originalProviders.containsKey(entity.id) &&
+            _activePrefetchWindow.containsKey(entity.id) &&
             !_failedImagePrefetchIds.contains(entity.id)) {
           _readyPrefetchIds.add(entity.id);
         } else {
@@ -351,9 +387,10 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
   }
 
   void _evictPrefetchedImage(EntityListItem entity) {
-    if (SourceHandle.parse(entity.path).isAndroidContentUri) return;
-    final file = _sourceResolver.localFile(entity);
-    PaintingBinding.instance.imageCache.evict(FileImage(file));
+    _originalBytes.remove(entity.id);
+    _readyPrefetchIds.remove(entity.id);
+    final provider = _originalProviders.remove(entity.id);
+    if (provider != null) PaintingBinding.instance.imageCache.evict(provider);
   }
 
   void _startEntitySwipe(PointerDownEvent event) {

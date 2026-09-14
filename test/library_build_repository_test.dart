@@ -5,6 +5,58 @@ import 'package:best_viewer/src/core/domain/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+      'SQL reconciliation preserves other collection references and rejects incomplete scopes',
+      () {
+    final db = AppDatabase.openInMemory();
+    addTearDown(db.close);
+    final library = LibraryRepository(db);
+    final builds = LibraryBuildRepository(library);
+    final root = library.ensureDirectoryIndexRoot('/reconcile');
+    Entity entity(String name) => library
+        .upsertEntity(
+            path: '/reconcile/$name.jpg',
+            name: name,
+            format: 'jpg',
+            entityType: EntityType.image,
+            hash: name,
+            size: 1,
+            sourceCreatedAtMs: 0,
+            sourceModifiedAtMs: 0,
+            directoryRootId: root.id)
+        .entity;
+    final shared = entity('shared');
+    final orphan = entity('orphan');
+    for (final item in [shared, orphan]) {
+      library.linkEntityToIndexNode(entityId: item.id, indexNodeId: root.id);
+    }
+    library.createCollectionWithEntities(name: 'keep', entityIds: [shared.id]);
+    final job = builds.create(
+        sourcePath: '/reconcile', operation: LibraryBuildOperation.rootScan);
+    builds.setRoots(jobId: job.id, indexRootId: root.id);
+    expect(
+        () => library.reconcileDirectoryScan(
+            jobId: job.id, rootId: root.id, nodeId: root.id),
+        throwsStateError);
+    expect(library.getEntity(orphan.id), isNotNull);
+    db.db.execute(
+        'UPDATE library_build_jobs SET manifest_complete = 1 WHERE id = ?',
+        [job.id]);
+    library.reconcileDirectoryScan(
+        jobId: job.id, rootId: root.id, nodeId: root.id);
+    expect(library.getEntity(orphan.id), isNull);
+    expect(library.getEntity(shared.id), isNotNull);
+    expect(
+        db.db.select(
+            'SELECT 1 FROM index_node_entities WHERE index_node_id = ?',
+            [root.id]),
+        isEmpty);
+    expect(
+        () => library.reconcileDirectoryScan(
+            jobId: job.id, rootId: root.id, nodeId: 'missing'),
+        throwsStateError);
+  });
+
   test('legacy archive handoff preserves media work and is idempotent', () {
     final database = AppDatabase.openInMemory();
     addTearDown(database.close);

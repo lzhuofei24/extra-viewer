@@ -82,12 +82,8 @@ abstract interface class LibraryAccess {
       String rootId);
   FutureOr<DirectoryIndexDeletionResult> deleteDirectoryIndex(String rootId,
       {required bool force});
-  FutureOr<void> reconcileDirectoryIndexRoot(
-      {required String rootId, required Iterable<String> seenPaths});
-  FutureOr<void> reconcileDirectoryIndexSubtree(
-      {required String nodeId,
-      required String rootId,
-      required Iterable<String> seenPaths});
+  FutureOr<void> reconcileDirectoryScan(
+      {required String jobId, required String rootId, required String nodeId});
   FutureOr<void> pruneEmptyDirectoryNodes(String rootId);
   FutureOr<IndexNode> ensureCategoryIndexRoot(String name);
   FutureOr<IndexNode> ensureCollectionIndexRoot(String name);

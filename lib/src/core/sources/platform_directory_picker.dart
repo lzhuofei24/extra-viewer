@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:async';
+import '../thumbnails/thumbnail_cancellation.dart';
 import 'package:flutter/services.dart';
 
 class DirectorySelection {
@@ -124,24 +126,50 @@ class PlatformDirectoryPicker {
     String? name,
     String cacheScope = 'session',
     int? maxBytes,
+    ThumbnailCancellationToken? cancellationToken,
   }) async {
     if (!isSupported) {
       throw UnsupportedError('Android SAF is only available on Android');
     }
-    final path = await _channel.invokeMethod<String>(
+    cancellationToken?.throwIfCancelled();
+    final requestId =
+        'source-${DateTime.now().microsecondsSinceEpoch}-${_copySequence++}';
+    void cancel() {
+      unawaited(_channel.invokeMethod<void>('cancelMaterialization',
+          {'requestId': requestId}).catchError((Object _) {}));
+    }
+
+    final pending = _channel.invokeMethod<String>(
       'materializeDocument',
       {
         'source': source,
         'cacheScope': cacheScope,
+        'requestId': requestId,
         if (maxBytes != null) 'maxBytes': maxBytes,
         if (name != null) 'name': name,
       },
     );
-    if (path == null || path.isEmpty) {
-      throw StateError('Android did not return a materialized document path');
+    cancellationToken?.addListener(cancel);
+    try {
+      final path = await pending;
+      if (path == null || path.isEmpty) {
+        throw StateError('Android did not return a materialized document path');
+      }
+      if (cancellationToken?.isStopped == true) {
+        final file = File(path);
+        if (await file.exists()) await file.delete();
+      }
+      cancellationToken?.throwIfCancelled();
+      return path;
+    } catch (_) {
+      cancellationToken?.throwIfCancelled();
+      rethrow;
+    } finally {
+      cancellationToken?.removeListener(cancel);
     }
-    return path;
   }
+
+  static int _copySequence = 0;
 
   static Future<Uint8List> readDocumentPrefix(
     String source, {

@@ -42,5 +42,3 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/best_viewer_welcome.png
-    - assets/pets/silverwolf_v2/
-    - assets/pets/silverwolf_v2/voices/

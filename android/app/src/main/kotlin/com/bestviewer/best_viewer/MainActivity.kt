@@ -42,20 +42,29 @@ class MainActivity : FlutterActivity() {
     private val sourceExecutor = Executors.newFixedThreadPool(8)
     private val scanExecutor = Executors.newSingleThreadExecutor()
     private val thumbnailJobs = ConcurrentHashMap<String, ThumbnailJob>()
+    private val sourceJobs = ConcurrentHashMap<String, ThumbnailJob>()
 
     private inner class ThumbnailJob(private val reply: MethodChannel.Result) : MethodChannel.Result {
         val cancelled = AtomicBoolean(false)
         private val replied = AtomicBoolean(false)
         var future: Future<*>? = null
+        @Volatile var stream: java.io.Closeable? = null
         fun checkActive() {
             if (cancelled.get() || Thread.currentThread().isInterrupted) {
                 throw InterruptedException("Thumbnail cancelled")
             }
         }
-        fun cancel() {
+        @Synchronized fun cancel() {
             cancelled.set(true)
             future?.cancel(true)
+            val openStream = stream
+            if (openStream != null) {
+                Thread({ try { openStream.close() } catch (_: Exception) {} }, "source-cancel").apply { isDaemon = true }.start()
+            }
             error("cancelled", "Thumbnail cancelled", null)
+        }
+        @Synchronized fun publishFile(path: String) {
+            if (cancelled.get()) File(path).delete() else success(path)
         }
         override fun success(value: Any?) {
             if (replied.compareAndSet(false, true)) runOnUiThread { reply.success(value) }
@@ -125,8 +134,13 @@ class MainActivity : FlutterActivity() {
                     call.argument<String>("name"),
                     call.argument<String>("cacheScope"),
                     call.argument<Number>("maxBytes")?.toLong(),
+                    call.argument<String>("requestId"),
                     result,
                 )
+                "cancelMaterialization" -> {
+                    call.argument<String>("requestId")?.let { sourceJobs.remove(it)?.cancel() }
+                    result.success(null)
+                }
                 "readDocumentPrefix" -> readDocumentPrefix(
                     call.argument<String>("source"),
                     call.argument<Int>("maxBytes") ?: 64 * 1024,
@@ -280,20 +294,25 @@ class MainActivity : FlutterActivity() {
         name: String?,
         cacheScope: String?,
         maxBytes: Long?,
+        requestId: String?,
         result: MethodChannel.Result,
     ) {
         if (source.isNullOrBlank()) {
             result.error("argument", "source is required", null)
             return
         }
-        sourceExecutor.execute {
+        val id = requestId ?: java.util.UUID.randomUUID().toString()
+        val job = ThumbnailJob(result)
+        sourceJobs[id] = job
+        job.future = sourceExecutor.submit {
             try {
-                val path = materializeDocument(Uri.parse(source), name, cacheScope, maxBytes)
-                runOnUiThread { result.success(path) }
+                job.checkActive()
+                val path = materializeDocument(Uri.parse(source), name, cacheScope, maxBytes, job)
+                job.publishFile(path)
             } catch (error: Exception) {
-                runOnUiThread {
-                    result.error("materialize", "Cannot read selected document.", error.message)
-                }
+                job.error("materialize", "Cannot read selected document.", error.message)
+            } finally {
+                sourceJobs.remove(id, job)
             }
         }
     }
@@ -894,7 +913,7 @@ class MainActivity : FlutterActivity() {
     )
 
 
-    private fun materializeDocument(uri: Uri, name: String?, cacheScope: String?, maxBytes: Long?): String {
+    private fun materializeDocument(uri: Uri, name: String?, cacheScope: String?, maxBytes: Long?, job: ThumbnailJob): String {
         val extension = name?.substringAfterLast('.', "")?.takeIf { it.isNotEmpty() }
         val directoryName = when (cacheScope) {
             "scan" -> "saf_scan_transient"
@@ -906,10 +925,13 @@ class MainActivity : FlutterActivity() {
         try {
           contentResolver.openInputStream(uri).use { input ->
             requireNotNull(input) { "Cannot open selected document" }
+            job.stream = input
+            job.checkActive()
             output.outputStream().use { outputStream ->
                 val buffer = ByteArray(64 * 1024)
                 var copied = 0L
                 while (true) {
+                    job.checkActive()
                     val count = input.read(buffer)
                     if (count < 0) break
                     copied += count
@@ -922,6 +944,8 @@ class MainActivity : FlutterActivity() {
         } catch (error: Exception) {
             output.delete()
             throw error
+        } finally {
+            job.stream = null
         }
     }
 

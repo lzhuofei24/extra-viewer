@@ -35,6 +35,8 @@ class BrowsingThumbnailController {
   final Set<String> _queued = <String>{};
   final Set<String> _running = <String>{};
   bool _closed = false;
+  final Set<Future<void>> _operations = {};
+  Future<void>? _closing;
 
   void request(EntityListItem item) {
     if (_closed) return;
@@ -70,7 +72,12 @@ class BrowsingThumbnailController {
     while (_running.length < maxConcurrent && _pending.isNotEmpty) {
       final entityId = _pending.removeFirst();
       _running.add(entityId);
-      unawaited(_generate(entityId, force: force));
+      late final Future<void> operation;
+      operation = _generate(entityId, force: force).whenComplete(() {
+        _operations.remove(operation);
+      });
+      _operations.add(operation);
+      unawaited(operation.catchError((Object _, StackTrace __) {}));
     }
   }
 
@@ -95,11 +102,14 @@ class BrowsingThumbnailController {
     }
   }
 
-  Future<void> close() async {
-    if (_closed) return;
+  Future<void> close() => _closing ??= _close();
+
+  Future<void> _close() async {
     _closed = true;
     _pending.clear();
     _queued.clear();
     _cancellation.cancel();
+    await Future.wait(_operations.toList().map(
+        (operation) => operation.catchError((Object _, StackTrace __) {})));
   }
 }

@@ -130,16 +130,11 @@ Future<Object?> dispatchLibrary(LibraryRepository repository, String method,
     case 'deleteDirectoryIndex':
       return repository.deleteDirectoryIndex(args['rootId'] as String,
           force: args['force'] as bool);
-    case 'reconcileDirectoryIndexRoot':
-      repository.reconcileDirectoryIndexRoot(
+    case 'reconcileDirectoryScan':
+      repository.reconcileDirectoryScan(
+          jobId: args['jobId'] as String,
           rootId: args['rootId'] as String,
-          seenPaths: args['seenPaths'] as Iterable<String>);
-      return null;
-    case 'reconcileDirectoryIndexSubtree':
-      repository.reconcileDirectoryIndexSubtree(
-          nodeId: args['nodeId'] as String,
-          rootId: args['rootId'] as String,
-          seenPaths: args['seenPaths'] as Iterable<String>);
+          nodeId: args['nodeId'] as String);
       return null;
     case 'pruneEmptyDirectoryNodes':
       repository.pruneEmptyDirectoryNodes(args['rootId'] as String);

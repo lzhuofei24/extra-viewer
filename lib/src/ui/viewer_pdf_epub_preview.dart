@@ -210,9 +210,14 @@ class _PdfPreviewState extends State<_PdfPreview> {
 
   void _persistReaderState() {
     widget.onReaderStateChanged(
-      scrollOffset: _currentPage.toDouble(),
       zoomScale: _controller?.isReady == true ? _controller!.currentZoom : null,
       extraStateJson: jsonEncode({
+        'readingPosition': {
+          'version': 1,
+          'kind': 'pdf',
+          'sourceRevision': widget.entity.sourceRevision,
+          'page': _currentPage,
+        },
         'pdfPage': _currentPage,
         'pdfBookmarks': _bookmarks.toList()..sort()
       }),
@@ -408,7 +413,10 @@ int _restoredPdfPage(EntityListItem entity) {
     try {
       final decoded = jsonDecode(rawState);
       if (decoded is Map<String, dynamic>) {
-        final stored = decoded['pdfPage'];
+        final position = decoded['readingPosition'];
+        final stored = position is Map && position['kind'] == 'pdf'
+            ? position['page']
+            : decoded['pdfPage'];
         if (stored is num && stored >= 1) return stored.round();
       }
     } catch (_) {

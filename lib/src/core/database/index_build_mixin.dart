@@ -559,132 +559,48 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
   /// visible while scanning; only after the full source has been observed are
   /// missing paths unlinked from this directory tree. Entities referenced by a
   /// custom or graph index remain intact.
-  void reconcileDirectoryIndexRoot({
-    required String rootId,
-    required Iterable<String> seenPaths,
-  }) {
-    final paths =
-        seenPaths.map(_normalizeEntityPath).toSet().toList(growable: false);
+  void reconcileDirectoryScan(
+      {required String jobId, required String rootId, required String nodeId}) {
     writeTransaction(() {
-      database.db.execute('''
-        CREATE TEMP TABLE IF NOT EXISTS current_directory_scan_paths (
-          path TEXT PRIMARY KEY
-        )
-      ''');
-      database.db.execute('DELETE FROM current_directory_scan_paths');
-      final insert = database.db.prepare(
-        'INSERT OR IGNORE INTO current_directory_scan_paths(path) VALUES (?)',
-      );
-      try {
-        for (final path in paths) {
-          insert.execute([path]);
-        }
-      } finally {
-        insert.dispose();
-      }
+      final valid = database.db.select('''SELECT 1 FROM library_build_jobs job
+        WHERE job.id = ? AND job.manifest_complete = 1 AND job.index_root_id = ?
+          AND COALESCE(job.scope_node_id, job.index_root_id) = ?
+          AND EXISTS (SELECT 1 FROM index_nodes WHERE id = ?)
+          AND NOT EXISTS (SELECT 1 FROM library_build_manifest manifest
+            WHERE manifest.job_id = job.id AND manifest.write_state IN ('pending', 'processing', 'failed'))
+      ''', [jobId, rootId, nodeId, nodeId]);
+      if (valid.isEmpty) throw StateError('对账范围未完整提交或已失效');
       database.db.execute(
-        '''
+          'CREATE TEMP TABLE IF NOT EXISTS stale_scan_entities(id TEXT PRIMARY KEY)');
+      database.db.execute('DELETE FROM stale_scan_entities');
+      database.db.execute('''
         WITH RECURSIVE subtree(id) AS (
-          SELECT ?
-          UNION ALL
-          SELECT child.id
-          FROM index_nodes child
+          SELECT ? UNION ALL SELECT child.id FROM index_nodes child
           JOIN subtree parent ON child.parent_id = parent.id
         )
-        DELETE FROM index_node_entities
-        WHERE index_node_id IN (SELECT id FROM subtree)
-          AND entity_id IN (
-            SELECT entity.id
-            FROM entities entity
-            WHERE entity.directory_root_id = ?
-              AND NOT EXISTS (
-                SELECT 1 FROM current_directory_scan_paths seen
-                WHERE seen.path = entity.path
-              )
-          )
-        ''',
-        [rootId, rootId],
-      );
-      database.db.execute(
-        '''
-        DELETE FROM entities
-        WHERE directory_root_id = ?
-          AND NOT EXISTS (
-            SELECT 1 FROM current_directory_scan_paths seen
-            WHERE seen.path = entities.path
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM index_node_entities link
-            WHERE link.entity_id = entities.id
-          )
-        ''',
-        [rootId],
-      );
-      database.db.execute('DELETE FROM current_directory_scan_paths');
-    });
-    pruneEmptyDirectoryNodes(rootId);
-  }
-
-  /// Reconciles only [nodeId] and its descendants after a targeted directory
-  /// refresh. Sibling branches of the same directory index are untouched.
-  void reconcileDirectoryIndexSubtree({
-    required String nodeId,
-    required String rootId,
-    required Iterable<String> seenPaths,
-  }) {
-    final paths =
-        seenPaths.map(_normalizeEntityPath).toSet().toList(growable: false);
-    writeTransaction(() {
+        INSERT OR IGNORE INTO stale_scan_entities(id)
+        SELECT entity.id FROM entities entity JOIN index_node_entities link
+          ON link.entity_id = entity.id
+        WHERE link.index_node_id IN (SELECT id FROM subtree)
+          AND entity.directory_root_id = ?
+          AND NOT EXISTS (SELECT 1 FROM library_build_manifest manifest
+            WHERE manifest.job_id = ? AND manifest.source_path = entity.path)
+      ''', [nodeId, rootId, jobId]);
       database.db.execute('''
-        CREATE TEMP TABLE IF NOT EXISTS current_directory_scan_paths (
-          path TEXT PRIMARY KEY
-        )
-      ''');
-      database.db.execute('DELETE FROM current_directory_scan_paths');
-      final insert = database.db.prepare(
-        'INSERT OR IGNORE INTO current_directory_scan_paths(path) VALUES (?)',
-      );
-      try {
-        for (final path in paths) {
-          insert.execute([path]);
-        }
-      } finally {
-        insert.dispose();
-      }
-      database.db.execute(
-        '''
         WITH RECURSIVE subtree(id) AS (
-          SELECT ?
-          UNION ALL
-          SELECT child.id
-          FROM index_nodes child
+          SELECT ? UNION ALL SELECT child.id FROM index_nodes child
           JOIN subtree parent ON child.parent_id = parent.id
         )
-        DELETE FROM index_node_entities
-        WHERE index_node_id IN (SELECT id FROM subtree)
-          AND entity_id IN (
-            SELECT entity.id
-            FROM entities entity
-            WHERE entity.directory_root_id = ?
-              AND NOT EXISTS (
-                SELECT 1 FROM current_directory_scan_paths seen
-                WHERE seen.path = entity.path
-              )
-          )
-        ''',
-        [nodeId, rootId],
-      );
-      database.db.execute('''
-        DELETE FROM entities
-        WHERE directory_root_id = ?
-          AND NOT EXISTS (
-            SELECT 1 FROM index_node_entities link
-            WHERE link.entity_id = entities.id
-          )
-      ''', [rootId]);
-      database.db.execute('DELETE FROM current_directory_scan_paths');
+        DELETE FROM index_node_entities WHERE index_node_id IN (SELECT id FROM subtree)
+          AND entity_id IN (SELECT id FROM stale_scan_entities)
+      ''', [nodeId]);
+      database.db.execute('''DELETE FROM entities
+        WHERE id IN (SELECT id FROM stale_scan_entities)
+          AND NOT EXISTS (SELECT 1 FROM index_node_entities link WHERE link.entity_id = entities.id)
+      ''');
+      database.db.execute('DELETE FROM stale_scan_entities');
     });
-    pruneEmptyDirectoryNodes(rootId);
+    pruneEmptyDirectoryNodes(nodeId);
   }
 
   void pruneEmptyDirectoryNodes(String rootId) {

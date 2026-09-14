@@ -26,29 +26,15 @@ class LibraryBuildRepository implements BuildAccess {
     final rootId = job.indexRootId;
     if (rootId == null) throw StateError('索引根节点缺失');
     final scopeId = job.targetNodeId ?? rootId;
-    final seen = <String>[];
-    var cursor = -1;
-    while (true) {
-      final page = listManifestPage(job.id, afterSequence: cursor);
-      if (page.isEmpty) break;
-      seen.addAll(page.map((item) => item.sourcePath));
-      cursor = page.last.sequence;
-    }
+    library.reconcileDirectoryScan(
+        jobId: job.id, rootId: rootId, nodeId: scopeId);
     if (job.targetNodeId == null) {
-      library.reconcileDirectoryIndexRoot(rootId: rootId, seenPaths: seen);
       if (job.stagingRootId != null) {
         library.replaceOverlappingDirectoryIndexRoots(
           keepRootId: rootId,
           sourcePath: job.sourcePath,
         );
       }
-    } else {
-      library.reconcileDirectoryIndexSubtree(
-        nodeId: scopeId,
-        rootId: rootId,
-        seenPaths: seen,
-      );
-      library.pruneEmptyDirectoryNodes(rootId);
     }
     library.rebuildIndexNodeStats();
     prepareDocumentPreviewWork(job.id, scopeId);

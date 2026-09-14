@@ -278,22 +278,12 @@ class LibraryClient implements LibraryAccess {
   }
 
   @override
-  Future<void> reconcileDirectoryIndexRoot(
-      {required String rootId, required Iterable<String> seenPaths}) async {
-    await host.call('library', 'reconcileDirectoryIndexRoot',
-        {'rootId': rootId, 'seenPaths': seenPaths.toList(growable: false)});
-  }
-
-  @override
-  Future<void> reconcileDirectoryIndexSubtree(
-      {required String nodeId,
+  Future<void> reconcileDirectoryScan(
+      {required String jobId,
       required String rootId,
-      required Iterable<String> seenPaths}) async {
-    await host.call('library', 'reconcileDirectoryIndexSubtree', {
-      'nodeId': nodeId,
-      'rootId': rootId,
-      'seenPaths': seenPaths.toList(growable: false)
-    });
+      required String nodeId}) async {
+    await host.call('library', 'reconcileDirectoryScan',
+        {'jobId': jobId, 'rootId': rootId, 'nodeId': nodeId});
   }
 
   @override

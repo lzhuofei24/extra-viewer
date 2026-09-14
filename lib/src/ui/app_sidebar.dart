@@ -5,7 +5,6 @@ import 'collapse_grip_icon.dart';
 import 'design_tokens.dart';
 
 enum AppSection {
-  home,
   data,
   video,
   gallery,
@@ -13,7 +12,6 @@ enum AppSection {
   music,
   indexes,
   logs,
-  pet,
   settings
 }
 
@@ -36,46 +34,19 @@ class AppSidebar extends StatelessWidget {
   final VoidCallback onToggleCollapsed;
 
   static const _primaryItems = [
+    _SidebarItem(AppSection.data, '资料目录', Icons.folder_copy_outlined,
+        Icons.folder_copy_rounded,
+        dataTab: BrowserRootTab.directory),
+    _SidebarItem(AppSection.data, '资料集', Icons.account_tree_outlined,
+        Icons.account_tree_rounded,
+        dataTab: BrowserRootTab.tree),
     _SidebarItem(
-        AppSection.home, '首页', Icons.home_outlined, Icons.home_rounded),
-    _SidebarItem(
-      AppSection.data,
-      '目录',
-      Icons.folder_copy_outlined,
-      Icons.folder_copy_rounded,
-      dataTab: BrowserRootTab.directory,
-    ),
-    _SidebarItem(
-      AppSection.data,
-      '树',
-      Icons.account_tree_outlined,
-      Icons.account_tree_rounded,
-      dataTab: BrowserRootTab.tree,
-    ),
-    _SidebarItem(
-      AppSection.data,
-      '图',
-      Icons.hub_outlined,
-      Icons.hub_rounded,
-      dataTab: BrowserRootTab.graph,
-    ),
-    _SidebarItem(
-        AppSection.video, '视频', Icons.movie_outlined, Icons.movie_rounded),
-    _SidebarItem(AppSection.gallery, '图库', Icons.photo_library_outlined,
-        Icons.photo_library_rounded),
-    _SidebarItem(AppSection.reading, '阅读', Icons.auto_stories_outlined,
-        Icons.auto_stories_rounded),
-    _SidebarItem(AppSection.music, '音乐', Icons.library_music_outlined,
-        Icons.library_music_rounded),
+        AppSection.gallery, '最近浏览', Icons.history_outlined, Icons.history),
   ];
 
   static const _utilityItems = [
-    _SidebarItem(AppSection.indexes, '索引', Icons.account_tree_outlined,
-        Icons.account_tree_rounded),
-    _SidebarItem(AppSection.logs, '日志', Icons.bug_report_outlined,
-        Icons.bug_report_rounded),
-    _SidebarItem(AppSection.pet, '宠物', Icons.smart_toy_outlined,
-        Icons.smart_toy_rounded),
+    _SidebarItem(
+        AppSection.indexes, '任务', Icons.task_alt_outlined, Icons.task_alt),
     _SidebarItem(
         AppSection.settings, '设置', Icons.tune_outlined, Icons.tune_rounded),
   ];
@@ -125,6 +96,20 @@ class AppSidebar extends StatelessWidget {
   }
 
   bool _isSelected(_SidebarItem item) {
+    if (item.section == AppSection.gallery) {
+      return const {
+        AppSection.gallery,
+        AppSection.video,
+        AppSection.reading,
+        AppSection.music
+      }.contains(current);
+    }
+    if (item.section == AppSection.settings && current == AppSection.logs) {
+      return true;
+    }
+    if (item.dataTab == BrowserRootTab.tree) {
+      return current == AppSection.data && rootTab != BrowserRootTab.directory;
+    }
     return current == item.section &&
         (item.dataTab == null || item.dataTab == rootTab);
   }

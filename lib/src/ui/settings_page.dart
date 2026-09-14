@@ -12,6 +12,7 @@ class SettingsPage extends StatelessWidget {
     required this.onThemeChanged,
     required this.onSortChanged,
     required this.onResetLocalIndex,
+    this.onOpenDiagnostics,
   });
 
   final ViewerThemeChoice themeChoice;
@@ -19,6 +20,7 @@ class SettingsPage extends StatelessWidget {
   final ValueChanged<ViewerThemeChoice> onThemeChanged;
   final ValueChanged<EntitySortMode> onSortChanged;
   final VoidCallback onResetLocalIndex;
+  final VoidCallback? onOpenDiagnostics;
 
   @override
   Widget build(BuildContext context) {
@@ -31,6 +33,11 @@ class SettingsPage extends StatelessWidget {
           subtitle: '调整应用外观与默认浏览方式。',
         ),
         const SizedBox(height: 18),
+        ListTile(
+            title: const Text('诊断与日志'),
+            subtitle: const Text('错误、接口调用与任务历史'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: onOpenDiagnostics),
         LayoutBuilder(
           builder: (context, constraints) {
             final cards = [

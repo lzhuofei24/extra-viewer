@@ -8,6 +8,33 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Baseline
 
+### Runtime, source cancellation, reconciliation and navigation integration
+
+- Bootstrap is tracked and drained during shutdown; services finishing startup
+  after shutdown begins are closed instead of attached. Browse thumbnail close
+  now drains active operations before database shutdown.
+- Android materialization uses request IDs, exactly-once replies and cancellation.
+  Cancellation attempts to close the input stream off the UI thread; late files
+  and partial copies are removed. Build audio/document reads pass their token.
+  A provider blocked before returning its stream can still finish internally.
+- Directory reconciliation uses indexed manifest SQL and a temporary stale-ID
+  relation instead of collecting the entire manifest in Dart. Validation rejects
+  incomplete writes/wrong scopes; unrelated collection references survive.
+- Removed pet controllers, UI, bindings, packed assets and obsolete home page.
+  Sidebar has five destinations; recent media and collection kinds use in-page
+  choices, diagnostics is reached through settings. Task-page management still
+  needs relocation to its owning source; old pet user config is not yet cleaned.
+- Original prefetch tracks decoded bytes and evicts farthest neighbors over half
+  the global cache budget, including SAF paths. This is post-decode enforcement;
+  pre-decode peak admission remains pending. PDF stops writing pages as pixels
+  and records a versioned position object, retaining legacy page restoration.
+- Validation: full 100 tests and analyze passed before the final browse-close
+  change; Kotlin compilation passed. After browse-close and cleanup changes,
+  analyze and 15 runtime/navigation/repository/shell tests passed.
+- Not complete: full service ownership, viewer registration, module capabilities,
+  dirty-node scheduler, recursive session cache/selection predicates, reflow
+  anchors, toolbar consolidation, pressure tests and release artifacts.
+
 ### Runtime shutdown coordinator foundation
 
 - Added AppRuntime with ordered shutdown phases, idempotent shared completion,
