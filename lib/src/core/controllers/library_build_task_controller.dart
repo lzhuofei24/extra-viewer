@@ -135,49 +135,46 @@ class LibraryBuildTaskController extends ChangeNotifier {
   Future<LibraryBuildJob?> startRoot(
     String sourcePath, {
     String? displayName,
-  }) async {
-    if (isRunning || sourcePath.trim().isEmpty) return null;
-    final job = (await builds.create(
-      sourcePath: _normalizeSource(sourcePath),
-      operation: LibraryBuildOperation.rootScan,
-    ));
-    return _run(job, displayName: displayName);
-  }
+  }) =>
+      _schedule(() async {
+        if (sourcePath.trim().isEmpty) return null;
+        final job = (await builds.create(
+          sourcePath: _normalizeSource(sourcePath),
+          operation: LibraryBuildOperation.rootScan,
+        ));
+        return _run(job, displayName: displayName);
+      });
 
-  Future<LibraryBuildJob?> updateNode(IndexNode node) async {
-    if (isRunning) return null;
-    final root = (await library.directoryIndexRootForNode(node.id));
-    if (root == null || root.sourcePath == null) return null;
-    final source = SourceHandle.parse(root.sourcePath!).isAndroidContentUri
-        ? root.sourcePath!
-        : p.join(
-            root.sourcePath!,
-            (await library.directoryNodeRelativePath(node.id)) ?? '',
-          );
-    final job = (await builds.create(
-      sourcePath: _normalizeSource(source),
-      operation: LibraryBuildOperation.subtreeRefresh,
-      targetNodeId: node.id,
-    ));
-    return _run(job);
-  }
+  Future<LibraryBuildJob?> updateNode(IndexNode node) => _schedule(() async {
+        final root = (await library.directoryIndexRootForNode(node.id));
+        if (root == null || root.sourcePath == null) return null;
+        final source = SourceHandle.parse(root.sourcePath!).isAndroidContentUri
+            ? root.sourcePath!
+            : p.join(
+                root.sourcePath!,
+                (await library.directoryNodeRelativePath(node.id)) ?? '',
+              );
+        final job = (await builds.create(
+          sourcePath: _normalizeSource(source),
+          operation: LibraryBuildOperation.subtreeRefresh,
+          targetNodeId: node.id,
+        ));
+        return _run(job);
+      });
 
-  Future<LibraryBuildJob?> resume(LibraryBuildJob job) {
-    if (isRunning) return Future<LibraryBuildJob?>.value(null);
-    return _run(job);
-  }
+  Future<LibraryBuildJob?> resume(LibraryBuildJob job) =>
+      _schedule(() => _run(job));
 
-  Future<LibraryBuildJob?> retryFailed(LibraryBuildJob job) async {
-    if (isRunning) return null;
-    (await builds.retryFailedAssets(job.id));
-    return _run((await builds.get(job.id)) ?? job);
-  }
+  Future<LibraryBuildJob?> retryFailed(LibraryBuildJob job) =>
+      _schedule(() async {
+        (await builds.retryFailedAssets(job.id));
+        return _run((await builds.get(job.id)) ?? job);
+      });
 
-  Future<LibraryBuildJob?> recheck(LibraryBuildJob job) async {
-    if (isRunning) return null;
-    (await builds.restartFromManifest(job.id));
-    return _run((await builds.get(job.id)) ?? job);
-  }
+  Future<LibraryBuildJob?> recheck(LibraryBuildJob job) => _schedule(() async {
+        (await builds.restartFromManifest(job.id));
+        return _run((await builds.get(job.id)) ?? job);
+      });
 
   Future<void> abandon(LibraryBuildJob job) async {
     if (isRunning) {
@@ -193,31 +190,31 @@ class LibraryBuildTaskController extends ChangeNotifier {
   Future<LibraryBuildJob?> rebuildNodePreview(
     String nodeId, {
     IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,
-  }) async {
-    if (isRunning) return null;
-    final root = (await library.owningIndexRootForNode(nodeId));
-    if (root == null) return null;
-    final job = (await builds.create(
-      sourcePath: root.sourcePath ?? 'index://${root.id}',
-      kind: LibraryBuildKind.rebuildPreviews,
-      operation: LibraryBuildOperation.subtreeRefresh,
-      targetNodeId: nodeId,
-    ));
-    (await builds.setRoots(jobId: job.id, indexRootId: root.id));
-    (await builds.prepareNodePreviewWork(
-      job.id,
-      scopeNodeId: nodeId,
-      rootNodeId: root.id,
-      scope: scope,
-    ));
-    final prepared = (await builds.get(job.id))!;
-    (await builds.checkpointStage(
-      jobId: job.id,
-      stage: LibraryBuildStage.nodePreviews,
-      nodePreviewTotal: prepared.nodePreviewTotal,
-    ));
-    return _run((await builds.get(job.id))!);
-  }
+  }) =>
+      _schedule(() async {
+        final root = (await library.owningIndexRootForNode(nodeId));
+        if (root == null) return null;
+        final job = (await builds.create(
+          sourcePath: root.sourcePath ?? 'index://${root.id}',
+          kind: LibraryBuildKind.rebuildPreviews,
+          operation: LibraryBuildOperation.subtreeRefresh,
+          targetNodeId: nodeId,
+        ));
+        (await builds.setRoots(jobId: job.id, indexRootId: root.id));
+        (await builds.prepareNodePreviewWork(
+          job.id,
+          scopeNodeId: nodeId,
+          rootNodeId: root.id,
+          scope: scope,
+        ));
+        final prepared = (await builds.get(job.id))!;
+        (await builds.checkpointStage(
+          jobId: job.id,
+          stage: LibraryBuildStage.nodePreviews,
+          nodePreviewTotal: prepared.nodePreviewTotal,
+        ));
+        return _run((await builds.get(job.id))!);
+      });
 
   /// Repairs EPUB excerpts created by older builds that completed before the
   /// document-preview phase existed. It never rescans folders or regenerates
@@ -225,7 +222,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
   /// owns the repository.
   Future<int> repairMissingEpubMetadataPreviews({int limit = 200}) async {
     if (isRunning) return 0;
-    final entities = (await library.listEpubsMissingMetadataPreview(limit: limit));
+    final entities =
+        (await library.listEpubsMissingMetadataPreview(limit: limit));
     if (entities.isEmpty) return 0;
     var repaired = 0;
     await _forEachConcurrent(entities, 2, (entity) async {
@@ -237,7 +235,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
         if (metadata.$1 == null || metadata.$1!.trim().isEmpty) {
           throw StateError('EPUB 中没有可用于预览的正文');
         }
-        (await library.updateEntityMetadataPreview(entity.id, metadata.$1, null));
+        (await library.updateEntityMetadataPreview(
+            entity.id, metadata.$1, null));
         repaired++;
       } catch (error, stackTrace) {
         AppDiagnosticLog.instance.error(
@@ -265,28 +264,39 @@ class LibraryBuildTaskController extends ChangeNotifier {
     LibraryBuildJob initial, {
     String? displayName,
   }) {
+    return _execute(initial, displayName: displayName);
+  }
+
+  Future<LibraryBuildJob?> _schedule(
+      Future<LibraryBuildJob?> Function() action) {
     if (isRunning) return Future.value(null);
-    return _activeRun = _execute(initial, displayName: displayName);
+    // Reserve ownership before the first database await, including task creation.
+    _control = LibraryBuildControl();
+    _error = null;
+    _notifyProgress(force: true);
+    return _activeRun = Future<LibraryBuildJob?>.sync(action).whenComplete(() {
+      _control = null;
+      _notifyProgress(force: true);
+    });
   }
 
   Future<LibraryBuildJob?> _execute(
     LibraryBuildJob initial, {
     String? displayName,
   }) async {
-    _control = LibraryBuildControl();
     _error = null;
     var job = initial;
     try {
-    job = await builds.setRunning(initial.id);
-    _activeJob = job;
-    _report(
-      job,
-      await _storedStageCompleted(job),
-      _storedStageTotal(job),
-      initial.status == LibraryBuildStatus.paused
-          ? '正在继续任务：已恢复已保存进度'
-          : '正在启动索引任务',
-    );
+      job = await builds.setRunning(initial.id);
+      _activeJob = job;
+      _report(
+        job,
+        await _storedStageCompleted(job),
+        _storedStageTotal(job),
+        initial.status == LibraryBuildStatus.paused
+            ? '正在继续任务：已恢复已保存进度'
+            : '正在启动索引任务',
+      );
       while (job.stage != LibraryBuildStage.completed) {
         _control!.check();
         try {
@@ -346,7 +356,6 @@ class LibraryBuildTaskController extends ChangeNotifier {
       (await builds.fail(job.id, _error!));
       return null;
     } finally {
-      _control = null;
       _progress = null;
       _activeJob = null;
       await refresh();
@@ -361,15 +370,16 @@ class LibraryBuildTaskController extends ChangeNotifier {
         ? null
         : (await library.directoryNodeRelativePath(job.scopeNodeId!));
     _report(job, (await builds.manifestItemCount(job.id)), 0, '正在校验来源并恢复目录队列');
-    final root =
-        await adapter.resolveRoot(job.sourcePath, relativeScope: scope);
-    if ((await builds.nextDirectory(job.id)) == null && !job.manifestComplete) {
-      if (!await builds.hasDirectoryFrontier(job.id)) {
-        (await builds.resetManifest(job.id));
-        (await builds.seedDirectory(job.id, root));
-      }
-    }
     try {
+      final root =
+          await adapter.resolveRoot(job.sourcePath, relativeScope: scope);
+      if ((await builds.nextDirectory(job.id)) == null &&
+          !job.manifestComplete) {
+        if (!await builds.hasDirectoryFrontier(job.id)) {
+          (await builds.resetManifest(job.id));
+          (await builds.seedDirectory(job.id, root));
+        }
+      }
       while (true) {
         _control!.check();
         final directory = (await builds.nextDirectory(job.id));
@@ -411,7 +421,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
         _control!.check();
         (await builds.completeDirectory(job.id, directory.locator));
       }
-      (await builds.completeManifest(job.id, (await builds.manifestItemCount(job.id))));
+      (await builds.completeManifest(
+          job.id, (await builds.manifestItemCount(job.id))));
     } on LibraryBuildPausedException {
       rethrow;
     } on LibraryBuildAbandonedException {
@@ -452,18 +463,28 @@ class LibraryBuildTaskController extends ChangeNotifier {
     var written = job.indexedTotal;
     while (true) {
       _control!.check();
-      final page = (await builds.listManifestPage(job.id, afterSequence: cursor));
+      final page = (await builds.listManifestPage(job.id,
+          afterSequence: cursor, pendingOnly: true));
       if (page.isEmpty) break;
-      final existing =
-          (await library.getEntitiesByPaths(page.map((item) => item.sourcePath)));
+      final existing = (await library
+          .getEntitiesByPaths(page.map((item) => item.sourcePath)));
       final detailsBySequence = <int, (String, int, int, int, String?, int?)>{};
       // SAF reads are latency-bound. Keep up to eight in flight, then leave
       // all SQLite work to the single writer transaction below.
+      final inspectionErrors = <int, String>{};
       await _forEachConcurrent(page, 8, (item) async {
+        _control!.check();
         final handler = FileFormatRegistry.resolvePath(item.name);
         if (handler == null) return;
-        detailsBySequence[item.sequence] =
-            await _inspectForIndex(item, handler);
+        try {
+          detailsBySequence[item.sequence] =
+              await _inspectForIndex(item, handler);
+        } catch (error, stack) {
+          inspectionErrors[item.sequence] = '$error';
+          AppDiagnosticLog.instance.error(
+              'index_file_inspection_failed', error, stack,
+              fields: {'jobId': job.id, 'path': item.sourcePath});
+        }
       });
       final nodesBySequence = <int, IndexNode>{};
       for (final item in page) {
@@ -482,6 +503,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
         detailsBySequence: detailsBySequence,
         nodesBySequence: nodesBySequence,
         indexedBefore: written,
+        inspectionErrors: inspectionErrors,
       );
       written += indexedInPage;
       cursor = page.last.sequence;
@@ -495,7 +517,6 @@ class LibraryBuildTaskController extends ChangeNotifier {
       indexedTotal: written,
     ));
   }
-
 
   Future<void> _finalizeIndex(LibraryBuildJob job) async {
     _report(job, 0, 1, '正在整理并提交索引');
@@ -524,7 +545,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
             return;
           }
           final metadata = await _metadataForEntity(entity, handler);
-          (await library.updateEntityMetadataPreview(id, metadata.$1, metadata.$2));
+          (await library.updateEntityMetadataPreview(
+              id, metadata.$1, metadata.$2));
           results[id] = (state: LibraryBuildWorkState.completed, error: null);
         } on LibraryBuildPausedException {
           rethrow;
@@ -946,7 +968,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
     await Future.wait(List.generate(concurrency, (_) => worker()));
   }
 
-  Future<int> _storedStageCompleted(LibraryBuildJob job) async => switch (job.stage) {
+  Future<int> _storedStageCompleted(LibraryBuildJob job) async =>
+      switch (job.stage) {
         LibraryBuildStage.manifest => (await builds.manifestItemCount(job.id)),
         LibraryBuildStage.indexWrite => job.indexedTotal,
         LibraryBuildStage.finalize => 0,

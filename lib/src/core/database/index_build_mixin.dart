@@ -11,6 +11,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
     required Map<int, (String, int, int, int, String?, int?)> detailsBySequence,
     required Map<int, IndexNode> nodesBySequence,
     required int indexedBefore,
+    Map<int, String> inspectionErrors = const {},
   }) {
     final statements = <LibraryWriteStatement>[];
     final now = nowMillis();
@@ -19,7 +20,17 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
     for (final item in page) {
       final details = detailsBySequence[item.sequence];
       final node = nodesBySequence[item.sequence];
-      if (details == null || node == null) continue;
+      if (details == null || node == null) {
+        statements.add(LibraryWriteStatement(
+          "UPDATE library_build_manifest SET write_state = 'failed', error = ? WHERE job_id = ? AND sequence = ?",
+          [
+            inspectionErrors[item.sequence] ?? '文件读取未返回结果',
+            job.id,
+            item.sequence
+          ],
+        ));
+        continue;
+      }
       final current = existing[item.sourcePath];
       final entityId = current?.id ?? newId();
       if (current == null) {
@@ -37,7 +48,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
           ''',
           [
             entityId,
-            item.sourcePath,
+            _normalizeEntityPath(item.sourcePath),
             item.name,
             item.format,
             item.entityType.value,
@@ -87,7 +98,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
             item.format,
             item.entityType.value,
             details.$1,
-            details.$5,
+            details.$5 ?? current.contentExcerpt,
             status,
             preserveFields ? 1 : 0,
             preserveFields ? 1 : 0,
@@ -97,7 +108,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
             details.$2,
             details.$3,
             details.$4,
-            details.$6,
+            details.$6 ?? current.durationMs,
             rootId,
             now,
             entityId,
@@ -113,6 +124,10 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
         [node.id, now, entityId],
       ));
       touchedNodes.add(node.id);
+      statements.add(LibraryWriteStatement(
+        "UPDATE library_build_manifest SET write_state = 'completed', error = NULL WHERE job_id = ? AND sequence = ?",
+        [job.id, item.sequence],
+      ));
       completed++;
     }
     for (final nodeId in touchedNodes) {
@@ -125,13 +140,26 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
       'UPDATE library_build_jobs SET indexed_total = ?, index_cursor = ?, updated_at = ? WHERE id = ?',
       [indexedBefore + completed, page.last.sequence, now, job.id],
     ));
+    if (completed > 0) {
+      statements.add(LibraryWriteStatement(
+        'UPDATE index_nodes SET is_staging = 0 WHERE id = ?',
+        [rootId],
+      ));
+    }
     writeTransaction(() {
       final prepared = <String, PreparedStatement>{};
       try {
         for (final statement in statements) {
-          prepared.putIfAbsent(statement.sql, () => database.db.prepare(statement.sql)).execute(statement.parameters);
+          prepared
+              .putIfAbsent(
+                  statement.sql, () => database.db.prepare(statement.sql))
+              .execute(statement.parameters);
         }
-      } finally { for (final statement in prepared.values) { statement.dispose(); } }
+      } finally {
+        for (final statement in prepared.values) {
+          statement.dispose();
+        }
+      }
     });
     return completed;
   }
@@ -142,20 +170,17 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
     required (String, int, int, int, String?, int?) details,
     required String rootId,
   }) {
-    final needsGeneratedThumbnail = item.entityType == EntityType.image ||
-        item.entityType == EntityType.video ||
-        item.entityType == EntityType.document;
     return entity.hash == details.$1 &&
-        entity.contentExcerpt == details.$5 &&
+        entity.name == item.name &&
+        (details.$5 == null || entity.contentExcerpt == details.$5) &&
         entity.entityType == item.entityType &&
         entity.format == item.format &&
         entity.size == details.$2 &&
-        entity.durationMs == details.$6 &&
+        (details.$6 == null || entity.durationMs == details.$6) &&
         entity.directoryRootId == rootId &&
-        entity.localPath == null &&
-        (!needsGeneratedThumbnail ||
-            entity.thumbnailStatus == ThumbnailStatus.none);
+        entity.localPath == null;
   }
+
   IndexNode ensureDirectoryIndexRoot(
     String sourcePath, {
     bool staging = false,

@@ -368,7 +368,8 @@ class _AppShellState extends State<AppShell> {
     AppDiagnosticLog.instance.info('app_bootstrap_started');
     final DatabaseRuntime runtime;
     try {
-      runtime = await DatabaseRuntime.open(testDatabaseFactory: widget.databaseFactory);
+      runtime = await DatabaseRuntime.open(
+          testDatabaseFactory: widget.databaseFactory);
     } on AppDatabaseResetRequired catch (error) {
       AppDiagnosticLog.instance.warning('database_reset_required', fields: {
         'foundSchemaVersion': error.foundVersion,
@@ -408,8 +409,23 @@ class _AppShellState extends State<AppShell> {
       repository,
       onCacheChanged: (_) => _scheduleThumbnailRefresh(),
     );
-    final buildTasks = LibraryBuildTaskController(repository, builds: BuildClient(writeWorker));
-    await buildTasks.initialize();
+    final buildTasks = LibraryBuildTaskController(repository,
+        builds: BuildClient(writeWorker));
+    try {
+      await buildTasks.initialize();
+    } catch (error, stack) {
+      await browsingThumbnails.close();
+      buildTasks.dispose();
+      await writeWorker.close();
+      AppDiagnosticLog.instance.error('build_runtime_start_failed', error, stack);
+      if (mounted) {
+        setState(() {
+        _indexError = '无法启动资料库服务：$error';
+        _loading = false;
+      });
+      }
+      return;
+    }
     buildTasks.addListener(_handleBuildTaskChanged);
     final imageCache = PaintingBinding.instance.imageCache;
     imageCache.maximumSizeBytes =
@@ -471,6 +487,15 @@ class _AppShellState extends State<AppShell> {
           fields: {'error': '$error', 'stackTrace': '$stackTrace'},
         );
       }
+    }
+    if (!mounted) {
+      await buildTasks.close();
+      buildTasks.dispose();
+      await audioController.close();
+      await browsingThumbnails.close();
+      await readWorker?.close();
+      await writeWorker.close();
+      return;
     }
     setState(() {
       _database = database;
@@ -1874,7 +1899,8 @@ class _AppShellState extends State<AppShell> {
         nativeImageBackend: NativeImageThumbnailBackend(),
         windowsWicBackend: WindowsWicWebpThumbnailBackend(),
       ).regenerateThumbnail(entity);
-      for (final nodeId in (await repository.listIndexNodeIdsForEntity(entity.id))) {
+      for (final nodeId
+          in (await repository.listIndexNodeIdsForEntity(entity.id))) {
         await _refreshNodePreview(nodeId, reason: 'thumbnail_regenerated');
       }
       final refreshed = (await repository.getEntity(item.id));
@@ -1931,8 +1957,8 @@ class _AppShellState extends State<AppShell> {
     final trimmed = name?.trim();
     if (trimmed == null || trimmed.isEmpty) return;
     try {
-      final node =
-          (await repository.createCustomNode(parentId: parent.id, name: trimmed));
+      final node = (await repository.createCustomNode(
+          parentId: parent.id, name: trimmed));
       if (entityIds.isNotEmpty) {
         (await repository.linkEntitiesToIndexNode(
             entityIds: entityIds, indexNodeId: node.id));
@@ -2012,8 +2038,7 @@ class _AppShellState extends State<AppShell> {
         (_selectedEntityIds.isEmpty && _selectedNodeIds.isEmpty)) {
       return;
     }
-    final collections = (await repository
-        .listIndexRoots())
+    final collections = (await repository.listIndexRoots())
         .where((node) => node.nodeType == NodeType.customIndexRoot)
         .toList(growable: false);
     if (collections.isEmpty) {
@@ -2055,11 +2080,13 @@ class _AppShellState extends State<AppShell> {
       return;
     }
     final selected = <String>{};
-    final trees = await Future.wait(collections.map((root) async => IndexTreeNode(
-      item: root,
-      children: await repository.listIndexTree(root.id),
-      entityCount: await repository.countEntitiesUnderIndexNode(root.id),
-    )));
+    final trees =
+        await Future.wait(collections.map((root) async => IndexTreeNode(
+              item: root,
+              children: await repository.listIndexTree(root.id),
+              entityCount:
+                  await repository.countEntitiesUnderIndexNode(root.id),
+            )));
     if (!mounted) return;
     final targets = await showDialog<Set<String>>(
       context: context,
@@ -2186,8 +2213,7 @@ class _AppShellState extends State<AppShell> {
     final repository = _repository;
     final source = _currentIndexNode;
     if (repository == null || source == null) return;
-    final targets = (await repository
-        .listIndexRoots())
+    final targets = (await repository.listIndexRoots())
         .where((node) => node.nodeType == NodeType.customIndexRoot)
         .toList(growable: false);
     if (!mounted) return;
@@ -2353,7 +2379,8 @@ class _AppShellState extends State<AppShell> {
       _reload(invalidateBrowserCache: true);
       return;
     }
-    final deletesEntities = (await repository.willDeleteEntitiesWhenDeletingNode(
+    final deletesEntities =
+        (await repository.willDeleteEntitiesWhenDeletingNode(
       index.id,
     ));
     final message = deletesEntities

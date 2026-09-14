@@ -24,7 +24,6 @@ class ThumbnailService {
     this.androidVideoBackend,
     this.nativeImageBackend,
     this.windowsWicBackend,
-    this.updateBuffer,
   }) : store = repository.thumbnailStore;
 
   final LibraryAccess repository;
@@ -34,7 +33,6 @@ class ThumbnailService {
   final AndroidVideoThumbnailBackend? androidVideoBackend;
   final NativeImageThumbnailBackend? nativeImageBackend;
   final WindowsWicWebpThumbnailBackend? windowsWicBackend;
-  final ThumbnailUpdateBuffer? updateBuffer;
   final timings = ThumbnailTimingCollector();
   final concurrencyAdvisor = ThumbnailConcurrencyAdvisor();
 
@@ -226,12 +224,7 @@ class ThumbnailService {
   }
 
   Future<void> _recordUpdate(ThumbnailDatabaseUpdate update) async {
-    final buffer = updateBuffer;
-    if (buffer != null) {
-      buffer.add(update);
-    } else {
-      (await repository.applyThumbnailUpdates([update]));
-    }
+    await repository.applyThumbnailUpdates([update]);
   }
 }
 
@@ -269,43 +262,6 @@ class ThumbnailConcurrencyAdvisor {
       previous == 0 ? next : ((previous * 7) + next) ~/ 8;
 }
 
-class ThumbnailUpdateBuffer {
-  ThumbnailUpdateBuffer(
-    this.repository, {
-    this.batchSize = 100,
-    this.useWriteWorker = false,
-  });
-
-  final LibraryAccess repository;
-  final int batchSize;
-  final bool useWriteWorker;
-  final List<ThumbnailDatabaseUpdate> _pending = <ThumbnailDatabaseUpdate>[];
-
-  void add(ThumbnailDatabaseUpdate update) {
-    _pending.add(update);
-    if (_pending.length >= batchSize) {
-      if (useWriteWorker) {
-        unawaited(flushAsync());
-      } else {
-        flush();
-      }
-    }
-  }
-
-  Future<void> flush() async {
-    if (_pending.isEmpty) return;
-    final batch = List<ThumbnailDatabaseUpdate>.of(_pending);
-    _pending.clear();
-    (await repository.applyThumbnailUpdates(batch));
-  }
-
-  Future<void> flushAsync() async {
-    if (_pending.isEmpty) return;
-    final batch = List<ThumbnailDatabaseUpdate>.of(_pending);
-    _pending.clear();
-    await repository.applyThumbnailUpdatesAsync(batch);
-  }
-}
 
 class ThumbnailTimingCollector {
   int imageMs = 0;

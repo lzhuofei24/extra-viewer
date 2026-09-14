@@ -12,8 +12,11 @@ void main() {
     );
     // Database startup uses real isolate messages, which fake timer pumps do
     // not advance. Give the worker a bounded real-time startup window.
-    for (var attempt = 0; attempt < 100 && find.text('首页').evaluate().isEmpty; attempt++) {
-      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+    for (var attempt = 0;
+        attempt < 100 && find.text('首页').evaluate().isEmpty;
+        attempt++) {
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 50)));
       await tester.pump();
     }
 
@@ -25,6 +28,7 @@ void main() {
     expect(find.byIcon(Icons.tune_outlined), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)));
   });
 }

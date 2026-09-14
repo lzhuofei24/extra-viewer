@@ -659,6 +659,7 @@ class LibraryBuildJob {
     this.scopeNodeId,
     this.manifestComplete = false,
     this.indexCursor = -1,
+    this.indexFailed = 0,
   });
 
   final String id;
@@ -666,6 +667,7 @@ class LibraryBuildJob {
   final String? scopeNodeId;
   final bool manifestComplete;
   final int indexCursor;
+  final int indexFailed;
   final String sourcePath;
   final LibraryBuildOperation operation;
   final String? targetNodeId;

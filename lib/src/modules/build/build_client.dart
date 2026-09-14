@@ -2,94 +2,332 @@
 import '../../core/domain/models.dart';
 import '../infrastructure/database_host.dart';
 import 'build_access.dart';
+
 class BuildClient implements BuildAccess {
-BuildClient(this.host); final DatabaseHost host;
-@override Future<void> finalizeIndex(LibraryBuildJob job) async {
-await host.call('build', 'finalizeIndex', {'job': job}); }
-@override Future<LibraryBuildJob> create({required String sourcePath, required LibraryBuildOperation operation, String? targetNodeId, LibraryBuildKind kind = LibraryBuildKind.scanScope}) async {
-return (await host.call('build', 'create', {'sourcePath': sourcePath,'operation': operation,'targetNodeId': targetNodeId,'kind': kind})) as LibraryBuildJob; }
-@override Future<LibraryBuildJob?> get(String jobId) async {
-return (await host.call('build', 'get', {'jobId': jobId})) as LibraryBuildJob?; }
-@override Future<List<LibraryBuildJob>> listRecoverable() async {
-return (await host.call('build', 'listRecoverable', {})) as List<LibraryBuildJob>; }
-@override Future<List<LibraryBuildJob>> listHistory({int limit = 100}) async {
-return (await host.call('build', 'listHistory', {'limit': limit})) as List<LibraryBuildJob>; }
-@override Future<void> markInterruptedRecoverable() async {
-await host.call('build', 'markInterruptedRecoverable', {}); }
-@override Future<LibraryBuildJob> setRunning(String jobId) async {
-return (await host.call('build', 'setRunning', {'jobId': jobId})) as LibraryBuildJob; }
-@override Future<LibraryBuildJob> pause(String jobId) async {
-return (await host.call('build', 'pause', {'jobId': jobId})) as LibraryBuildJob; }
-@override Future<LibraryBuildJob> fail(String jobId, Object error) async {
-return (await host.call('build', 'fail', {'jobId': jobId,'error': error})) as LibraryBuildJob; }
-@override Future<LibraryBuildJob> block(String jobId, Object error) async {
-return (await host.call('build', 'block', {'jobId': jobId,'error': error})) as LibraryBuildJob; }
-@override Future<void> validateScope(LibraryBuildJob job) async {
-await host.call('build', 'validateScope', {'job': job}); }
-@override Future<void> completeManifest(String jobId, int total) async {
-await host.call('build', 'completeManifest', {'jobId': jobId,'total': total}); }
-@override Future<void> abandon(String jobId) async {
-await host.call('build', 'abandon', {'jobId': jobId}); }
-@override Future<LibraryBuildJob> setRoots({required String jobId, required String indexRootId, String? stagingRootId}) async {
-return (await host.call('build', 'setRoots', {'jobId': jobId,'indexRootId': indexRootId,'stagingRootId': stagingRootId})) as LibraryBuildJob; }
-@override Future<LibraryBuildJob> checkpointStage({required String jobId, required LibraryBuildStage stage, int? manifestTotal, int? indexedTotal, int? documentPreviewTotal, int? entityPreviewTotal, int? nodePreviewTotal}) async {
-return (await host.call('build', 'checkpointStage', {'jobId': jobId,'stage': stage,'manifestTotal': manifestTotal,'indexedTotal': indexedTotal,'documentPreviewTotal': documentPreviewTotal,'entityPreviewTotal': entityPreviewTotal,'nodePreviewTotal': nodePreviewTotal})) as LibraryBuildJob; }
-@override Future<void> resetManifest(String jobId) async {
-await host.call('build', 'resetManifest', {'jobId': jobId}); }
-@override Future<void> upsertManifest(Iterable<LibraryBuildManifestItem> values) async {
-await host.call('build', 'upsertManifest', {'values': values.toList(growable: false)}); }
-@override Future<void> upsertManifestAsync(Iterable<LibraryBuildManifestItem> values) async {
-await host.call('build', 'upsertManifestAsync', {'values': values.toList(growable: false)}); }
-@override Future<int> manifestItemCount(String jobId) async {
-return (await host.call('build', 'manifestItemCount', {'jobId': jobId})) as int; }
-@override Future<bool> hasDirectoryFrontier(String jobId) async {
-return (await host.call('build', 'hasDirectoryFrontier', {'jobId': jobId})) as bool; }
-@override Future<void> checkpoint() async {
-await host.call('build', 'checkpoint', {}); }
-@override Future<void> seedDirectory(String jobId, String locator) async {
-await host.call('build', 'seedDirectory', {'jobId': jobId,'locator': locator}); }
-@override Future<({String locator, String relativePath})?> nextDirectory(String jobId) async {
-return (await host.call('build', 'nextDirectory', {'jobId': jobId})) as ({String locator, String relativePath})?; }
-@override Future<int> beginDirectory(String jobId, String locator, String relativePath) async {
-return (await host.call('build', 'beginDirectory', {'jobId': jobId,'locator': locator,'relativePath': relativePath})) as int; }
-@override Future<void> commitDirectoryPage(String jobId, String locator, List<LibraryBuildManifestItem> items, List<({String locator, String relativePath})> directories) async {
-await host.call('build', 'commitDirectoryPage', {'jobId': jobId,'locator': locator,'items': items,'directories': directories}); }
-@override Future<void> completeDirectory(String jobId, String locator) async {
-await host.call('build', 'completeDirectory', {'jobId': jobId,'locator': locator}); }
-@override Future<void> updateIndexedProgress(String jobId, int indexedTotal) async {
-await host.call('build', 'updateIndexedProgress', {'jobId': jobId,'indexedTotal': indexedTotal}); }
-@override Future<List<LibraryBuildManifestItem>> listManifestPage(String jobId, {required int afterSequence, int limit = 200}) async {
-return (await host.call('build', 'listManifestPage', {'jobId': jobId,'afterSequence': afterSequence,'limit': limit})) as List<LibraryBuildManifestItem>; }
-@override Future<void> prepareEntityPreviewWork(String jobId, String scopeNodeId) async {
-await host.call('build', 'prepareEntityPreviewWork', {'jobId': jobId,'scopeNodeId': scopeNodeId}); }
-@override Future<void> prepareDocumentPreviewWork(String jobId, String scopeNodeId) async {
-await host.call('build', 'prepareDocumentPreviewWork', {'jobId': jobId,'scopeNodeId': scopeNodeId}); }
-@override Future<void> prepareNodePreviewWork(String jobId, {required String scopeNodeId, required String rootNodeId, IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.subtree}) async {
-await host.call('build', 'prepareNodePreviewWork', {'jobId': jobId,'scopeNodeId': scopeNodeId,'rootNodeId': rootNodeId,'scope': scope}); }
-@override Future<bool> nodePreviewWorkIncludesDescendants(String jobId, String scopeNodeId) async {
-return (await host.call('build', 'nodePreviewWorkIncludesDescendants', {'jobId': jobId,'scopeNodeId': scopeNodeId})) as bool; }
-@override Future<List<String>> claimEntityPreviewWork(String jobId, {int limit = 100}) async {
-return (await host.call('build', 'claimEntityPreviewWork', {'jobId': jobId,'limit': limit})) as List<String>; }
-@override Future<List<String>> claimDocumentPreviewWork(String jobId, {int limit = 100}) async {
-return (await host.call('build', 'claimDocumentPreviewWork', {'jobId': jobId,'limit': limit})) as List<String>; }
-@override Future<List<String>> claimNodePreviewWork(String jobId, {int limit = 8}) async {
-return (await host.call('build', 'claimNodePreviewWork', {'jobId': jobId,'limit': limit})) as List<String>; }
-@override Future<void> completeEntityPreviewWork(String jobId, Map<String, ({LibraryBuildWorkState state, String? error})> results) async {
-await host.call('build', 'completeEntityPreviewWork', {'jobId': jobId,'results': results}); }
-@override Future<void> completeDocumentPreviewWork(String jobId, Map<String, ({LibraryBuildWorkState state, String? error})> results) async {
-await host.call('build', 'completeDocumentPreviewWork', {'jobId': jobId,'results': results}); }
-@override Future<void> completeNodePreviewWork(String jobId, Map<String, ({LibraryBuildWorkState state, String? error})> results) async {
-await host.call('build', 'completeNodePreviewWork', {'jobId': jobId,'results': results}); }
-@override Future<bool> hasPendingEntityPreviewWork(String jobId) async {
-return (await host.call('build', 'hasPendingEntityPreviewWork', {'jobId': jobId})) as bool; }
-@override Future<bool> hasPendingNodePreviewWork(String jobId) async {
-return (await host.call('build', 'hasPendingNodePreviewWork', {'jobId': jobId})) as bool; }
-@override Future<bool> hasPendingDocumentPreviewWork(String jobId) async {
-return (await host.call('build', 'hasPendingDocumentPreviewWork', {'jobId': jobId})) as bool; }
-@override Future<void> releaseProcessingWork(String jobId, {required LibraryBuildStage stage}) async {
-await host.call('build', 'releaseProcessingWork', {'jobId': jobId,'stage': stage}); }
-@override Future<void> retryFailedAssets(String jobId) async {
-await host.call('build', 'retryFailedAssets', {'jobId': jobId}); }
-@override Future<void> restartFromManifest(String jobId) async {
-await host.call('build', 'restartFromManifest', {'jobId': jobId}); }
+  BuildClient(this.host);
+  final DatabaseHost host;
+  @override
+  Future<void> finalizeIndex(LibraryBuildJob job) async {
+    await host.call('build', 'finalizeIndex', {'job': job});
+  }
+
+  @override
+  Future<LibraryBuildJob> create(
+      {required String sourcePath,
+      required LibraryBuildOperation operation,
+      String? targetNodeId,
+      LibraryBuildKind kind = LibraryBuildKind.scanScope}) async {
+    return (await host.call('build', 'create', {
+      'sourcePath': sourcePath,
+      'operation': operation,
+      'targetNodeId': targetNodeId,
+      'kind': kind
+    })) as LibraryBuildJob;
+  }
+
+  @override
+  Future<LibraryBuildJob?> get(String jobId) async {
+    return (await host.call('build', 'get', {'jobId': jobId}))
+        as LibraryBuildJob?;
+  }
+
+  @override
+  Future<List<LibraryBuildJob>> listRecoverable() async {
+    return (await host.call('build', 'listRecoverable', {}))
+        as List<LibraryBuildJob>;
+  }
+
+  @override
+  Future<List<LibraryBuildJob>> listHistory({int limit = 100}) async {
+    return (await host.call('build', 'listHistory', {'limit': limit}))
+        as List<LibraryBuildJob>;
+  }
+
+  @override
+  Future<void> markInterruptedRecoverable() async {
+    await host.call('build', 'markInterruptedRecoverable', {});
+  }
+
+  @override
+  Future<LibraryBuildJob> setRunning(String jobId) async {
+    return (await host.call('build', 'setRunning', {'jobId': jobId}))
+        as LibraryBuildJob;
+  }
+
+  @override
+  Future<LibraryBuildJob> pause(String jobId) async {
+    return (await host.call('build', 'pause', {'jobId': jobId}))
+        as LibraryBuildJob;
+  }
+
+  @override
+  Future<LibraryBuildJob> fail(String jobId, Object error) async {
+    return (await host.call('build', 'fail', {'jobId': jobId, 'error': error}))
+        as LibraryBuildJob;
+  }
+
+  @override
+  Future<LibraryBuildJob> block(String jobId, Object error) async {
+    return (await host.call('build', 'block', {'jobId': jobId, 'error': error}))
+        as LibraryBuildJob;
+  }
+
+  @override
+  Future<void> validateScope(LibraryBuildJob job) async {
+    await host.call('build', 'validateScope', {'job': job});
+  }
+
+  @override
+  Future<void> completeManifest(String jobId, int total) async {
+    await host
+        .call('build', 'completeManifest', {'jobId': jobId, 'total': total});
+  }
+
+  @override
+  Future<void> abandon(String jobId) async {
+    await host.call('build', 'abandon', {'jobId': jobId});
+  }
+
+  @override
+  Future<LibraryBuildJob> setRoots(
+      {required String jobId,
+      required String indexRootId,
+      String? stagingRootId}) async {
+    return (await host.call('build', 'setRoots', {
+      'jobId': jobId,
+      'indexRootId': indexRootId,
+      'stagingRootId': stagingRootId
+    })) as LibraryBuildJob;
+  }
+
+  @override
+  Future<LibraryBuildJob> checkpointStage(
+      {required String jobId,
+      required LibraryBuildStage stage,
+      int? manifestTotal,
+      int? indexedTotal,
+      int? documentPreviewTotal,
+      int? entityPreviewTotal,
+      int? nodePreviewTotal}) async {
+    return (await host.call('build', 'checkpointStage', {
+      'jobId': jobId,
+      'stage': stage,
+      'manifestTotal': manifestTotal,
+      'indexedTotal': indexedTotal,
+      'documentPreviewTotal': documentPreviewTotal,
+      'entityPreviewTotal': entityPreviewTotal,
+      'nodePreviewTotal': nodePreviewTotal
+    })) as LibraryBuildJob;
+  }
+
+  @override
+  Future<void> resetManifest(String jobId) async {
+    await host.call('build', 'resetManifest', {'jobId': jobId});
+  }
+
+  @override
+  Future<void> upsertManifest(Iterable<LibraryBuildManifestItem> values) async {
+    await host.call(
+        'build', 'upsertManifest', {'values': values.toList(growable: false)});
+  }
+
+  @override
+  Future<int> manifestItemCount(String jobId) async {
+    return (await host.call('build', 'manifestItemCount', {'jobId': jobId}))
+        as int;
+  }
+
+  @override
+  Future<bool> hasDirectoryFrontier(String jobId) async {
+    return (await host.call('build', 'hasDirectoryFrontier', {'jobId': jobId}))
+        as bool;
+  }
+
+  @override
+  Future<void> checkpoint() async {
+    await host.call('build', 'checkpoint', {});
+  }
+
+  @override
+  Future<void> seedDirectory(String jobId, String locator) async {
+    await host
+        .call('build', 'seedDirectory', {'jobId': jobId, 'locator': locator});
+  }
+
+  @override
+  Future<({String locator, String relativePath})?> nextDirectory(
+      String jobId) async {
+    return (await host.call('build', 'nextDirectory', {'jobId': jobId})) as ({
+      String locator,
+      String relativePath
+    })?;
+  }
+
+  @override
+  Future<int> beginDirectory(
+      String jobId, String locator, String relativePath) async {
+    return (await host.call('build', 'beginDirectory', {
+      'jobId': jobId,
+      'locator': locator,
+      'relativePath': relativePath
+    })) as int;
+  }
+
+  @override
+  Future<void> commitDirectoryPage(
+      String jobId,
+      String locator,
+      List<LibraryBuildManifestItem> items,
+      List<({String locator, String relativePath})> directories) async {
+    await host.call('build', 'commitDirectoryPage', {
+      'jobId': jobId,
+      'locator': locator,
+      'items': items,
+      'directories': directories
+    });
+  }
+
+  @override
+  Future<void> completeDirectory(String jobId, String locator) async {
+    await host.call(
+        'build', 'completeDirectory', {'jobId': jobId, 'locator': locator});
+  }
+
+  @override
+  Future<void> updateIndexedProgress(String jobId, int indexedTotal) async {
+    await host.call('build', 'updateIndexedProgress',
+        {'jobId': jobId, 'indexedTotal': indexedTotal});
+  }
+
+  @override
+  Future<List<LibraryBuildManifestItem>> listManifestPage(String jobId,
+      {required int afterSequence,
+      int limit = 200,
+      bool pendingOnly = false}) async {
+    return (await host.call('build', 'listManifestPage', {
+      'jobId': jobId,
+      'afterSequence': afterSequence,
+      'limit': limit,
+      'pendingOnly': pendingOnly
+    })) as List<LibraryBuildManifestItem>;
+  }
+
+  @override
+  Future<void> prepareEntityPreviewWork(
+      String jobId, String scopeNodeId) async {
+    await host.call('build', 'prepareEntityPreviewWork',
+        {'jobId': jobId, 'scopeNodeId': scopeNodeId});
+  }
+
+  @override
+  Future<void> prepareDocumentPreviewWork(
+      String jobId, String scopeNodeId) async {
+    await host.call('build', 'prepareDocumentPreviewWork',
+        {'jobId': jobId, 'scopeNodeId': scopeNodeId});
+  }
+
+  @override
+  Future<void> prepareNodePreviewWork(String jobId,
+      {required String scopeNodeId,
+      required String rootNodeId,
+      IndexPreviewRebuildScope scope =
+          IndexPreviewRebuildScope.subtree}) async {
+    await host.call('build', 'prepareNodePreviewWork', {
+      'jobId': jobId,
+      'scopeNodeId': scopeNodeId,
+      'rootNodeId': rootNodeId,
+      'scope': scope
+    });
+  }
+
+  @override
+  Future<bool> nodePreviewWorkIncludesDescendants(
+      String jobId, String scopeNodeId) async {
+    return (await host.call('build', 'nodePreviewWorkIncludesDescendants',
+        {'jobId': jobId, 'scopeNodeId': scopeNodeId})) as bool;
+  }
+
+  @override
+  Future<List<String>> claimEntityPreviewWork(String jobId,
+      {int limit = 100}) async {
+    return (await host.call('build', 'claimEntityPreviewWork',
+        {'jobId': jobId, 'limit': limit})) as List<String>;
+  }
+
+  @override
+  Future<List<String>> claimDocumentPreviewWork(String jobId,
+      {int limit = 100}) async {
+    return (await host.call('build', 'claimDocumentPreviewWork',
+        {'jobId': jobId, 'limit': limit})) as List<String>;
+  }
+
+  @override
+  Future<List<String>> claimNodePreviewWork(String jobId,
+      {int limit = 8}) async {
+    return (await host.call(
+            'build', 'claimNodePreviewWork', {'jobId': jobId, 'limit': limit}))
+        as List<String>;
+  }
+
+  @override
+  Future<void> completeEntityPreviewWork(
+      String jobId,
+      Map<String, ({LibraryBuildWorkState state, String? error})>
+          results) async {
+    await host.call('build', 'completeEntityPreviewWork',
+        {'jobId': jobId, 'results': results});
+  }
+
+  @override
+  Future<void> completeDocumentPreviewWork(
+      String jobId,
+      Map<String, ({LibraryBuildWorkState state, String? error})>
+          results) async {
+    await host.call('build', 'completeDocumentPreviewWork',
+        {'jobId': jobId, 'results': results});
+  }
+
+  @override
+  Future<void> completeNodePreviewWork(
+      String jobId,
+      Map<String, ({LibraryBuildWorkState state, String? error})>
+          results) async {
+    await host.call('build', 'completeNodePreviewWork',
+        {'jobId': jobId, 'results': results});
+  }
+
+  @override
+  Future<bool> hasPendingEntityPreviewWork(String jobId) async {
+    return (await host.call(
+        'build', 'hasPendingEntityPreviewWork', {'jobId': jobId})) as bool;
+  }
+
+  @override
+  Future<bool> hasPendingNodePreviewWork(String jobId) async {
+    return (await host
+        .call('build', 'hasPendingNodePreviewWork', {'jobId': jobId})) as bool;
+  }
+
+  @override
+  Future<bool> hasPendingDocumentPreviewWork(String jobId) async {
+    return (await host.call(
+        'build', 'hasPendingDocumentPreviewWork', {'jobId': jobId})) as bool;
+  }
+
+  @override
+  Future<void> releaseProcessingWork(String jobId,
+      {required LibraryBuildStage stage}) async {
+    await host.call(
+        'build', 'releaseProcessingWork', {'jobId': jobId, 'stage': stage});
+  }
+
+  @override
+  Future<void> retryFailedAssets(String jobId) async {
+    await host.call('build', 'retryFailedAssets', {'jobId': jobId});
+  }
+
+  @override
+  Future<void> restartFromManifest(String jobId) async {
+    await host.call('build', 'restartFromManifest', {'jobId': jobId});
+  }
 }

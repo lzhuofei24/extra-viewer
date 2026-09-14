@@ -3,221 +3,889 @@ import '../../core/domain/models.dart';
 import '../infrastructure/database_host.dart';
 import 'library_access.dart';
 import '../../core/thumbnails/thumbnail_store.dart';
+
 class LibraryClient implements LibraryAccess {
-LibraryClient(this.host); final DatabaseHost host;
-@override
-  String get storageDirectoryPath => host.storageDirectoryPath; @override
+  LibraryClient(this.host);
+  final DatabaseHost host;
+  @override
+  String get storageDirectoryPath => host.storageDirectoryPath;
+  @override
   ThumbnailStore get thumbnailStore => ThumbnailStore(storageDirectoryPath);
-@override Future<AudioPlaybackSession> createAudioPlaybackSession({required List<EntityListItem> entries, required int currentIndex, String? sourceNodeId, String? sourceNodeName, AudioPlaybackMode mode = AudioPlaybackMode.sequential}) async {
-return (await host.call('library', 'createAudioPlaybackSession', {'entries': entries,'currentIndex': currentIndex,'sourceNodeId': sourceNodeId,'sourceNodeName': sourceNodeName,'mode': mode})) as AudioPlaybackSession; }
-@override Future<List<AudioPlaybackSession>> listAudioPlaybackSessions() async {
-return (await host.call('library', 'listAudioPlaybackSessions', {})) as List<AudioPlaybackSession>; }
-@override Future<AudioPlaybackSession?> getAudioPlaybackSession(String id) async {
-return (await host.call('library', 'getAudioPlaybackSession', {'id': id})) as AudioPlaybackSession?; }
-@override Future<void> updateAudioPlaybackSession({required String id, int? currentIndex, int? positionMs, AudioPlaybackMode? mode, List<int>? shuffleRemaining, List<int>? history, bool? active}) async {
-await host.call('library', 'updateAudioPlaybackSession', {'id': id,'currentIndex': currentIndex,'positionMs': positionMs,'mode': mode,'shuffleRemaining': shuffleRemaining,'history': history,'active': active}); }
-@override Future<void> deleteAudioPlaybackSession(String id) async {
-await host.call('library', 'deleteAudioPlaybackSession', {'id': id}); }
-@override Future<EntityUpsertResult> upsertEntity({required String path, required String name, required String format, required EntityType entityType, required String hash, required int size, required int sourceCreatedAtMs, required int sourceModifiedAtMs, String? contentExcerpt, int? durationMs, String? directoryRootId, String? localPath, Entity? knownExisting, bool existingLookupCompleted = false}) async {
-return (await host.call('library', 'upsertEntity', {'path': path,'name': name,'format': format,'entityType': entityType,'hash': hash,'size': size,'sourceCreatedAtMs': sourceCreatedAtMs,'sourceModifiedAtMs': sourceModifiedAtMs,'contentExcerpt': contentExcerpt,'durationMs': durationMs,'directoryRootId': directoryRootId,'localPath': localPath,'knownExisting': knownExisting,'existingLookupCompleted': existingLookupCompleted})) as EntityUpsertResult; }
-@override Future<void> updateEntityMetadataPreview(String entityId, String? contentExcerpt, int? durationMs) async {
-await host.call('library', 'updateEntityMetadataPreview', {'entityId': entityId,'contentExcerpt': contentExcerpt,'durationMs': durationMs}); }
-@override Future<List<Entity>> listEpubsMissingMetadataPreview({int limit = 200}) async {
-return (await host.call('library', 'listEpubsMissingMetadataPreview', {'limit': limit})) as List<Entity>; }
-@override Future<void> clearEntityLocalPath(String id) async {
-await host.call('library', 'clearEntityLocalPath', {'id': id}); }
-@override Future<void> clearEntityLocalPathAsync(String id) async {
-await host.call('library', 'clearEntityLocalPathAsync', {'id': id}); }
-@override Future<Entity?> getEntityByPath(String path) async {
-return (await host.call('library', 'getEntityByPath', {'path': path})) as Entity?; }
-@override Future<Map<String, Entity>> getEntitiesByPaths(Iterable<String> paths) async {
-return (await host.call('library', 'getEntitiesByPaths', {'paths': paths.toList(growable: false)})) as Map<String, Entity>; }
-@override Future<Map<String, Entity>> getEntitiesByIds(Iterable<String> entityIds) async {
-return (await host.call('library', 'getEntitiesByIds', {'entityIds': entityIds.toList(growable: false)})) as Map<String, Entity>; }
-@override Future<void> updateEntityDuration(String entityId, int durationMs) async {
-await host.call('library', 'updateEntityDuration', {'entityId': entityId,'durationMs': durationMs}); }
-@override Future<bool> hasEntityForPath(String path) async {
-return (await host.call('library', 'hasEntityForPath', {'path': path})) as bool; }
-@override Future<void> markOpened(String entityId) async {
-await host.call('library', 'markOpened', {'entityId': entityId}); }
-@override Future<void> savePlaybackState({required String entityId, required int positionMs, required int durationMs}) async {
-await host.call('library', 'savePlaybackState', {'entityId': entityId,'positionMs': positionMs,'durationMs': durationMs}); }
-@override Future<void> saveReaderState({required String entityId, double? scrollOffset, double? zoomScale, String? extraStateJson}) async {
-await host.call('library', 'saveReaderState', {'entityId': entityId,'scrollOffset': scrollOffset,'zoomScale': zoomScale,'extraStateJson': extraStateJson}); }
-@override Future<void> removeEntityFromLibrary(String entityId) async {
-await host.call('library', 'removeEntityFromLibrary', {'entityId': entityId}); }
-@override Future<void> removeEntitiesFromLibrary(Iterable<String> entityIds) async {
-await host.call('library', 'removeEntitiesFromLibrary', {'entityIds': entityIds.toList(growable: false)}); }
-@override Future<List<EntityListItem>> listRecentOpenedEntities({int limit = 12, Iterable<EntityType>? entityTypes}) async {
-return (await host.call('library', 'listRecentOpenedEntities', {'limit': limit,'entityTypes': entityTypes?.toList(growable: false)})) as List<EntityListItem>; }
-@override Future<List<EntityListItem>> listRecentlyModifiedEntities({int limit = 12}) async {
-return (await host.call('library', 'listRecentlyModifiedEntities', {'limit': limit})) as List<EntityListItem>; }
-@override Future<Set<String>> entityIdsUnderDirectorySource(String sourcePath) async {
-return (await host.call('library', 'entityIdsUnderDirectorySource', {'sourcePath': sourcePath})) as Set<String>; }
-@override Future<int> commitInspectedPage({required LibraryBuildJob job, required List<LibraryBuildManifestItem> page, required String rootId, required Map<String, Entity> existing, required Map<int, (String, int, int, int, String?, int?)> detailsBySequence, required Map<int, IndexNode> nodesBySequence, required int indexedBefore}) async {
-return (await host.call('library', 'commitInspectedPage', {'job': job,'page': page,'rootId': rootId,'existing': existing,'detailsBySequence': detailsBySequence,'nodesBySequence': nodesBySequence,'indexedBefore': indexedBefore})) as int; }
-@override Future<IndexNode> ensureDirectoryIndexRoot(String sourcePath, {bool staging = false, String? displayName}) async {
-return (await host.call('library', 'ensureDirectoryIndexRoot', {'sourcePath': sourcePath,'staging': staging,'displayName': displayName})) as IndexNode; }
-@override Future<void> replaceOverlappingDirectoryIndexRoots({required String keepRootId, required String sourcePath}) async {
-await host.call('library', 'replaceOverlappingDirectoryIndexRoots', {'keepRootId': keepRootId,'sourcePath': sourcePath}); }
-@override Future<Set<String>> directoryIndexRootIdsOverlapping(String sourcePath, {String? excludingRootId}) async {
-return (await host.call('library', 'directoryIndexRootIdsOverlapping', {'sourcePath': sourcePath,'excludingRootId': excludingRootId})) as Set<String>; }
-@override Future<IndexNode?> directoryIndexRootForSource(String sourcePath) async {
-return (await host.call('library', 'directoryIndexRootForSource', {'sourcePath': sourcePath})) as IndexNode?; }
-@override Future<bool> isDirectoryIndexRootEmpty(String rootId) async {
-return (await host.call('library', 'isDirectoryIndexRootEmpty', {'rootId': rootId})) as bool; }
-@override Future<DirectoryIndexDeletionReport> inspectDirectoryIndexDeletion(String rootId) async {
-return (await host.call('library', 'inspectDirectoryIndexDeletion', {'rootId': rootId})) as DirectoryIndexDeletionReport; }
-@override Future<DirectoryIndexDeletionResult> deleteDirectoryIndex(String rootId, {required bool force}) async {
-return (await host.call('library', 'deleteDirectoryIndex', {'rootId': rootId,'force': force})) as DirectoryIndexDeletionResult; }
-@override Future<void> reconcileDirectoryIndexRoot({required String rootId, required Iterable<String> seenPaths}) async {
-await host.call('library', 'reconcileDirectoryIndexRoot', {'rootId': rootId,'seenPaths': seenPaths.toList(growable: false)}); }
-@override Future<void> reconcileDirectoryIndexSubtree({required String nodeId, required String rootId, required Iterable<String> seenPaths}) async {
-await host.call('library', 'reconcileDirectoryIndexSubtree', {'nodeId': nodeId,'rootId': rootId,'seenPaths': seenPaths.toList(growable: false)}); }
-@override Future<void> pruneEmptyDirectoryNodes(String rootId) async {
-await host.call('library', 'pruneEmptyDirectoryNodes', {'rootId': rootId}); }
-@override Future<IndexNode> ensureCategoryIndexRoot(String name) async {
-return (await host.call('library', 'ensureCategoryIndexRoot', {'name': name})) as IndexNode; }
-@override Future<IndexNode> ensureCollectionIndexRoot(String name) async {
-return (await host.call('library', 'ensureCollectionIndexRoot', {'name': name})) as IndexNode; }
-@override Future<IndexNode> ensureGraphIndexRoot(String name) async {
-return (await host.call('library', 'ensureGraphIndexRoot', {'name': name})) as IndexNode; }
-@override Future<IndexNode> ensureGraphNode({required String parentId, required String name, int sortOrder = 0}) async {
-return (await host.call('library', 'ensureGraphNode', {'parentId': parentId,'name': name,'sortOrder': sortOrder})) as IndexNode; }
-@override Future<IndexNode> ensureIndexNode({required String name, required NodeType nodeType, required ViewType viewType, String? parentId, String? sourcePath, int sortOrder = 0}) async {
-return (await host.call('library', 'ensureIndexNode', {'name': name,'nodeType': nodeType,'viewType': viewType,'parentId': parentId,'sourcePath': sourcePath,'sortOrder': sortOrder})) as IndexNode; }
-@override Future<void> setDirectoryNodeRelativePath(String nodeId, String relativePath) async {
-await host.call('library', 'setDirectoryNodeRelativePath', {'nodeId': nodeId,'relativePath': relativePath}); }
-@override Future<IndexNode> ensureDirectoryFolderAsync({required String parentId, required String name, required String relativePath}) async {
-return (await host.call('library', 'ensureDirectoryFolderAsync', {'parentId': parentId,'name': name,'relativePath': relativePath})) as IndexNode; }
-@override Future<String?> directoryNodeRelativePath(String nodeId) async {
-return (await host.call('library', 'directoryNodeRelativePath', {'nodeId': nodeId})) as String?; }
-@override Future<void> backfillDirectoryNodeRelativePaths(String rootId) async {
-await host.call('library', 'backfillDirectoryNodeRelativePaths', {'rootId': rootId}); }
-@override Future<void> linkEntityToIndexNode({required String entityId, required String indexNodeId}) async {
-await host.call('library', 'linkEntityToIndexNode', {'entityId': entityId,'indexNodeId': indexNodeId}); }
-@override Future<void> linkEntitiesToIndexNodes(Iterable<({String entityId, String indexNodeId})> links, {bool rebuildStats = true, bool markPreviewDirty = true}) async {
-await host.call('library', 'linkEntitiesToIndexNodes', {'links': links.toList(growable: false),'rebuildStats': rebuildStats,'markPreviewDirty': markPreviewDirty}); }
-@override Future<void> linkEntitiesToIndexNode({required Iterable<String> entityIds, required String indexNodeId}) async {
-await host.call('library', 'linkEntitiesToIndexNode', {'entityIds': entityIds.toList(growable: false),'indexNodeId': indexNodeId}); }
-@override Future<IndexNode> createCollectionWithEntities({required String name, required Iterable<String> entityIds}) async {
-return (await host.call('library', 'createCollectionWithEntities', {'name': name,'entityIds': entityIds.toList(growable: false)})) as IndexNode; }
-@override Future<IndexNode> createCustomNode({required String parentId, required String name}) async {
-return (await host.call('library', 'createCustomNode', {'parentId': parentId,'name': name})) as IndexNode; }
-@override Future<IndexNode> cloneIndexNodeTree({required String sourceNodeId, required String targetParentId}) async {
-return (await host.call('library', 'cloneIndexNodeTree', {'sourceNodeId': sourceNodeId,'targetParentId': targetParentId})) as IndexNode; }
-@override Future<IndexNodeEdge> linkIndexNodes({required String fromNodeId, required String toNodeId, String edgeType = 'related', String? label, int sortOrder = 0}) async {
-return (await host.call('library', 'linkIndexNodes', {'fromNodeId': fromNodeId,'toNodeId': toNodeId,'edgeType': edgeType,'label': label,'sortOrder': sortOrder})) as IndexNodeEdge; }
-@override Future<List<IndexNodeEdge>> listOutgoingEdges(String fromNodeId) async {
-return (await host.call('library', 'listOutgoingEdges', {'fromNodeId': fromNodeId})) as List<IndexNodeEdge>; }
-@override Future<List<IndexNodeEdge>> listIncomingEdges(String toNodeId) async {
-return (await host.call('library', 'listIncomingEdges', {'toNodeId': toNodeId})) as List<IndexNodeEdge>; }
-@override Future<List<IndexNodeEdge>> listGraphEdges(String graphRootId) async {
-return (await host.call('library', 'listGraphEdges', {'graphRootId': graphRootId})) as List<IndexNodeEdge>; }
-@override Future<List<IndexNode>> listGraphNodes(String graphRootId) async {
-return (await host.call('library', 'listGraphNodes', {'graphRootId': graphRootId})) as List<IndexNode>; }
-@override Future<Map<String, GraphNodePosition>> listGraphNodePositions(String graphRootId) async {
-return (await host.call('library', 'listGraphNodePositions', {'graphRootId': graphRootId})) as Map<String, GraphNodePosition>; }
-@override Future<void> setGraphNodePosition({required String nodeId, required double x, required double y}) async {
-await host.call('library', 'setGraphNodePosition', {'nodeId': nodeId,'x': x,'y': y}); }
-@override Future<List<IndexNode>> listIndexRoots({EntitySortMode sortMode = EntitySortMode.nameAsc}) async {
-return (await host.call('library', 'listIndexRoots', {'sortMode': sortMode})) as List<IndexNode>; }
-@override Future<List<IndexNode>> listChildNodes(String indexRootId, {String? parentId, EntitySortMode sortMode = EntitySortMode.nameAsc}) async {
-return (await host.call('library', 'listChildNodes', {'indexRootId': indexRootId,'parentId': parentId,'sortMode': sortMode})) as List<IndexNode>; }
-@override Future<IndexNode?> getIndexNode(String id) async {
-return (await host.call('library', 'getIndexNode', {'id': id})) as IndexNode?; }
-@override Future<IndexNode?> directoryIndexRootForNode(String nodeId) async {
-return (await host.call('library', 'directoryIndexRootForNode', {'nodeId': nodeId})) as IndexNode?; }
-@override Future<List<IndexNode>> listNodePath(String indexRootId, String currentNodeId) async {
-return (await host.call('library', 'listNodePath', {'indexRootId': indexRootId,'currentNodeId': currentNodeId})) as List<IndexNode>; }
-@override Future<Map<String, IndexNodeSummary>> listIndexNodeSummaries(Iterable<String> nodeIds) async {
-return (await host.call('library', 'listIndexNodeSummaries', {'nodeIds': nodeIds.toList(growable: false)})) as Map<String, IndexNodeSummary>; }
-@override Future<List<IndexTreeNode>> listIndexTree(String indexRootId) async {
-return (await host.call('library', 'listIndexTree', {'indexRootId': indexRootId})) as List<IndexTreeNode>; }
-@override Future<IndexTreeSnapshot> loadIndexTree(String indexRootId) async {
-return (await host.call('library', 'loadIndexTree', {'indexRootId': indexRootId})) as IndexTreeSnapshot; }
-@override Future<List<EntityListItem>> listEntitiesUnderNode(String? indexNodeId, {EntitySortMode sortMode = EntitySortMode.nameAsc}) async {
-return (await host.call('library', 'listEntitiesUnderNode', {'indexNodeId': indexNodeId,'sortMode': sortMode})) as List<EntityListItem>; }
-@override Future<List<EntityListItem>> listEntitiesDirectlyUnderNode(String? indexNodeId, {EntitySortMode sortMode = EntitySortMode.nameAsc}) async {
-return (await host.call('library', 'listEntitiesDirectlyUnderNode', {'indexNodeId': indexNodeId,'sortMode': sortMode})) as List<EntityListItem>; }
-@override Future<EntityPage> listEntityPageByTypes(Iterable<EntityType> entityTypes, {EntitySortMode sortMode = EntitySortMode.nameAsc, EntityPageCursor? after, int? limit}) async {
-return (await host.call('library', 'listEntityPageByTypes', {'entityTypes': entityTypes.toList(growable: false),'sortMode': sortMode,'after': after,'limit': limit})) as EntityPage; }
-@override Future<List<EntityListItem>> listEntitiesForNodeLinkPicker({String query = '', int limit = 160}) async {
-return (await host.call('library', 'listEntitiesForNodeLinkPicker', {'query': query,'limit': limit})) as List<EntityListItem>; }
-@override Future<EntityPage> listEntityPageDirectlyUnderNode(String? indexNodeId, {EntitySortMode sortMode = EntitySortMode.nameAsc, EntityPageCursor? after, int? limit}) async {
-return (await host.call('library', 'listEntityPageDirectlyUnderNode', {'indexNodeId': indexNodeId,'sortMode': sortMode,'after': after,'limit': limit})) as EntityPage; }
-@override Future<EntityPage> listEntityPageRecursivelyUnderNode(String? indexNodeId, {EntitySortMode sortMode = EntitySortMode.nameAsc, RecursiveEntityPageCursor? after, int? limit}) async {
-return (await host.call('library', 'listEntityPageRecursivelyUnderNode', {'indexNodeId': indexNodeId,'sortMode': sortMode,'after': after,'limit': limit})) as EntityPage; }
-@override Future<void> renameIndexNode(String nodeId, String name) async {
-await host.call('library', 'renameIndexNode', {'nodeId': nodeId,'name': name}); }
-@override Future<void> deleteIndexNode(String nodeId) async {
-await host.call('library', 'deleteIndexNode', {'nodeId': nodeId}); }
-@override Future<bool> willDeleteEntitiesWhenDeletingNode(String nodeId) async {
-return (await host.call('library', 'willDeleteEntitiesWhenDeletingNode', {'nodeId': nodeId})) as bool; }
-@override Future<void> unlinkEntityFromIndexNode({required String entityId, required String indexNodeId}) async {
-await host.call('library', 'unlinkEntityFromIndexNode', {'entityId': entityId,'indexNodeId': indexNodeId}); }
-@override Future<int> countEntitiesUnderIndexNode(String indexNodeId) async {
-return (await host.call('library', 'countEntitiesUnderIndexNode', {'indexNodeId': indexNodeId})) as int; }
-@override Future<Map<String, int>> countEntitiesUnderIndexNodes(Iterable<String> nodeIds) async {
-return (await host.call('library', 'countEntitiesUnderIndexNodes', {'nodeIds': nodeIds.toList(growable: false)})) as Map<String, int>; }
-@override Future<void> flushQueuedWrites() async {
-await host.call('library', 'flushQueuedWrites', {}); }
-@override Future<Entity?> getEntity(String id) async {
-return (await host.call('library', 'getEntity', {'id': id})) as Entity?; }
-@override Future<void> rebuildIndexNodeStats() async {
-await host.call('library', 'rebuildIndexNodeStats', {}); }
-@override Future<void> rebuildIndexNodeStatsForNode(String nodeId) async {
-await host.call('library', 'rebuildIndexNodeStatsForNode', {'nodeId': nodeId}); }
-@override Future<List<String>> listIndexNodeIdsForEntity(String entityId) async {
-return (await host.call('library', 'listIndexNodeIdsForEntity', {'entityId': entityId})) as List<String>; }
-@override Future<void> markIndexNodePreviewDirty(String nodeId, {IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node, String? reason}) async {
-await host.call('library', 'markIndexNodePreviewDirty', {'nodeId': nodeId,'scope': scope,'reason': reason}); }
-@override Future<void> removeThumbnailAssets(Iterable<String> keys) async {
-await host.call('library', 'removeThumbnailAssets', {'keys': keys.toList(growable: false)}); }
-@override Future<Map<String, IndexNodePreview>> listIndexNodePreviews(Iterable<String> nodeIds) async {
-return (await host.call('library', 'listIndexNodePreviews', {'nodeIds': nodeIds.toList(growable: false)})) as Map<String, IndexNodePreview>; }
-@override Future<String> nodePreviewAssetPath(String assetKey, String format) async {
-return (await host.call('library', 'nodePreviewAssetPath', {'assetKey': assetKey,'format': format})) as String; }
-@override Future<void> recordNodePreviewAsset({required String nodeId, required String signature, required String assetKey, required String format, required int width, required int height}) async {
-await host.call('library', 'recordNodePreviewAsset', {'nodeId': nodeId,'signature': signature,'assetKey': assetKey,'format': format,'width': width,'height': height}); }
-@override Future<void> removeNodePreviewAsset(String nodeId) async {
-await host.call('library', 'removeNodePreviewAsset', {'nodeId': nodeId}); }
-@override Future<void> rebuildIndexNodePreviewCache(String rootId) async {
-await host.call('library', 'rebuildIndexNodePreviewCache', {'rootId': rootId}); }
-@override Future<void> rebuildIndexNodePreviewCacheForNode(String nodeId) async {
-await host.call('library', 'rebuildIndexNodePreviewCacheForNode', {'nodeId': nodeId}); }
-@override Future<void> rebuildIndexNodePreviewCacheChain(String nodeId) async {
-await host.call('library', 'rebuildIndexNodePreviewCacheChain', {'nodeId': nodeId}); }
-@override Future<IndexNode?> owningIndexRootForNode(String nodeId) async {
-return (await host.call('library', 'owningIndexRootForNode', {'nodeId': nodeId})) as IndexNode?; }
-@override Future<List<IndexNode>> listIndexNodeAncestors(String nodeId) async {
-return (await host.call('library', 'listIndexNodeAncestors', {'nodeId': nodeId})) as List<IndexNode>; }
-@override Future<Set<String>> listIndexNodeDescendantIds(String nodeId) async {
-return (await host.call('library', 'listIndexNodeDescendantIds', {'nodeId': nodeId})) as Set<String>; }
-@override Future<NodePreviewCandidatePage> listNodePreviewCandidates(String nodeId, {String query = '', int offset = 0, int limit = 80}) async {
-return (await host.call('library', 'listNodePreviewCandidates', {'nodeId': nodeId,'query': query,'offset': offset,'limit': limit})) as NodePreviewCandidatePage; }
-@override Future<String?> getNodePreviewOverride(String nodeId) async {
-return (await host.call('library', 'getNodePreviewOverride', {'nodeId': nodeId})) as String?; }
-@override Future<void> setNodePreviewOverride(String nodeId, String itemsJson) async {
-await host.call('library', 'setNodePreviewOverride', {'nodeId': nodeId,'itemsJson': itemsJson}); }
-@override Future<void> clearNodePreviewOverride(String nodeId) async {
-await host.call('library', 'clearNodePreviewOverride', {'nodeId': nodeId}); }
-@override Future<void> updateEntityThumbnailPending(String entityId) async {
-await host.call('library', 'updateEntityThumbnailPending', {'entityId': entityId}); }
-@override Future<void> applyThumbnailUpdates(Iterable<ThumbnailDatabaseUpdate> updates) async {
-await host.call('library', 'applyThumbnailUpdates', {'updates': updates.toList(growable: false)}); }
-@override Future<void> applyThumbnailUpdatesAsync(Iterable<ThumbnailDatabaseUpdate> updates) async {
-await host.call('library', 'applyThumbnailUpdatesAsync', {'updates': updates.toList(growable: false)}); }
-@override Future<void> updateEntityThumbnailSuccess({required String entityId, required String key, required String format, required int width, required int height}) async {
-await host.call('library', 'updateEntityThumbnailSuccess', {'entityId': entityId,'key': key,'format': format,'width': width,'height': height}); }
-@override Future<void> updateEntityThumbnailFailed(String entityId, String error) async {
-await host.call('library', 'updateEntityThumbnailFailed', {'entityId': entityId,'error': error}); }
-@override Future<void> updateEntityThumbnailNone(String entityId) async {
-await host.call('library', 'updateEntityThumbnailNone', {'entityId': entityId}); }
-@override Future<void> recordThumbnailAsset({required String key, required String format, required int byteSize}) async {
-await host.call('library', 'recordThumbnailAsset', {'key': key,'format': format,'byteSize': byteSize}); }
-@override Future<ThumbnailPreloadPage> listThumbnailPreloadPageUnderNode(String? indexNodeId, {String? afterEntityId, bool recursive = false, int limit = 240}) async {
-return (await host.call('library', 'listThumbnailPreloadPageUnderNode', {'indexNodeId': indexNodeId,'afterEntityId': afterEntityId,'recursive': recursive,'limit': limit})) as ThumbnailPreloadPage; }
-@override Future<Map<String, List<String>>> listDirectThumbnailPathsUnderRoot(String rootId) async {
-return (await host.call('library', 'listDirectThumbnailPathsUnderRoot', {'rootId': rootId})) as Map<String, List<String>>; }
+  @override
+  Future<AudioPlaybackSession> createAudioPlaybackSession(
+      {required List<EntityListItem> entries,
+      required int currentIndex,
+      String? sourceNodeId,
+      String? sourceNodeName,
+      AudioPlaybackMode mode = AudioPlaybackMode.sequential}) async {
+    return (await host.call('library', 'createAudioPlaybackSession', {
+      'entries': entries,
+      'currentIndex': currentIndex,
+      'sourceNodeId': sourceNodeId,
+      'sourceNodeName': sourceNodeName,
+      'mode': mode
+    })) as AudioPlaybackSession;
+  }
+
+  @override
+  Future<List<AudioPlaybackSession>> listAudioPlaybackSessions() async {
+    return (await host.call('library', 'listAudioPlaybackSessions', {}))
+        as List<AudioPlaybackSession>;
+  }
+
+  @override
+  Future<AudioPlaybackSession?> getAudioPlaybackSession(String id) async {
+    return (await host.call('library', 'getAudioPlaybackSession', {'id': id}))
+        as AudioPlaybackSession?;
+  }
+
+  @override
+  Future<void> updateAudioPlaybackSession(
+      {required String id,
+      int? currentIndex,
+      int? positionMs,
+      AudioPlaybackMode? mode,
+      List<int>? shuffleRemaining,
+      List<int>? history,
+      bool? active}) async {
+    await host.call('library', 'updateAudioPlaybackSession', {
+      'id': id,
+      'currentIndex': currentIndex,
+      'positionMs': positionMs,
+      'mode': mode,
+      'shuffleRemaining': shuffleRemaining,
+      'history': history,
+      'active': active
+    });
+  }
+
+  @override
+  Future<void> deleteAudioPlaybackSession(String id) async {
+    await host.call('library', 'deleteAudioPlaybackSession', {'id': id});
+  }
+
+  @override
+  Future<EntityUpsertResult> upsertEntity(
+      {required String path,
+      required String name,
+      required String format,
+      required EntityType entityType,
+      required String hash,
+      required int size,
+      required int sourceCreatedAtMs,
+      required int sourceModifiedAtMs,
+      String? contentExcerpt,
+      int? durationMs,
+      String? directoryRootId,
+      String? localPath,
+      Entity? knownExisting,
+      bool existingLookupCompleted = false}) async {
+    return (await host.call('library', 'upsertEntity', {
+      'path': path,
+      'name': name,
+      'format': format,
+      'entityType': entityType,
+      'hash': hash,
+      'size': size,
+      'sourceCreatedAtMs': sourceCreatedAtMs,
+      'sourceModifiedAtMs': sourceModifiedAtMs,
+      'contentExcerpt': contentExcerpt,
+      'durationMs': durationMs,
+      'directoryRootId': directoryRootId,
+      'localPath': localPath,
+      'knownExisting': knownExisting,
+      'existingLookupCompleted': existingLookupCompleted
+    })) as EntityUpsertResult;
+  }
+
+  @override
+  Future<void> updateEntityMetadataPreview(
+      String entityId, String? contentExcerpt, int? durationMs) async {
+    await host.call('library', 'updateEntityMetadataPreview', {
+      'entityId': entityId,
+      'contentExcerpt': contentExcerpt,
+      'durationMs': durationMs
+    });
+  }
+
+  @override
+  Future<List<Entity>> listEpubsMissingMetadataPreview(
+      {int limit = 200}) async {
+    return (await host.call(
+            'library', 'listEpubsMissingMetadataPreview', {'limit': limit}))
+        as List<Entity>;
+  }
+
+  @override
+  Future<void> clearEntityLocalPath(String id) async {
+    await host.call('library', 'clearEntityLocalPath', {'id': id});
+  }
+
+  @override
+  Future<Entity?> getEntityByPath(String path) async {
+    return (await host.call('library', 'getEntityByPath', {'path': path}))
+        as Entity?;
+  }
+
+  @override
+  Future<Map<String, Entity>> getEntitiesByPaths(Iterable<String> paths) async {
+    return (await host.call('library', 'getEntitiesByPaths',
+        {'paths': paths.toList(growable: false)})) as Map<String, Entity>;
+  }
+
+  @override
+  Future<Map<String, Entity>> getEntitiesByIds(
+      Iterable<String> entityIds) async {
+    return (await host.call('library', 'getEntitiesByIds', {
+      'entityIds': entityIds.toList(growable: false)
+    })) as Map<String, Entity>;
+  }
+
+  @override
+  Future<void> updateEntityDuration(String entityId, int durationMs) async {
+    await host.call('library', 'updateEntityDuration',
+        {'entityId': entityId, 'durationMs': durationMs});
+  }
+
+  @override
+  Future<bool> hasEntityForPath(String path) async {
+    return (await host.call('library', 'hasEntityForPath', {'path': path}))
+        as bool;
+  }
+
+  @override
+  Future<void> markOpened(String entityId) async {
+    await host.call('library', 'markOpened', {'entityId': entityId});
+  }
+
+  @override
+  Future<void> savePlaybackState(
+      {required String entityId,
+      required int positionMs,
+      required int durationMs}) async {
+    await host.call('library', 'savePlaybackState', {
+      'entityId': entityId,
+      'positionMs': positionMs,
+      'durationMs': durationMs
+    });
+  }
+
+  @override
+  Future<void> saveReaderState(
+      {required String entityId,
+      double? scrollOffset,
+      double? zoomScale,
+      String? extraStateJson}) async {
+    await host.call('library', 'saveReaderState', {
+      'entityId': entityId,
+      'scrollOffset': scrollOffset,
+      'zoomScale': zoomScale,
+      'extraStateJson': extraStateJson
+    });
+  }
+
+  @override
+  Future<void> removeEntityFromLibrary(String entityId) async {
+    await host
+        .call('library', 'removeEntityFromLibrary', {'entityId': entityId});
+  }
+
+  @override
+  Future<void> removeEntitiesFromLibrary(Iterable<String> entityIds) async {
+    await host.call('library', 'removeEntitiesFromLibrary',
+        {'entityIds': entityIds.toList(growable: false)});
+  }
+
+  @override
+  Future<List<EntityListItem>> listRecentOpenedEntities(
+      {int limit = 12, Iterable<EntityType>? entityTypes}) async {
+    return (await host.call('library', 'listRecentOpenedEntities', {
+      'limit': limit,
+      'entityTypes': entityTypes?.toList(growable: false)
+    })) as List<EntityListItem>;
+  }
+
+  @override
+  Future<List<EntityListItem>> listRecentlyModifiedEntities(
+      {int limit = 12}) async {
+    return (await host
+            .call('library', 'listRecentlyModifiedEntities', {'limit': limit}))
+        as List<EntityListItem>;
+  }
+
+  @override
+  Future<Set<String>> entityIdsUnderDirectorySource(String sourcePath) async {
+    return (await host.call('library', 'entityIdsUnderDirectorySource',
+        {'sourcePath': sourcePath})) as Set<String>;
+  }
+
+  @override
+  Future<int> commitInspectedPage(
+      {required LibraryBuildJob job,
+      required List<LibraryBuildManifestItem> page,
+      required String rootId,
+      required Map<String, Entity> existing,
+      required Map<int, (String, int, int, int, String?, int?)>
+          detailsBySequence,
+      required Map<int, IndexNode> nodesBySequence,
+      required int indexedBefore,
+      Map<int, String> inspectionErrors = const {}}) async {
+    return (await host.call('library', 'commitInspectedPage', {
+      'job': job,
+      'page': page,
+      'rootId': rootId,
+      'existing': existing,
+      'detailsBySequence': detailsBySequence,
+      'nodesBySequence': nodesBySequence,
+      'indexedBefore': indexedBefore,
+      'inspectionErrors': inspectionErrors
+    })) as int;
+  }
+
+  @override
+  Future<IndexNode> ensureDirectoryIndexRoot(String sourcePath,
+      {bool staging = false, String? displayName}) async {
+    return (await host.call('library', 'ensureDirectoryIndexRoot', {
+      'sourcePath': sourcePath,
+      'staging': staging,
+      'displayName': displayName
+    })) as IndexNode;
+  }
+
+  @override
+  Future<void> replaceOverlappingDirectoryIndexRoots(
+      {required String keepRootId, required String sourcePath}) async {
+    await host.call('library', 'replaceOverlappingDirectoryIndexRoots',
+        {'keepRootId': keepRootId, 'sourcePath': sourcePath});
+  }
+
+  @override
+  Future<Set<String>> directoryIndexRootIdsOverlapping(String sourcePath,
+      {String? excludingRootId}) async {
+    return (await host.call('library', 'directoryIndexRootIdsOverlapping', {
+      'sourcePath': sourcePath,
+      'excludingRootId': excludingRootId
+    })) as Set<String>;
+  }
+
+  @override
+  Future<IndexNode?> directoryIndexRootForSource(String sourcePath) async {
+    return (await host.call('library', 'directoryIndexRootForSource',
+        {'sourcePath': sourcePath})) as IndexNode?;
+  }
+
+  @override
+  Future<bool> isDirectoryIndexRootEmpty(String rootId) async {
+    return (await host.call(
+        'library', 'isDirectoryIndexRootEmpty', {'rootId': rootId})) as bool;
+  }
+
+  @override
+  Future<DirectoryIndexDeletionReport> inspectDirectoryIndexDeletion(
+      String rootId) async {
+    return (await host.call(
+            'library', 'inspectDirectoryIndexDeletion', {'rootId': rootId}))
+        as DirectoryIndexDeletionReport;
+  }
+
+  @override
+  Future<DirectoryIndexDeletionResult> deleteDirectoryIndex(String rootId,
+      {required bool force}) async {
+    return (await host.call('library', 'deleteDirectoryIndex',
+        {'rootId': rootId, 'force': force})) as DirectoryIndexDeletionResult;
+  }
+
+  @override
+  Future<void> reconcileDirectoryIndexRoot(
+      {required String rootId, required Iterable<String> seenPaths}) async {
+    await host.call('library', 'reconcileDirectoryIndexRoot',
+        {'rootId': rootId, 'seenPaths': seenPaths.toList(growable: false)});
+  }
+
+  @override
+  Future<void> reconcileDirectoryIndexSubtree(
+      {required String nodeId,
+      required String rootId,
+      required Iterable<String> seenPaths}) async {
+    await host.call('library', 'reconcileDirectoryIndexSubtree', {
+      'nodeId': nodeId,
+      'rootId': rootId,
+      'seenPaths': seenPaths.toList(growable: false)
+    });
+  }
+
+  @override
+  Future<void> pruneEmptyDirectoryNodes(String rootId) async {
+    await host.call('library', 'pruneEmptyDirectoryNodes', {'rootId': rootId});
+  }
+
+  @override
+  Future<IndexNode> ensureCategoryIndexRoot(String name) async {
+    return (await host.call(
+        'library', 'ensureCategoryIndexRoot', {'name': name})) as IndexNode;
+  }
+
+  @override
+  Future<IndexNode> ensureCollectionIndexRoot(String name) async {
+    return (await host.call(
+        'library', 'ensureCollectionIndexRoot', {'name': name})) as IndexNode;
+  }
+
+  @override
+  Future<IndexNode> ensureGraphIndexRoot(String name) async {
+    return (await host.call('library', 'ensureGraphIndexRoot', {'name': name}))
+        as IndexNode;
+  }
+
+  @override
+  Future<IndexNode> ensureGraphNode(
+      {required String parentId,
+      required String name,
+      int sortOrder = 0}) async {
+    return (await host.call('library', 'ensureGraphNode', {
+      'parentId': parentId,
+      'name': name,
+      'sortOrder': sortOrder
+    })) as IndexNode;
+  }
+
+  @override
+  Future<IndexNode> ensureIndexNode(
+      {required String name,
+      required NodeType nodeType,
+      required ViewType viewType,
+      String? parentId,
+      String? sourcePath,
+      int sortOrder = 0}) async {
+    return (await host.call('library', 'ensureIndexNode', {
+      'name': name,
+      'nodeType': nodeType,
+      'viewType': viewType,
+      'parentId': parentId,
+      'sourcePath': sourcePath,
+      'sortOrder': sortOrder
+    })) as IndexNode;
+  }
+
+  @override
+  Future<void> setDirectoryNodeRelativePath(
+      String nodeId, String relativePath) async {
+    await host.call('library', 'setDirectoryNodeRelativePath',
+        {'nodeId': nodeId, 'relativePath': relativePath});
+  }
+
+  @override
+  Future<IndexNode> ensureDirectoryFolderAsync(
+      {required String parentId,
+      required String name,
+      required String relativePath}) async {
+    return (await host.call('library', 'ensureDirectoryFolderAsync', {
+      'parentId': parentId,
+      'name': name,
+      'relativePath': relativePath
+    })) as IndexNode;
+  }
+
+  @override
+  Future<String?> directoryNodeRelativePath(String nodeId) async {
+    return (await host.call(
+        'library', 'directoryNodeRelativePath', {'nodeId': nodeId})) as String?;
+  }
+
+  @override
+  Future<void> backfillDirectoryNodeRelativePaths(String rootId) async {
+    await host.call(
+        'library', 'backfillDirectoryNodeRelativePaths', {'rootId': rootId});
+  }
+
+  @override
+  Future<void> linkEntityToIndexNode(
+      {required String entityId, required String indexNodeId}) async {
+    await host.call('library', 'linkEntityToIndexNode',
+        {'entityId': entityId, 'indexNodeId': indexNodeId});
+  }
+
+  @override
+  Future<void> linkEntitiesToIndexNodes(
+      Iterable<({String entityId, String indexNodeId})> links,
+      {bool rebuildStats = true,
+      bool markPreviewDirty = true}) async {
+    await host.call('library', 'linkEntitiesToIndexNodes', {
+      'links': links.toList(growable: false),
+      'rebuildStats': rebuildStats,
+      'markPreviewDirty': markPreviewDirty
+    });
+  }
+
+  @override
+  Future<void> linkEntitiesToIndexNode(
+      {required Iterable<String> entityIds,
+      required String indexNodeId}) async {
+    await host.call('library', 'linkEntitiesToIndexNode', {
+      'entityIds': entityIds.toList(growable: false),
+      'indexNodeId': indexNodeId
+    });
+  }
+
+  @override
+  Future<IndexNode> createCollectionWithEntities(
+      {required String name, required Iterable<String> entityIds}) async {
+    return (await host.call('library', 'createCollectionWithEntities', {
+      'name': name,
+      'entityIds': entityIds.toList(growable: false)
+    })) as IndexNode;
+  }
+
+  @override
+  Future<IndexNode> createCustomNode(
+      {required String parentId, required String name}) async {
+    return (await host.call('library', 'createCustomNode',
+        {'parentId': parentId, 'name': name})) as IndexNode;
+  }
+
+  @override
+  Future<IndexNode> cloneIndexNodeTree(
+      {required String sourceNodeId, required String targetParentId}) async {
+    return (await host.call('library', 'cloneIndexNodeTree', {
+      'sourceNodeId': sourceNodeId,
+      'targetParentId': targetParentId
+    })) as IndexNode;
+  }
+
+  @override
+  Future<IndexNodeEdge> linkIndexNodes(
+      {required String fromNodeId,
+      required String toNodeId,
+      String edgeType = 'related',
+      String? label,
+      int sortOrder = 0}) async {
+    return (await host.call('library', 'linkIndexNodes', {
+      'fromNodeId': fromNodeId,
+      'toNodeId': toNodeId,
+      'edgeType': edgeType,
+      'label': label,
+      'sortOrder': sortOrder
+    })) as IndexNodeEdge;
+  }
+
+  @override
+  Future<List<IndexNodeEdge>> listOutgoingEdges(String fromNodeId) async {
+    return (await host
+            .call('library', 'listOutgoingEdges', {'fromNodeId': fromNodeId}))
+        as List<IndexNodeEdge>;
+  }
+
+  @override
+  Future<List<IndexNodeEdge>> listIncomingEdges(String toNodeId) async {
+    return (await host
+            .call('library', 'listIncomingEdges', {'toNodeId': toNodeId}))
+        as List<IndexNodeEdge>;
+  }
+
+  @override
+  Future<List<IndexNodeEdge>> listGraphEdges(String graphRootId) async {
+    return (await host
+            .call('library', 'listGraphEdges', {'graphRootId': graphRootId}))
+        as List<IndexNodeEdge>;
+  }
+
+  @override
+  Future<List<IndexNode>> listGraphNodes(String graphRootId) async {
+    return (await host
+            .call('library', 'listGraphNodes', {'graphRootId': graphRootId}))
+        as List<IndexNode>;
+  }
+
+  @override
+  Future<Map<String, GraphNodePosition>> listGraphNodePositions(
+      String graphRootId) async {
+    return (await host.call(
+            'library', 'listGraphNodePositions', {'graphRootId': graphRootId}))
+        as Map<String, GraphNodePosition>;
+  }
+
+  @override
+  Future<void> setGraphNodePosition(
+      {required String nodeId, required double x, required double y}) async {
+    await host.call(
+        'library', 'setGraphNodePosition', {'nodeId': nodeId, 'x': x, 'y': y});
+  }
+
+  @override
+  Future<List<IndexNode>> listIndexRoots(
+      {EntitySortMode sortMode = EntitySortMode.nameAsc}) async {
+    return (await host
+            .call('library', 'listIndexRoots', {'sortMode': sortMode}))
+        as List<IndexNode>;
+  }
+
+  @override
+  Future<List<IndexNode>> listChildNodes(String indexRootId,
+      {String? parentId,
+      EntitySortMode sortMode = EntitySortMode.nameAsc}) async {
+    return (await host.call('library', 'listChildNodes', {
+      'indexRootId': indexRootId,
+      'parentId': parentId,
+      'sortMode': sortMode
+    })) as List<IndexNode>;
+  }
+
+  @override
+  Future<IndexNode?> getIndexNode(String id) async {
+    return (await host.call('library', 'getIndexNode', {'id': id}))
+        as IndexNode?;
+  }
+
+  @override
+  Future<IndexNode?> directoryIndexRootForNode(String nodeId) async {
+    return (await host
+            .call('library', 'directoryIndexRootForNode', {'nodeId': nodeId}))
+        as IndexNode?;
+  }
+
+  @override
+  Future<List<IndexNode>> listNodePath(
+      String indexRootId, String currentNodeId) async {
+    return (await host.call('library', 'listNodePath', {
+      'indexRootId': indexRootId,
+      'currentNodeId': currentNodeId
+    })) as List<IndexNode>;
+  }
+
+  @override
+  Future<Map<String, IndexNodeSummary>> listIndexNodeSummaries(
+      Iterable<String> nodeIds) async {
+    return (await host.call('library', 'listIndexNodeSummaries', {
+      'nodeIds': nodeIds.toList(growable: false)
+    })) as Map<String, IndexNodeSummary>;
+  }
+
+  @override
+  Future<List<IndexTreeNode>> listIndexTree(String indexRootId) async {
+    return (await host
+            .call('library', 'listIndexTree', {'indexRootId': indexRootId}))
+        as List<IndexTreeNode>;
+  }
+
+  @override
+  Future<IndexTreeSnapshot> loadIndexTree(String indexRootId) async {
+    return (await host
+            .call('library', 'loadIndexTree', {'indexRootId': indexRootId}))
+        as IndexTreeSnapshot;
+  }
+
+  @override
+  Future<List<EntityListItem>> listEntitiesUnderNode(String? indexNodeId,
+      {EntitySortMode sortMode = EntitySortMode.nameAsc}) async {
+    return (await host.call('library', 'listEntitiesUnderNode', {
+      'indexNodeId': indexNodeId,
+      'sortMode': sortMode
+    })) as List<EntityListItem>;
+  }
+
+  @override
+  Future<List<EntityListItem>> listEntitiesDirectlyUnderNode(
+      String? indexNodeId,
+      {EntitySortMode sortMode = EntitySortMode.nameAsc}) async {
+    return (await host.call('library', 'listEntitiesDirectlyUnderNode', {
+      'indexNodeId': indexNodeId,
+      'sortMode': sortMode
+    })) as List<EntityListItem>;
+  }
+
+  @override
+  Future<EntityPage> listEntityPageByTypes(Iterable<EntityType> entityTypes,
+      {EntitySortMode sortMode = EntitySortMode.nameAsc,
+      EntityPageCursor? after,
+      int? limit}) async {
+    return (await host.call('library', 'listEntityPageByTypes', {
+      'entityTypes': entityTypes.toList(growable: false),
+      'sortMode': sortMode,
+      'after': after,
+      'limit': limit
+    })) as EntityPage;
+  }
+
+  @override
+  Future<List<EntityListItem>> listEntitiesForNodeLinkPicker(
+      {String query = '', int limit = 160}) async {
+    return (await host.call('library', 'listEntitiesForNodeLinkPicker',
+        {'query': query, 'limit': limit})) as List<EntityListItem>;
+  }
+
+  @override
+  Future<EntityPage> listEntityPageDirectlyUnderNode(String? indexNodeId,
+      {EntitySortMode sortMode = EntitySortMode.nameAsc,
+      EntityPageCursor? after,
+      int? limit}) async {
+    return (await host.call('library', 'listEntityPageDirectlyUnderNode', {
+      'indexNodeId': indexNodeId,
+      'sortMode': sortMode,
+      'after': after,
+      'limit': limit
+    })) as EntityPage;
+  }
+
+  @override
+  Future<EntityPage> listEntityPageRecursivelyUnderNode(String? indexNodeId,
+      {EntitySortMode sortMode = EntitySortMode.nameAsc,
+      RecursiveEntityPageCursor? after,
+      int? limit}) async {
+    return (await host.call('library', 'listEntityPageRecursivelyUnderNode', {
+      'indexNodeId': indexNodeId,
+      'sortMode': sortMode,
+      'after': after,
+      'limit': limit
+    })) as EntityPage;
+  }
+
+  @override
+  Future<void> renameIndexNode(String nodeId, String name) async {
+    await host
+        .call('library', 'renameIndexNode', {'nodeId': nodeId, 'name': name});
+  }
+
+  @override
+  Future<void> deleteIndexNode(String nodeId) async {
+    await host.call('library', 'deleteIndexNode', {'nodeId': nodeId});
+  }
+
+  @override
+  Future<bool> willDeleteEntitiesWhenDeletingNode(String nodeId) async {
+    return (await host.call('library', 'willDeleteEntitiesWhenDeletingNode',
+        {'nodeId': nodeId})) as bool;
+  }
+
+  @override
+  Future<void> unlinkEntityFromIndexNode(
+      {required String entityId, required String indexNodeId}) async {
+    await host.call('library', 'unlinkEntityFromIndexNode',
+        {'entityId': entityId, 'indexNodeId': indexNodeId});
+  }
+
+  @override
+  Future<int> countEntitiesUnderIndexNode(String indexNodeId) async {
+    return (await host.call('library', 'countEntitiesUnderIndexNode',
+        {'indexNodeId': indexNodeId})) as int;
+  }
+
+  @override
+  Future<Map<String, int>> countEntitiesUnderIndexNodes(
+      Iterable<String> nodeIds) async {
+    return (await host.call('library', 'countEntitiesUnderIndexNodes',
+        {'nodeIds': nodeIds.toList(growable: false)})) as Map<String, int>;
+  }
+
+  @override
+  Future<Entity?> getEntity(String id) async {
+    return (await host.call('library', 'getEntity', {'id': id})) as Entity?;
+  }
+
+  @override
+  Future<void> rebuildIndexNodeStats() async {
+    await host.call('library', 'rebuildIndexNodeStats', {});
+  }
+
+  @override
+  Future<void> rebuildIndexNodeStatsForNode(String nodeId) async {
+    await host
+        .call('library', 'rebuildIndexNodeStatsForNode', {'nodeId': nodeId});
+  }
+
+  @override
+  Future<List<String>> listIndexNodeIdsForEntity(String entityId) async {
+    return (await host.call(
+            'library', 'listIndexNodeIdsForEntity', {'entityId': entityId}))
+        as List<String>;
+  }
+
+  @override
+  Future<void> markIndexNodePreviewDirty(String nodeId,
+      {IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,
+      String? reason}) async {
+    await host.call('library', 'markIndexNodePreviewDirty',
+        {'nodeId': nodeId, 'scope': scope, 'reason': reason});
+  }
+
+  @override
+  Future<void> removeThumbnailAssets(Iterable<String> keys) async {
+    await host.call('library', 'removeThumbnailAssets',
+        {'keys': keys.toList(growable: false)});
+  }
+
+  @override
+  Future<Map<String, IndexNodePreview>> listIndexNodePreviews(
+      Iterable<String> nodeIds) async {
+    return (await host.call('library', 'listIndexNodePreviews', {
+      'nodeIds': nodeIds.toList(growable: false)
+    })) as Map<String, IndexNodePreview>;
+  }
+
+  @override
+  Future<String> nodePreviewAssetPath(String assetKey, String format) async {
+    return (await host.call('library', 'nodePreviewAssetPath',
+        {'assetKey': assetKey, 'format': format})) as String;
+  }
+
+  @override
+  Future<void> recordNodePreviewAsset(
+      {required String nodeId,
+      required String signature,
+      required String assetKey,
+      required String format,
+      required int width,
+      required int height}) async {
+    await host.call('library', 'recordNodePreviewAsset', {
+      'nodeId': nodeId,
+      'signature': signature,
+      'assetKey': assetKey,
+      'format': format,
+      'width': width,
+      'height': height
+    });
+  }
+
+  @override
+  Future<void> removeNodePreviewAsset(String nodeId) async {
+    await host.call('library', 'removeNodePreviewAsset', {'nodeId': nodeId});
+  }
+
+  @override
+  Future<void> rebuildIndexNodePreviewCache(String rootId) async {
+    await host
+        .call('library', 'rebuildIndexNodePreviewCache', {'rootId': rootId});
+  }
+
+  @override
+  Future<void> rebuildIndexNodePreviewCacheForNode(String nodeId) async {
+    await host.call(
+        'library', 'rebuildIndexNodePreviewCacheForNode', {'nodeId': nodeId});
+  }
+
+  @override
+  Future<void> rebuildIndexNodePreviewCacheChain(String nodeId) async {
+    await host.call(
+        'library', 'rebuildIndexNodePreviewCacheChain', {'nodeId': nodeId});
+  }
+
+  @override
+  Future<IndexNode?> owningIndexRootForNode(String nodeId) async {
+    return (await host.call(
+        'library', 'owningIndexRootForNode', {'nodeId': nodeId})) as IndexNode?;
+  }
+
+  @override
+  Future<List<IndexNode>> listIndexNodeAncestors(String nodeId) async {
+    return (await host
+            .call('library', 'listIndexNodeAncestors', {'nodeId': nodeId}))
+        as List<IndexNode>;
+  }
+
+  @override
+  Future<Set<String>> listIndexNodeDescendantIds(String nodeId) async {
+    return (await host
+            .call('library', 'listIndexNodeDescendantIds', {'nodeId': nodeId}))
+        as Set<String>;
+  }
+
+  @override
+  Future<NodePreviewCandidatePage> listNodePreviewCandidates(String nodeId,
+      {String query = '', int offset = 0, int limit = 80}) async {
+    return (await host.call('library', 'listNodePreviewCandidates', {
+      'nodeId': nodeId,
+      'query': query,
+      'offset': offset,
+      'limit': limit
+    })) as NodePreviewCandidatePage;
+  }
+
+  @override
+  Future<String?> getNodePreviewOverride(String nodeId) async {
+    return (await host.call(
+        'library', 'getNodePreviewOverride', {'nodeId': nodeId})) as String?;
+  }
+
+  @override
+  Future<void> setNodePreviewOverride(String nodeId, String itemsJson) async {
+    await host.call('library', 'setNodePreviewOverride',
+        {'nodeId': nodeId, 'itemsJson': itemsJson});
+  }
+
+  @override
+  Future<void> clearNodePreviewOverride(String nodeId) async {
+    await host.call('library', 'clearNodePreviewOverride', {'nodeId': nodeId});
+  }
+
+  @override
+  Future<void> updateEntityThumbnailPending(String entityId) async {
+    await host.call(
+        'library', 'updateEntityThumbnailPending', {'entityId': entityId});
+  }
+
+  @override
+  Future<void> applyThumbnailUpdates(
+      Iterable<ThumbnailDatabaseUpdate> updates) async {
+    await host.call('library', 'applyThumbnailUpdates',
+        {'updates': updates.toList(growable: false)});
+  }
+
+  @override
+  Future<void> updateEntityThumbnailSuccess(
+      {required String entityId,
+      required String key,
+      required String format,
+      required int width,
+      required int height}) async {
+    await host.call('library', 'updateEntityThumbnailSuccess', {
+      'entityId': entityId,
+      'key': key,
+      'format': format,
+      'width': width,
+      'height': height
+    });
+  }
+
+  @override
+  Future<void> updateEntityThumbnailFailed(
+      String entityId, String error) async {
+    await host.call('library', 'updateEntityThumbnailFailed',
+        {'entityId': entityId, 'error': error});
+  }
+
+  @override
+  Future<void> updateEntityThumbnailNone(String entityId) async {
+    await host
+        .call('library', 'updateEntityThumbnailNone', {'entityId': entityId});
+  }
+
+  @override
+  Future<void> recordThumbnailAsset(
+      {required String key,
+      required String format,
+      required int byteSize}) async {
+    await host.call('library', 'recordThumbnailAsset',
+        {'key': key, 'format': format, 'byteSize': byteSize});
+  }
+
+  @override
+  Future<ThumbnailPreloadPage> listThumbnailPreloadPageUnderNode(
+      String? indexNodeId,
+      {String? afterEntityId,
+      bool recursive = false,
+      int limit = 240}) async {
+    return (await host.call('library', 'listThumbnailPreloadPageUnderNode', {
+      'indexNodeId': indexNodeId,
+      'afterEntityId': afterEntityId,
+      'recursive': recursive,
+      'limit': limit
+    })) as ThumbnailPreloadPage;
+  }
+
+  @override
+  Future<Map<String, List<String>>> listDirectThumbnailPathsUnderRoot(
+      String rootId) async {
+    return (await host.call(
+            'library', 'listDirectThumbnailPathsUnderRoot', {'rootId': rootId}))
+        as Map<String, List<String>>;
+  }
 }

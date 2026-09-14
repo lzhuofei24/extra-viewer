@@ -558,7 +558,7 @@ class _IndexTaskCard extends StatelessWidget {
                   onPressed: disabled ? null : onRecheck,
                   child: const Text('重新检查并更新'),
                 ),
-              if (value.documentPreviewFailed > 0 ||
+              if (value.indexFailed > 0 || value.documentPreviewFailed > 0 ||
                   value.entityPreviewFailed > 0 ||
                   value.nodePreviewFailed > 0)
                 OutlinedButton(

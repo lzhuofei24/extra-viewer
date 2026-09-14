@@ -1,14 +1,13 @@
 part of 'library_repository.dart';
 
 /// Shared infrastructure for all repository mixins. Holds the database
-/// connection, write worker, thumbnail store, transaction machinery, and
+/// connection, thumbnail store, transaction machinery, and
 /// cross-cutting helpers used by every domain mixin.
 class LibraryRepositoryBase {
-  LibraryRepositoryBase(this.database, {this.writeWorker})
+  LibraryRepositoryBase(this.database)
       : thumbnailStore = ThumbnailStore(database.storageDirectoryPath);
 
   final AppDatabase database;
-  final LibraryWriteWorker? writeWorker;
   final ThumbnailStore thumbnailStore;
   String get storageDirectoryPath => database.storageDirectoryPath;
 
@@ -16,36 +15,15 @@ class LibraryRepositoryBase {
   var _indexStatsBatchDepth = 0;
   var _indexStatsDirty = false;
 
-  /// Sends non-read-after-write bookkeeping to the dedicated writer. The
-  /// synchronous fallback keeps in-memory tests and recovery mode functional.
+  /// Executes inside DatabaseHost's single writer, including bookkeeping.
   void _enqueueBackgroundWrite(
     String operation,
     String sql, [
     List<Object?> parameters = const <Object?>[],
   ]) {
-    final worker = writeWorker;
-    if (worker == null) {
-      database.db.execute(sql, parameters);
-      return;
-    }
-    unawaited(
-      worker.execute(sql, parameters).then<void>(
-        (_) {},
-        onError: (Object error, StackTrace stackTrace) {
-          AppDiagnosticLog.instance.error(
-            'database_background_write_failed',
-            error,
-            stackTrace,
-            fields: {'operation': operation},
-          );
-        },
-      ),
-    );
+    database.db.execute(sql, parameters);
   }
 
-  Future<void> flushQueuedWrites() async {
-    await writeWorker?.flush();
-  }
 
   T batchIndexMutations<T>(T Function() action) {
     _indexStatsBatchDepth++;
@@ -74,19 +52,6 @@ class LibraryRepositoryBase {
     }
   }
 
-  Future<T> writeAsyncTransaction<T>(Future<T> Function() action) async {
-    final name = 'best_viewer_async_tx_${_transactionSequence++}';
-    database.db.execute('SAVEPOINT $name');
-    try {
-      final result = await action();
-      database.db.execute('RELEASE SAVEPOINT $name');
-      return result;
-    } catch (_) {
-      database.db.execute('ROLLBACK TO SAVEPOINT $name');
-      database.db.execute('RELEASE SAVEPOINT $name');
-      rethrow;
-    }
-  }
 
   IndexNode _ensureGlobalRoot() {
     final rows = database.db.select(

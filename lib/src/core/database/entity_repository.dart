@@ -23,7 +23,7 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
     final normalizedFormat =
         _normalizeEntityText(format, 'format').toLowerCase();
     final normalizedHash = _normalizeEntityText(hash, 'hash');
-    final normalizedPreview = _normalizeOptionalText(contentExcerpt);
+    var normalizedPreview = _normalizeOptionalText(contentExcerpt);
     final normalizedLocalPath = localPath == null || localPath.trim().isEmpty
         ? null
         : p.normalize(localPath.trim());
@@ -53,8 +53,11 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
             ? null
             : _entityFromRow(existingRows.first, thumbnailStore));
     if (existing != null) {
+      normalizedPreview ??= existing.contentExcerpt;
+      durationMs ??= existing.durationMs;
       final requiresRuntimePreview = !_hasGeneratedThumbnail(entityType);
       if (existing.hash == normalizedHash &&
+          existing.name == normalizedName &&
           existing.contentExcerpt == normalizedPreview &&
           existing.entityType == entityType &&
           existing.format == normalizedFormat &&
@@ -272,17 +275,6 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
     );
   }
 
-  Future<void> clearEntityLocalPathAsync(String id) async {
-    final worker = writeWorker;
-    if (worker == null) {
-      clearEntityLocalPath(id);
-      return;
-    }
-    await worker.execute(
-      'UPDATE entities SET local_path = NULL WHERE id = ?',
-      [id],
-    );
-  }
 
   Entity? getEntityByPath(String path) {
     final rows = database.db.select(

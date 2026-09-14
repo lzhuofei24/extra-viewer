@@ -40,33 +40,48 @@ class DatabaseHost {
       }
       final pending = host._pending.remove(result['id']);
       if (pending == null) return;
-      if (result['ok'] == true) { pending.complete(result['value']); }
-      else { pending.completeError(StateError(result['error'] as String)); }
+      if (result['ok'] == true) {
+        pending.complete(result['value']);
+      } else {
+        pending.completeError(StateError(result['error'] as String));
+      }
     });
-    host._errors.listen((error) => host._fail(StateError('Database worker failed: $error')));
+    host._errors.listen(
+        (error) => host._fail(StateError('Database worker failed: $error')));
     host._exits.listen((_) {
       if (!host._exited.isCompleted) host._exited.complete();
-      if (host._closing == null) host._fail(StateError('Database worker exited'));
+      if (host._closing == null) {
+        host._fail(StateError('Database worker exited'));
+      }
     });
-    host._isolate = await Isolate.spawn(_runDatabase,
-      (path: databasePath, reply: host._messages.sendPort),
-      onError: host._errors.sendPort, onExit: host._exits.sendPort);
-    try { await host._ready.future.timeout(const Duration(seconds: 10)); }
-    catch (_) { host._disposePorts(); host._isolate.kill(); rethrow; }
+    host._isolate = await Isolate.spawn(
+        _runDatabase, (path: databasePath, reply: host._messages.sendPort),
+        onError: host._errors.sendPort, onExit: host._exits.sendPort);
+    try {
+      await host._ready.future.timeout(const Duration(seconds: 10));
+    } catch (_) {
+      host._disposePorts();
+      host._isolate.kill();
+      rethrow;
+    }
     return host;
   }
 
   void _fail(Object error) {
     _failure ??= error;
     if (!_ready.isCompleted) _ready.completeError(error);
-    for (final completer in _pending.values) { completer.completeError(error); }
+    for (final completer in _pending.values) {
+      completer.completeError(error);
+    }
     _pending.clear();
   }
 
-  Future<Object?> call(String domain, String method, Map<String, Object?> args) =>
+  Future<Object?> call(
+          String domain, String method, Map<String, Object?> args) =>
       _request({'domain': domain, 'method': method, 'args': args});
 
-  Future<Object?> _request(Map<String, Object?> message, {bool closing = false}) async {
+  Future<Object?> _request(Map<String, Object?> message,
+      {bool closing = false}) async {
     if (_failure != null) throw StateError('Database unavailable: $_failure');
     if (_closing != null && !closing) throw StateError('Database is closing');
     final id = '$_session:${_sequence++}';
@@ -74,19 +89,30 @@ class DatabaseHost {
     _pending[id] = result;
     try {
       _port!.send({...message, 'id': id});
-      return await result.future.timeout(const Duration(minutes: 2), onTimeout: () {
-        throw TimeoutException('Database request $id outcome unknown; inspect receipt before retry');
+      return await result.future.timeout(const Duration(minutes: 2),
+          onTimeout: () {
+        throw TimeoutException(
+            'Database request $id outcome unknown; inspect receipt before retry');
       });
-    } finally { _pending.remove(id); }
+    } finally {
+      _pending.remove(id);
+    }
   }
 
-  Future<LibraryWriteResult> execute(String sql, [List<Object?> parameters = const []]) =>
+  Future<LibraryWriteResult> execute(String sql,
+          [List<Object?> parameters = const []]) =>
       executeBatch([LibraryWriteStatement(sql, parameters)]);
-  Future<LibraryWriteResult> executeBatch(Iterable<LibraryWriteStatement> statements) async {
-    final value = await _request({'domain': 'sql', 'statements': statements.toList(growable: false)});
+  Future<LibraryWriteResult> executeBatch(
+      Iterable<LibraryWriteStatement> statements) async {
+    final value = await _request(
+        {'domain': 'sql', 'statements': statements.toList(growable: false)});
     return LibraryWriteResult(changes: value as int);
   }
-  Future<void> flush() async { await _request({'domain': 'barrier'}); }
+
+  Future<void> flush() async {
+    await _request({'domain': 'barrier'});
+  }
+
   Future<void> close() => _closing ??= _close();
   Future<void> _close() async {
     try {
@@ -98,7 +124,12 @@ class DatabaseHost {
       _disposePorts();
     }
   }
-  void _disposePorts() { _messages.close(); _errors.close(); _exits.close(); }
+
+  void _disposePorts() {
+    _messages.close();
+    _errors.close();
+    _exits.close();
+  }
 }
 
 class LibraryWriteStatement {
@@ -106,6 +137,7 @@ class LibraryWriteStatement {
   final String sql;
   final List<Object?> parameters;
 }
+
 class LibraryWriteResult {
   const LibraryWriteResult({this.changes = 0});
   final int changes;
@@ -135,11 +167,15 @@ Future<void> _runDatabase(({String path, SendPort reply}) config) async {
           config.reply.send({'id': id, 'ok': true, 'value': null});
           break;
         }
-        final args = (request['args'] as Map<String, Object?>?) ?? const <String, Object?>{};
+        final args = (request['args'] as Map<String, Object?>?) ??
+            const <String, Object?>{};
         final value = switch (domain) {
-          'library' => await dispatchLibrary(repository, request['method']! as String, args),
-          'build' => await dispatchBuild(builds, request['method']! as String, args),
-          'sql' => _batch(app.db, id, (request['statements'] as List).cast<LibraryWriteStatement>()),
+          'library' => await dispatchLibrary(
+              repository, request['method']! as String, args),
+          'build' =>
+            await dispatchBuild(builds, request['method']! as String, args),
+          'sql' => _batch(app.db, id,
+              (request['statements'] as List).cast<LibraryWriteStatement>()),
           'barrier' => null,
           _ => throw ArgumentError('Unknown database domain $domain'),
         };
@@ -148,25 +184,38 @@ Future<void> _runDatabase(({String path, SendPort reply}) config) async {
         config.reply.send({'id': id, 'ok': false, 'error': '$error\n$stack'});
       }
     }
-  } finally { input.close(); app.close(); }
+  } finally {
+    input.close();
+    app.close();
+  }
 }
 
-int _batch(Database db, String requestId, List<LibraryWriteStatement> statements) {
-  final previous = db.select('SELECT changes FROM database_command_receipts WHERE request_id = ?', [requestId]);
+int _batch(
+    Database db, String requestId, List<LibraryWriteStatement> statements) {
+  final previous = db.select(
+      'SELECT changes FROM database_command_receipts WHERE request_id = ?',
+      [requestId]);
   if (previous.isNotEmpty) return previous.single['changes'] as int;
   final prepared = <String, PreparedStatement>{};
   db.execute('BEGIN IMMEDIATE');
   try {
     var changes = 0;
     for (final item in statements) {
-      final statement = prepared.putIfAbsent(item.sql, () => db.prepare(item.sql));
+      final statement =
+          prepared.putIfAbsent(item.sql, () => db.prepare(item.sql));
       statement.execute(item.parameters);
       changes += db.updatedRows;
     }
     db.execute('INSERT INTO database_command_receipts VALUES (?, ?, ?)',
-      [requestId, changes, DateTime.now().millisecondsSinceEpoch]);
+        [requestId, changes, DateTime.now().millisecondsSinceEpoch]);
     db.execute('COMMIT');
     return changes;
-  } catch (_) { db.execute('ROLLBACK'); rethrow; }
-  finally { for (final statement in prepared.values) { statement.dispose(); } }
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  } finally {
+    for (final statement in prepared.values) {
+      statement.dispose();
+    }
+  }
 }

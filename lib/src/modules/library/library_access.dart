@@ -2,112 +2,231 @@
 import 'dart:async';
 import '../../core/domain/models.dart';
 import '../../core/thumbnails/thumbnail_store.dart';
+
 abstract interface class LibraryAccess {
-String get storageDirectoryPath; ThumbnailStore get thumbnailStore;
-FutureOr<AudioPlaybackSession> createAudioPlaybackSession({required List<EntityListItem> entries, required int currentIndex, String? sourceNodeId, String? sourceNodeName, AudioPlaybackMode mode = AudioPlaybackMode.sequential});
-FutureOr<List<AudioPlaybackSession>> listAudioPlaybackSessions();
-FutureOr<AudioPlaybackSession?> getAudioPlaybackSession(String id);
-FutureOr<void> updateAudioPlaybackSession({required String id, int? currentIndex, int? positionMs, AudioPlaybackMode? mode, List<int>? shuffleRemaining, List<int>? history, bool? active});
-FutureOr<void> deleteAudioPlaybackSession(String id);
-FutureOr<EntityUpsertResult> upsertEntity({required String path, required String name, required String format, required EntityType entityType, required String hash, required int size, required int sourceCreatedAtMs, required int sourceModifiedAtMs, String? contentExcerpt, int? durationMs, String? directoryRootId, String? localPath, Entity? knownExisting, bool existingLookupCompleted = false});
-FutureOr<void> updateEntityMetadataPreview(String entityId, String? contentExcerpt, int? durationMs);
-FutureOr<List<Entity>> listEpubsMissingMetadataPreview({int limit = 200});
-FutureOr<void> clearEntityLocalPath(String id);
-FutureOr<void> clearEntityLocalPathAsync(String id);
-FutureOr<Entity?> getEntityByPath(String path);
-FutureOr<Map<String, Entity>> getEntitiesByPaths(Iterable<String> paths);
-FutureOr<Map<String, Entity>> getEntitiesByIds(Iterable<String> entityIds);
-FutureOr<void> updateEntityDuration(String entityId, int durationMs);
-FutureOr<bool> hasEntityForPath(String path);
-FutureOr<void> markOpened(String entityId);
-FutureOr<void> savePlaybackState({required String entityId, required int positionMs, required int durationMs});
-FutureOr<void> saveReaderState({required String entityId, double? scrollOffset, double? zoomScale, String? extraStateJson});
-FutureOr<void> removeEntityFromLibrary(String entityId);
-FutureOr<void> removeEntitiesFromLibrary(Iterable<String> entityIds);
-FutureOr<List<EntityListItem>> listRecentOpenedEntities({int limit = 12, Iterable<EntityType>? entityTypes});
-FutureOr<List<EntityListItem>> listRecentlyModifiedEntities({int limit = 12});
-FutureOr<Set<String>> entityIdsUnderDirectorySource(String sourcePath);
-FutureOr<int> commitInspectedPage({required LibraryBuildJob job, required List<LibraryBuildManifestItem> page, required String rootId, required Map<String, Entity> existing, required Map<int, (String, int, int, int, String?, int?)> detailsBySequence, required Map<int, IndexNode> nodesBySequence, required int indexedBefore});
-FutureOr<IndexNode> ensureDirectoryIndexRoot(String sourcePath, {bool staging = false, String? displayName});
-FutureOr<void> replaceOverlappingDirectoryIndexRoots({required String keepRootId, required String sourcePath});
-FutureOr<Set<String>> directoryIndexRootIdsOverlapping(String sourcePath, {String? excludingRootId});
-FutureOr<IndexNode?> directoryIndexRootForSource(String sourcePath);
-FutureOr<bool> isDirectoryIndexRootEmpty(String rootId);
-FutureOr<DirectoryIndexDeletionReport> inspectDirectoryIndexDeletion(String rootId);
-FutureOr<DirectoryIndexDeletionResult> deleteDirectoryIndex(String rootId, {required bool force});
-FutureOr<void> reconcileDirectoryIndexRoot({required String rootId, required Iterable<String> seenPaths});
-FutureOr<void> reconcileDirectoryIndexSubtree({required String nodeId, required String rootId, required Iterable<String> seenPaths});
-FutureOr<void> pruneEmptyDirectoryNodes(String rootId);
-FutureOr<IndexNode> ensureCategoryIndexRoot(String name);
-FutureOr<IndexNode> ensureCollectionIndexRoot(String name);
-FutureOr<IndexNode> ensureGraphIndexRoot(String name);
-FutureOr<IndexNode> ensureGraphNode({required String parentId, required String name, int sortOrder = 0});
-FutureOr<IndexNode> ensureIndexNode({required String name, required NodeType nodeType, required ViewType viewType, String? parentId, String? sourcePath, int sortOrder = 0});
-FutureOr<void> setDirectoryNodeRelativePath(String nodeId, String relativePath);
-FutureOr<IndexNode> ensureDirectoryFolderAsync({required String parentId, required String name, required String relativePath});
-FutureOr<String?> directoryNodeRelativePath(String nodeId);
-FutureOr<void> backfillDirectoryNodeRelativePaths(String rootId);
-FutureOr<void> linkEntityToIndexNode({required String entityId, required String indexNodeId});
-FutureOr<void> linkEntitiesToIndexNodes(Iterable<({String entityId, String indexNodeId})> links, {bool rebuildStats = true, bool markPreviewDirty = true});
-FutureOr<void> linkEntitiesToIndexNode({required Iterable<String> entityIds, required String indexNodeId});
-FutureOr<IndexNode> createCollectionWithEntities({required String name, required Iterable<String> entityIds});
-FutureOr<IndexNode> createCustomNode({required String parentId, required String name});
-FutureOr<IndexNode> cloneIndexNodeTree({required String sourceNodeId, required String targetParentId});
-FutureOr<IndexNodeEdge> linkIndexNodes({required String fromNodeId, required String toNodeId, String edgeType = 'related', String? label, int sortOrder = 0});
-FutureOr<List<IndexNodeEdge>> listOutgoingEdges(String fromNodeId);
-FutureOr<List<IndexNodeEdge>> listIncomingEdges(String toNodeId);
-FutureOr<List<IndexNodeEdge>> listGraphEdges(String graphRootId);
-FutureOr<List<IndexNode>> listGraphNodes(String graphRootId);
-FutureOr<Map<String, GraphNodePosition>> listGraphNodePositions(String graphRootId);
-FutureOr<void> setGraphNodePosition({required String nodeId, required double x, required double y});
-FutureOr<List<IndexNode>> listIndexRoots({EntitySortMode sortMode = EntitySortMode.nameAsc});
-FutureOr<List<IndexNode>> listChildNodes(String indexRootId, {String? parentId, EntitySortMode sortMode = EntitySortMode.nameAsc});
-FutureOr<IndexNode?> getIndexNode(String id);
-FutureOr<IndexNode?> directoryIndexRootForNode(String nodeId);
-FutureOr<List<IndexNode>> listNodePath(String indexRootId, String currentNodeId);
-FutureOr<Map<String, IndexNodeSummary>> listIndexNodeSummaries(Iterable<String> nodeIds);
-FutureOr<List<IndexTreeNode>> listIndexTree(String indexRootId);
-FutureOr<IndexTreeSnapshot> loadIndexTree(String indexRootId);
-FutureOr<List<EntityListItem>> listEntitiesUnderNode(String? indexNodeId, {EntitySortMode sortMode = EntitySortMode.nameAsc});
-FutureOr<List<EntityListItem>> listEntitiesDirectlyUnderNode(String? indexNodeId, {EntitySortMode sortMode = EntitySortMode.nameAsc});
-FutureOr<EntityPage> listEntityPageByTypes(Iterable<EntityType> entityTypes, {EntitySortMode sortMode = EntitySortMode.nameAsc, EntityPageCursor? after, int? limit});
-FutureOr<List<EntityListItem>> listEntitiesForNodeLinkPicker({String query = '', int limit = 160});
-FutureOr<EntityPage> listEntityPageDirectlyUnderNode(String? indexNodeId, {EntitySortMode sortMode = EntitySortMode.nameAsc, EntityPageCursor? after, int? limit});
-FutureOr<EntityPage> listEntityPageRecursivelyUnderNode(String? indexNodeId, {EntitySortMode sortMode = EntitySortMode.nameAsc, RecursiveEntityPageCursor? after, int? limit});
-FutureOr<void> renameIndexNode(String nodeId, String name);
-FutureOr<void> deleteIndexNode(String nodeId);
-FutureOr<bool> willDeleteEntitiesWhenDeletingNode(String nodeId);
-FutureOr<void> unlinkEntityFromIndexNode({required String entityId, required String indexNodeId});
-FutureOr<int> countEntitiesUnderIndexNode(String indexNodeId);
-FutureOr<Map<String, int>> countEntitiesUnderIndexNodes(Iterable<String> nodeIds);
-FutureOr<void> flushQueuedWrites();
-FutureOr<Entity?> getEntity(String id);
-FutureOr<void> rebuildIndexNodeStats();
-FutureOr<void> rebuildIndexNodeStatsForNode(String nodeId);
-FutureOr<List<String>> listIndexNodeIdsForEntity(String entityId);
-FutureOr<void> markIndexNodePreviewDirty(String nodeId, {IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node, String? reason});
-FutureOr<void> removeThumbnailAssets(Iterable<String> keys);
-FutureOr<Map<String, IndexNodePreview>> listIndexNodePreviews(Iterable<String> nodeIds);
-FutureOr<String> nodePreviewAssetPath(String assetKey, String format);
-FutureOr<void> recordNodePreviewAsset({required String nodeId, required String signature, required String assetKey, required String format, required int width, required int height});
-FutureOr<void> removeNodePreviewAsset(String nodeId);
-FutureOr<void> rebuildIndexNodePreviewCache(String rootId);
-FutureOr<void> rebuildIndexNodePreviewCacheForNode(String nodeId);
-FutureOr<void> rebuildIndexNodePreviewCacheChain(String nodeId);
-FutureOr<IndexNode?> owningIndexRootForNode(String nodeId);
-FutureOr<List<IndexNode>> listIndexNodeAncestors(String nodeId);
-FutureOr<Set<String>> listIndexNodeDescendantIds(String nodeId);
-FutureOr<NodePreviewCandidatePage> listNodePreviewCandidates(String nodeId, {String query = '', int offset = 0, int limit = 80});
-FutureOr<String?> getNodePreviewOverride(String nodeId);
-FutureOr<void> setNodePreviewOverride(String nodeId, String itemsJson);
-FutureOr<void> clearNodePreviewOverride(String nodeId);
-FutureOr<void> updateEntityThumbnailPending(String entityId);
-FutureOr<void> applyThumbnailUpdates(Iterable<ThumbnailDatabaseUpdate> updates);
-FutureOr<void> applyThumbnailUpdatesAsync(Iterable<ThumbnailDatabaseUpdate> updates);
-FutureOr<void> updateEntityThumbnailSuccess({required String entityId, required String key, required String format, required int width, required int height});
-FutureOr<void> updateEntityThumbnailFailed(String entityId, String error);
-FutureOr<void> updateEntityThumbnailNone(String entityId);
-FutureOr<void> recordThumbnailAsset({required String key, required String format, required int byteSize});
-FutureOr<ThumbnailPreloadPage> listThumbnailPreloadPageUnderNode(String? indexNodeId, {String? afterEntityId, bool recursive = false, int limit = 240});
-FutureOr<Map<String, List<String>>> listDirectThumbnailPathsUnderRoot(String rootId);
+  String get storageDirectoryPath;
+  ThumbnailStore get thumbnailStore;
+  FutureOr<AudioPlaybackSession> createAudioPlaybackSession(
+      {required List<EntityListItem> entries,
+      required int currentIndex,
+      String? sourceNodeId,
+      String? sourceNodeName,
+      AudioPlaybackMode mode = AudioPlaybackMode.sequential});
+  FutureOr<List<AudioPlaybackSession>> listAudioPlaybackSessions();
+  FutureOr<AudioPlaybackSession?> getAudioPlaybackSession(String id);
+  FutureOr<void> updateAudioPlaybackSession(
+      {required String id,
+      int? currentIndex,
+      int? positionMs,
+      AudioPlaybackMode? mode,
+      List<int>? shuffleRemaining,
+      List<int>? history,
+      bool? active});
+  FutureOr<void> deleteAudioPlaybackSession(String id);
+  FutureOr<EntityUpsertResult> upsertEntity(
+      {required String path,
+      required String name,
+      required String format,
+      required EntityType entityType,
+      required String hash,
+      required int size,
+      required int sourceCreatedAtMs,
+      required int sourceModifiedAtMs,
+      String? contentExcerpt,
+      int? durationMs,
+      String? directoryRootId,
+      String? localPath,
+      Entity? knownExisting,
+      bool existingLookupCompleted = false});
+  FutureOr<void> updateEntityMetadataPreview(
+      String entityId, String? contentExcerpt, int? durationMs);
+  FutureOr<List<Entity>> listEpubsMissingMetadataPreview({int limit = 200});
+  FutureOr<void> clearEntityLocalPath(String id);
+  FutureOr<Entity?> getEntityByPath(String path);
+  FutureOr<Map<String, Entity>> getEntitiesByPaths(Iterable<String> paths);
+  FutureOr<Map<String, Entity>> getEntitiesByIds(Iterable<String> entityIds);
+  FutureOr<void> updateEntityDuration(String entityId, int durationMs);
+  FutureOr<bool> hasEntityForPath(String path);
+  FutureOr<void> markOpened(String entityId);
+  FutureOr<void> savePlaybackState(
+      {required String entityId,
+      required int positionMs,
+      required int durationMs});
+  FutureOr<void> saveReaderState(
+      {required String entityId,
+      double? scrollOffset,
+      double? zoomScale,
+      String? extraStateJson});
+  FutureOr<void> removeEntityFromLibrary(String entityId);
+  FutureOr<void> removeEntitiesFromLibrary(Iterable<String> entityIds);
+  FutureOr<List<EntityListItem>> listRecentOpenedEntities(
+      {int limit = 12, Iterable<EntityType>? entityTypes});
+  FutureOr<List<EntityListItem>> listRecentlyModifiedEntities({int limit = 12});
+  FutureOr<Set<String>> entityIdsUnderDirectorySource(String sourcePath);
+  FutureOr<int> commitInspectedPage(
+      {required LibraryBuildJob job,
+      required List<LibraryBuildManifestItem> page,
+      required String rootId,
+      required Map<String, Entity> existing,
+      required Map<int, (String, int, int, int, String?, int?)>
+          detailsBySequence,
+      required Map<int, IndexNode> nodesBySequence,
+      required int indexedBefore,
+      Map<int, String> inspectionErrors = const {}});
+  FutureOr<IndexNode> ensureDirectoryIndexRoot(String sourcePath,
+      {bool staging = false, String? displayName});
+  FutureOr<void> replaceOverlappingDirectoryIndexRoots(
+      {required String keepRootId, required String sourcePath});
+  FutureOr<Set<String>> directoryIndexRootIdsOverlapping(String sourcePath,
+      {String? excludingRootId});
+  FutureOr<IndexNode?> directoryIndexRootForSource(String sourcePath);
+  FutureOr<bool> isDirectoryIndexRootEmpty(String rootId);
+  FutureOr<DirectoryIndexDeletionReport> inspectDirectoryIndexDeletion(
+      String rootId);
+  FutureOr<DirectoryIndexDeletionResult> deleteDirectoryIndex(String rootId,
+      {required bool force});
+  FutureOr<void> reconcileDirectoryIndexRoot(
+      {required String rootId, required Iterable<String> seenPaths});
+  FutureOr<void> reconcileDirectoryIndexSubtree(
+      {required String nodeId,
+      required String rootId,
+      required Iterable<String> seenPaths});
+  FutureOr<void> pruneEmptyDirectoryNodes(String rootId);
+  FutureOr<IndexNode> ensureCategoryIndexRoot(String name);
+  FutureOr<IndexNode> ensureCollectionIndexRoot(String name);
+  FutureOr<IndexNode> ensureGraphIndexRoot(String name);
+  FutureOr<IndexNode> ensureGraphNode(
+      {required String parentId, required String name, int sortOrder = 0});
+  FutureOr<IndexNode> ensureIndexNode(
+      {required String name,
+      required NodeType nodeType,
+      required ViewType viewType,
+      String? parentId,
+      String? sourcePath,
+      int sortOrder = 0});
+  FutureOr<void> setDirectoryNodeRelativePath(
+      String nodeId, String relativePath);
+  FutureOr<IndexNode> ensureDirectoryFolderAsync(
+      {required String parentId,
+      required String name,
+      required String relativePath});
+  FutureOr<String?> directoryNodeRelativePath(String nodeId);
+  FutureOr<void> backfillDirectoryNodeRelativePaths(String rootId);
+  FutureOr<void> linkEntityToIndexNode(
+      {required String entityId, required String indexNodeId});
+  FutureOr<void> linkEntitiesToIndexNodes(
+      Iterable<({String entityId, String indexNodeId})> links,
+      {bool rebuildStats = true,
+      bool markPreviewDirty = true});
+  FutureOr<void> linkEntitiesToIndexNode(
+      {required Iterable<String> entityIds, required String indexNodeId});
+  FutureOr<IndexNode> createCollectionWithEntities(
+      {required String name, required Iterable<String> entityIds});
+  FutureOr<IndexNode> createCustomNode(
+      {required String parentId, required String name});
+  FutureOr<IndexNode> cloneIndexNodeTree(
+      {required String sourceNodeId, required String targetParentId});
+  FutureOr<IndexNodeEdge> linkIndexNodes(
+      {required String fromNodeId,
+      required String toNodeId,
+      String edgeType = 'related',
+      String? label,
+      int sortOrder = 0});
+  FutureOr<List<IndexNodeEdge>> listOutgoingEdges(String fromNodeId);
+  FutureOr<List<IndexNodeEdge>> listIncomingEdges(String toNodeId);
+  FutureOr<List<IndexNodeEdge>> listGraphEdges(String graphRootId);
+  FutureOr<List<IndexNode>> listGraphNodes(String graphRootId);
+  FutureOr<Map<String, GraphNodePosition>> listGraphNodePositions(
+      String graphRootId);
+  FutureOr<void> setGraphNodePosition(
+      {required String nodeId, required double x, required double y});
+  FutureOr<List<IndexNode>> listIndexRoots(
+      {EntitySortMode sortMode = EntitySortMode.nameAsc});
+  FutureOr<List<IndexNode>> listChildNodes(String indexRootId,
+      {String? parentId, EntitySortMode sortMode = EntitySortMode.nameAsc});
+  FutureOr<IndexNode?> getIndexNode(String id);
+  FutureOr<IndexNode?> directoryIndexRootForNode(String nodeId);
+  FutureOr<List<IndexNode>> listNodePath(
+      String indexRootId, String currentNodeId);
+  FutureOr<Map<String, IndexNodeSummary>> listIndexNodeSummaries(
+      Iterable<String> nodeIds);
+  FutureOr<List<IndexTreeNode>> listIndexTree(String indexRootId);
+  FutureOr<IndexTreeSnapshot> loadIndexTree(String indexRootId);
+  FutureOr<List<EntityListItem>> listEntitiesUnderNode(String? indexNodeId,
+      {EntitySortMode sortMode = EntitySortMode.nameAsc});
+  FutureOr<List<EntityListItem>> listEntitiesDirectlyUnderNode(
+      String? indexNodeId,
+      {EntitySortMode sortMode = EntitySortMode.nameAsc});
+  FutureOr<EntityPage> listEntityPageByTypes(Iterable<EntityType> entityTypes,
+      {EntitySortMode sortMode = EntitySortMode.nameAsc,
+      EntityPageCursor? after,
+      int? limit});
+  FutureOr<List<EntityListItem>> listEntitiesForNodeLinkPicker(
+      {String query = '', int limit = 160});
+  FutureOr<EntityPage> listEntityPageDirectlyUnderNode(String? indexNodeId,
+      {EntitySortMode sortMode = EntitySortMode.nameAsc,
+      EntityPageCursor? after,
+      int? limit});
+  FutureOr<EntityPage> listEntityPageRecursivelyUnderNode(String? indexNodeId,
+      {EntitySortMode sortMode = EntitySortMode.nameAsc,
+      RecursiveEntityPageCursor? after,
+      int? limit});
+  FutureOr<void> renameIndexNode(String nodeId, String name);
+  FutureOr<void> deleteIndexNode(String nodeId);
+  FutureOr<bool> willDeleteEntitiesWhenDeletingNode(String nodeId);
+  FutureOr<void> unlinkEntityFromIndexNode(
+      {required String entityId, required String indexNodeId});
+  FutureOr<int> countEntitiesUnderIndexNode(String indexNodeId);
+  FutureOr<Map<String, int>> countEntitiesUnderIndexNodes(
+      Iterable<String> nodeIds);
+  FutureOr<Entity?> getEntity(String id);
+  FutureOr<void> rebuildIndexNodeStats();
+  FutureOr<void> rebuildIndexNodeStatsForNode(String nodeId);
+  FutureOr<List<String>> listIndexNodeIdsForEntity(String entityId);
+  FutureOr<void> markIndexNodePreviewDirty(String nodeId,
+      {IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,
+      String? reason});
+  FutureOr<void> removeThumbnailAssets(Iterable<String> keys);
+  FutureOr<Map<String, IndexNodePreview>> listIndexNodePreviews(
+      Iterable<String> nodeIds);
+  FutureOr<String> nodePreviewAssetPath(String assetKey, String format);
+  FutureOr<void> recordNodePreviewAsset(
+      {required String nodeId,
+      required String signature,
+      required String assetKey,
+      required String format,
+      required int width,
+      required int height});
+  FutureOr<void> removeNodePreviewAsset(String nodeId);
+  FutureOr<void> rebuildIndexNodePreviewCache(String rootId);
+  FutureOr<void> rebuildIndexNodePreviewCacheForNode(String nodeId);
+  FutureOr<void> rebuildIndexNodePreviewCacheChain(String nodeId);
+  FutureOr<IndexNode?> owningIndexRootForNode(String nodeId);
+  FutureOr<List<IndexNode>> listIndexNodeAncestors(String nodeId);
+  FutureOr<Set<String>> listIndexNodeDescendantIds(String nodeId);
+  FutureOr<NodePreviewCandidatePage> listNodePreviewCandidates(String nodeId,
+      {String query = '', int offset = 0, int limit = 80});
+  FutureOr<String?> getNodePreviewOverride(String nodeId);
+  FutureOr<void> setNodePreviewOverride(String nodeId, String itemsJson);
+  FutureOr<void> clearNodePreviewOverride(String nodeId);
+  FutureOr<void> updateEntityThumbnailPending(String entityId);
+  FutureOr<void> applyThumbnailUpdates(
+      Iterable<ThumbnailDatabaseUpdate> updates);
+  FutureOr<void> updateEntityThumbnailSuccess(
+      {required String entityId,
+      required String key,
+      required String format,
+      required int width,
+      required int height});
+  FutureOr<void> updateEntityThumbnailFailed(String entityId, String error);
+  FutureOr<void> updateEntityThumbnailNone(String entityId);
+  FutureOr<void> recordThumbnailAsset(
+      {required String key, required String format, required int byteSize});
+  FutureOr<ThumbnailPreloadPage> listThumbnailPreloadPageUnderNode(
+      String? indexNodeId,
+      {String? afterEntityId,
+      bool recursive = false,
+      int limit = 240});
+  FutureOr<Map<String, List<String>>> listDirectThumbnailPathsUnderRoot(
+      String rootId);
 }

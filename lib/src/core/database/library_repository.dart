@@ -36,7 +36,7 @@ part 'audio_playback_repository.dart';
 ///
 /// All methods are available directly on this class via mixin composition.
 /// External callers (e.g. [LibraryBuildRepository]) continue to access
-/// [database], [writeWorker], and [thumbnailStore] without changes.
+/// [database] and [thumbnailStore] inside the database host only.
 class LibraryRepository extends LibraryRepositoryBase
     with
         EntityRepositoryMixin,
@@ -45,6 +45,7 @@ class LibraryRepository extends LibraryRepositoryBase
         IndexBuildMixin,
         NodePreviewRepositoryMixin,
         IndexStatsRepositoryMixin,
-        AudioPlaybackRepositoryMixin implements LibraryAccess {
-  LibraryRepository(super.database, {super.writeWorker});
+        AudioPlaybackRepositoryMixin
+    implements LibraryAccess {
+  LibraryRepository(super.database);
 }

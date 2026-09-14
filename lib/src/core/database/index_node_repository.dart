@@ -152,91 +152,21 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
     );
   }
 
-  /// Creates a generated directory node without running the insert on the
-  /// caller isolate. The caller still performs a small read afterwards so it
-  /// receives the winner when concurrent SAF batches discover the same folder.
   Future<IndexNode> ensureDirectoryFolderAsync({
     required String parentId,
     required String name,
     required String relativePath,
   }) async {
-    final normalizedName = _normalizeIndexNodeName(name);
-    final existingRows = database.db.select(
-      '''
-      SELECT * FROM index_nodes
-      WHERE parent_id = ? AND name = ? AND node_type = ?
-      LIMIT 1
-      ''',
-      [parentId, normalizedName, NodeType.folder.value],
-    );
-    if (existingRows.isNotEmpty) {
-      final existing = _nodeFromRow(existingRows.first);
-      final normalizedRelativePath = relativePath.replaceAll('\\', '/');
-      if (existingRows.first['relative_source_path'] !=
-          normalizedRelativePath) {
-        final worker = writeWorker;
-        if (worker == null) {
-          setDirectoryNodeRelativePath(existing.id, normalizedRelativePath);
-        } else {
-          await worker.execute(
-            'UPDATE index_nodes SET relative_source_path = ? WHERE id = ?',
-            [normalizedRelativePath, existing.id],
-          );
-        }
-      }
-      return existing;
-    }
-    _requireValidParentForNodeType(
-      nodeType: NodeType.folder,
-      parentId: parentId,
-    );
-    final now = nowMillis();
-    final id = newId();
-    final normalizedRelativePath = relativePath.replaceAll('\\', '/');
-    final statements = <LibraryWriteStatement>[
-      LibraryWriteStatement(
-        '''
-        INSERT OR IGNORE INTO index_nodes
-        (id, parent_id, name, node_type, view_type, relative_source_path,
-         sort_order, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
-        ''',
-        [
-          id,
-          parentId,
-          normalizedName,
-          NodeType.folder.value,
-          ViewType.tree.value,
-          normalizedRelativePath,
-          now,
-          now,
-        ],
-      ),
-    ];
-    final worker = writeWorker;
-    if (worker == null) {
+    return writeTransaction(() {
       final node = ensureIndexNode(
         parentId: parentId,
-        name: normalizedName,
+        name: name,
         nodeType: NodeType.folder,
         viewType: ViewType.tree,
       );
-      setDirectoryNodeRelativePath(node.id, normalizedRelativePath);
+      setDirectoryNodeRelativePath(node.id, relativePath);
       return _nodeById(node.id)!;
-    }
-    await worker.executeBatch(statements);
-    final rows = database.db.select(
-      '''
-      SELECT * FROM index_nodes
-      WHERE parent_id = ? AND name = ? AND node_type = ?
-      LIMIT 1
-      ''',
-      [parentId, normalizedName, NodeType.folder.value],
-    );
-    if (rows.isEmpty) {
-      throw StateError('目录节点写入后无法读取：$normalizedRelativePath');
-    }
-    return _nodeFromRow(rows.first);
+    });
   }
 
   String? directoryNodeRelativePath(String nodeId) {

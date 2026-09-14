@@ -1,7 +1,6 @@
 import '../domain/models.dart';
 import '../utils/ids.dart';
 import 'library_repository.dart';
-import 'library_write_worker.dart';
 import '../../modules/build/build_access.dart';
 
 enum _WorkCounter { document, entity, node }
@@ -10,11 +9,19 @@ enum _WorkCounter { document, entity, node }
 /// contains no rollback API: cancelling a build only stops future work and
 /// never mutates already committed entities, nodes, or derived assets.
 class LibraryBuildRepository implements BuildAccess {
+  static const _jobSelect = '''SELECT library_build_jobs.*,
+    (SELECT COUNT(*) FROM library_build_manifest m
+     WHERE m.job_id = library_build_jobs.id AND m.write_state = 'failed') AS index_failed
+    FROM library_build_jobs''';
   @override
   void finalizeIndex(LibraryBuildJob job) {
     validateScope(job);
     if (!job.manifestComplete) {
       throw StateError('目录尚未完整枚举，不能对账移除资料');
+    }
+    if ((get(job.id)?.indexFailed ?? 0) > 0) {
+      block(job.id, '部分文件读取失败，已提交资料保留；修复后仅重试失败项。未执行删除对账。');
+      return;
     }
     final rootId = job.indexRootId;
     if (rootId == null) throw StateError('索引根节点缺失');
@@ -52,6 +59,7 @@ class LibraryBuildRepository implements BuildAccess {
       documentPreviewTotal: refreshed.documentPreviewTotal,
     );
   }
+
   LibraryBuildRepository(this.library);
 
   final LibraryRepository library;
@@ -110,7 +118,7 @@ class LibraryBuildRepository implements BuildAccess {
   @override
   LibraryBuildJob? get(String jobId) {
     final rows = library.database.db.select(
-      'SELECT * FROM library_build_jobs WHERE id = ? LIMIT 1',
+      '$_jobSelect WHERE id = ? LIMIT 1',
       [jobId],
     );
     return rows.isEmpty ? null : _jobFromRow(rows.single);
@@ -118,7 +126,7 @@ class LibraryBuildRepository implements BuildAccess {
 
   @override
   List<LibraryBuildJob> listRecoverable() => library.database.db.select('''
-        SELECT * FROM library_build_jobs
+        $_jobSelect
         WHERE status IN ('pending', 'running', 'pauseRequested', 'paused', 'blocked', 'failed', 'completedWithErrors')
           AND stage != 'completed'
         ORDER BY updated_at DESC
@@ -127,7 +135,7 @@ class LibraryBuildRepository implements BuildAccess {
   @override
   List<LibraryBuildJob> listHistory({int limit = 100}) => library.database.db
       .select('''
-        SELECT * FROM library_build_jobs
+        $_jobSelect
         WHERE status IN ('completed', 'abandoned')
         ORDER BY updated_at DESC LIMIT ?
       ''', [limit.clamp(1, 100).toInt()])
@@ -319,69 +327,14 @@ class LibraryBuildRepository implements BuildAccess {
     }
   }
 
-  /// Directory enumeration can produce many small pages. Keep the durable
-  /// manifest writes off Flutter's isolate when the application writer is
-  /// available; the main isolate only continues after the page is committed.
-  @override
-  Future<void> upsertManifestAsync(
-    Iterable<LibraryBuildManifestItem> values,
-  ) async {
-    final items = values.toList(growable: false);
-    if (items.isEmpty) return;
-    final worker = library.writeWorker;
-    if (worker == null) {
-      upsertManifest(items);
-      return;
-    }
-    await worker.executeBatch(items
-        .map(
-          (item) => LibraryWriteStatement(
-            '''
-            INSERT INTO library_build_manifest(
-              job_id, source_path, relative_path, sequence, name, format,
-              media_type, fingerprint, size, metadata_preview, duration_ms,
-              source_created_at_ms, source_modified_at_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(job_id, source_path) DO UPDATE SET
-              relative_path = excluded.relative_path,
-              sequence = excluded.sequence,
-              name = excluded.name,
-              format = excluded.format,
-              media_type = excluded.media_type,
-              fingerprint = excluded.fingerprint,
-              size = excluded.size,
-              metadata_preview = excluded.metadata_preview,
-              duration_ms = excluded.duration_ms,
-              source_created_at_ms = excluded.source_created_at_ms,
-              source_modified_at_ms = excluded.source_modified_at_ms
-            ''',
-            [
-              item.jobId,
-              item.sourcePath,
-              item.relativePath,
-              item.sequence,
-              item.name,
-              item.format,
-              item.entityType.value,
-              item.fingerprint,
-              item.size,
-              item.contentExcerpt,
-              item.durationMs,
-              item.sourceCreatedAtMs,
-              item.sourceModifiedAtMs,
-            ],
-          ),
-        )
-        .toList(growable: false));
-  }
-
   @override
   int manifestItemCount(String jobId) =>
       _count('library_build_manifest', jobId);
 
   @override
   bool hasDirectoryFrontier(String jobId) => library.database.db.select(
-    'SELECT 1 FROM scan_directories WHERE job_id = ? LIMIT 1', [jobId]).isNotEmpty;
+      'SELECT 1 FROM scan_directories WHERE job_id = ? LIMIT 1',
+      [jobId]).isNotEmpty;
 
   @override
   void checkpoint() => library.database.checkpointWriteAheadLog();
@@ -471,11 +424,13 @@ class LibraryBuildRepository implements BuildAccess {
     String jobId, {
     required int afterSequence,
     int limit = 200,
+    bool pendingOnly = false,
   }) =>
       library.database.db
           .select('''
         SELECT * FROM library_build_manifest
         WHERE job_id = ? AND sequence > ?
+          ${pendingOnly ? "AND write_state = 'pending'" : ''}
         ORDER BY sequence ASC LIMIT ?
       ''', [jobId, afterSequence, limit.clamp(1, 1000).toInt()])
           .map(_manifestFromRow)
@@ -689,6 +644,15 @@ class LibraryBuildRepository implements BuildAccess {
     if (job == null) return;
     final now = nowMillis();
     library.writeTransaction(() {
+      if (job.indexFailed > 0) {
+        library.database.db.execute(
+            "UPDATE library_build_manifest SET write_state = 'pending', error = NULL WHERE job_id = ? AND write_state = 'failed'",
+            [jobId]);
+        library.database.db.execute(
+            "UPDATE library_build_jobs SET index_cursor = -1, stage = 'indexWrite', status = 'pending', error = NULL, updated_at = ? WHERE id = ?",
+            [now, jobId]);
+        return;
+      }
       for (final table in const [
         'library_document_preview_work',
         'library_entity_preview_work',
@@ -707,7 +671,8 @@ class LibraryBuildRepository implements BuildAccess {
               : LibraryBuildStage.nodePreviews;
       library.database.db.execute('''
         UPDATE library_build_jobs
-        SET stage = ?, status = 'pending', error = NULL, updated_at = ?
+        SET stage = ?, status = 'pending', error = NULL, updated_at = ?,
+          document_preview_failed = 0, entity_preview_failed = 0, node_preview_failed = 0
         WHERE id = ?
       ''', [retryStage.name, now, jobId]);
     });
@@ -831,9 +796,11 @@ class LibraryBuildRepository implements BuildAccess {
   }) {
     if (results.isEmpty) return;
     library.writeTransaction(() {
+      var doneDelta = 0;
+      var failedDelta = 0;
       final statement = library.database.db.prepare('''
         UPDATE $table SET state = ?, error = ?, updated_at = ?
-        WHERE job_id = ? AND $idColumn = ?
+        WHERE job_id = ? AND $idColumn = ? AND state = 'processing'
       ''');
       try {
         for (final entry in results.entries) {
@@ -844,18 +811,16 @@ class LibraryBuildRepository implements BuildAccess {
             jobId,
             entry.key,
           ]);
+          if (library.database.db.updatedRows == 0) continue;
+          if (entry.value.state == LibraryBuildWorkState.completed ||
+              entry.value.state == LibraryBuildWorkState.skipped) {
+            doneDelta++;
+          }
+          if (entry.value.state == LibraryBuildWorkState.failed) failedDelta++;
         }
       } finally {
         statement.dispose();
       }
-      final done = library.database.db.select('''
-        SELECT COUNT(*) AS value FROM $table
-        WHERE job_id = ? AND state IN ('completed', 'skipped')
-      ''', [jobId]).single['value'] as int;
-      final failed = library.database.db.select('''
-        SELECT COUNT(*) AS value FROM $table
-        WHERE job_id = ? AND state = 'failed'
-      ''', [jobId]).single['value'] as int;
       final columns = switch (counter) {
         _WorkCounter.document => (
             'document_preview_done',
@@ -865,9 +830,9 @@ class LibraryBuildRepository implements BuildAccess {
         _WorkCounter.node => ('node_preview_done', 'node_preview_failed'),
       };
       library.database.db.execute(
-        'UPDATE library_build_jobs SET ${columns.$1} = ?, ${columns.$2} = ?, '
+        'UPDATE library_build_jobs SET ${columns.$1} = ${columns.$1} + ?, ${columns.$2} = ${columns.$2} + ?, '
         'updated_at = ? WHERE id = ?',
-        [done, failed, nowMillis(), jobId],
+        [doneDelta, failedDelta, nowMillis(), jobId],
       );
     });
   }
@@ -886,6 +851,7 @@ class LibraryBuildRepository implements BuildAccess {
         scopeNodeId: row['scope_node_id'] as String?,
         manifestComplete: row['manifest_complete'] == 1,
         indexCursor: row['index_cursor'] as int,
+        indexFailed: row['index_failed'] as int? ?? 0,
         sourcePath: row['source_path'] as String,
         operation: LibraryBuildOperation.values.byName(
           row['operation_type'] as String,

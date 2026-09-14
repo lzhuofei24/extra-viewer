@@ -42,6 +42,7 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
   String? _selectedId;
   List<EntityListItem> _selectedEntities = const [];
   bool _linkMode = false;
+  int _reloadGeneration = 0;
 
   @override
   void initState() {
@@ -50,8 +51,10 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
   }
 
   Future<void> _reload() async {
+    final generation = ++_reloadGeneration;
     final nodes = (await widget.repository.listGraphNodes(widget.graphRoot.id));
-    final saved = (await widget.repository.listGraphNodePositions(widget.graphRoot.id));
+    final saved =
+        (await widget.repository.listGraphNodePositions(widget.graphRoot.id));
     final positions = <String, Offset>{
       for (var index = 0; index < nodes.length; index++)
         nodes[index].id: saved[nodes[index].id] == null
@@ -59,9 +62,11 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
             : Offset(saved[nodes[index].id]!.x, saved[nodes[index].id]!.y),
     };
     final edges = await widget.repository.listGraphEdges(widget.graphRoot.id);
-    final previews = await widget.repository.listIndexNodePreviews(nodes.map((node) => node.id));
-    final summaries = await widget.repository.listIndexNodeSummaries(nodes.map((node) => node.id));
-    if (!mounted) return;
+    final previews = await widget.repository
+        .listIndexNodePreviews(nodes.map((node) => node.id));
+    final summaries = await widget.repository
+        .listIndexNodeSummaries(nodes.map((node) => node.id));
+    if (!mounted || generation != _reloadGeneration) return;
     setState(() {
       _nodes = nodes;
       _edges = edges;
@@ -69,6 +74,17 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
       _previews = previews;
       _summaries = summaries;
     });
+    final selectedId = _selectedId;
+    if (selectedId != null) {
+      final entities =
+          await widget.repository.listEntitiesDirectlyUnderNode(selectedId);
+      if (!mounted ||
+          generation != _reloadGeneration ||
+          selectedId != _selectedId) {
+        return;
+      }
+      setState(() => _selectedEntities = entities);
+    }
   }
 
   Offset _defaultPosition(int index) {
@@ -175,7 +191,8 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
   Future<void> _selectNode(IndexNode node) async {
     final sourceId = _selectedId;
     if (_linkMode && sourceId != null && sourceId != node.id) {
-      (await widget.repository.linkIndexNodes(fromNodeId: sourceId, toNodeId: node.id));
+      (await widget.repository
+          .linkIndexNodes(fromNodeId: sourceId, toNodeId: node.id));
       setState(() {
         _linkMode = false;
         _selectedId = node.id;
@@ -183,8 +200,12 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
       _reload();
       return;
     }
-    setState(() => _selectedId = node.id);
-    final entities = await widget.repository.listEntitiesDirectlyUnderNode(node.id);
+    setState(() {
+      _selectedId = node.id;
+      _selectedEntities = const [];
+    });
+    final entities =
+        await widget.repository.listEntitiesDirectlyUnderNode(node.id);
     if (!mounted || _selectedId != node.id) return;
     setState(() => _selectedEntities = entities);
   }
@@ -213,9 +234,8 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
     final selectedChildren = selected == null
         ? const <IndexNode>[]
         : _nodes.where((node) => node.parentId == selected!.id).toList();
-    final selectedEntities = selected == null
-        ? const <EntityListItem>[]
-        : _selectedEntities;
+    final selectedEntities =
+        selected == null ? const <EntityListItem>[] : _selectedEntities;
     return Stack(
       children: [
         InteractiveViewer(
