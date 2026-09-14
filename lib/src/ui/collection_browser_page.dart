@@ -1,11 +1,12 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 import '../core/domain/models.dart';
+import '../modules/browser/thumbnail_warmup.dart';
 import 'browser_state.dart';
 import 'collection_grid_layout.dart';
 import 'design_tokens.dart';
@@ -46,7 +47,6 @@ class CollectionBrowserPage extends StatelessWidget {
     required this.onShowEntityMenu,
     required this.onThumbnailNeeded,
     required this.onThumbnailEntityNeeded,
-    required this.onLoadThumbnailPreloadPage,
     required this.onLoadMoreEntities,
     required this.selectedEntityIds,
     required this.onToggleEntitySelection,
@@ -97,8 +97,6 @@ class CollectionBrowserPage extends StatelessWidget {
   final ValueChanged<EntityListItem> onShowEntityMenu;
   final ValueChanged<EntityListItem> onThumbnailNeeded;
   final ValueChanged<String> onThumbnailEntityNeeded;
-  final Future<ThumbnailPreloadPage> Function(String? afterEntityId)
-      onLoadThumbnailPreloadPage;
   final VoidCallback onLoadMoreEntities;
   final Set<String> selectedEntityIds;
   final ValueChanged<EntityListItem> onToggleEntitySelection;
@@ -180,13 +178,14 @@ class CollectionBrowserPage extends StatelessWidget {
           child: _BrowserScrollShell(
             preloadScopeKey:
                 '${currentNode?.id ?? ''}:${immersiveBrowsing ? 'recursive' : 'direct'}',
-            onLoadThumbnailPreloadPage: onLoadThumbnailPreloadPage,
+            entities: entities,
             hasMore: hasMoreEntities,
             onLoadMore: onLoadMoreEntities,
             selectionMode: selectionMode,
             onSelectEntitiesByDrag: onSelectEntitiesByDrag,
             child: (controller, selectionRegistry) => CustomScrollView(
               controller: controller,
+              scrollCacheExtent: const ScrollCacheExtent.pixels(0),
               slivers: [
                 if (hasNodes && currentNode == null)
                   (listMode
@@ -353,7 +352,7 @@ class CollectionBrowserPage extends StatelessWidget {
 class _BrowserScrollShell extends StatefulWidget {
   const _BrowserScrollShell({
     required this.preloadScopeKey,
-    required this.onLoadThumbnailPreloadPage,
+    required this.entities,
     required this.hasMore,
     required this.onLoadMore,
     required this.selectionMode,
@@ -362,8 +361,7 @@ class _BrowserScrollShell extends StatefulWidget {
   });
 
   final String preloadScopeKey;
-  final Future<ThumbnailPreloadPage> Function(String? afterEntityId)
-      onLoadThumbnailPreloadPage;
+  final List<EntityListItem> entities;
   final bool hasMore;
   final VoidCallback onLoadMore;
   final bool selectionMode;
@@ -379,14 +377,12 @@ class _BrowserScrollShell extends StatefulWidget {
 
 class _BrowserScrollShellState extends State<_BrowserScrollShell> {
   final ScrollController _scrollController = ScrollController();
-  final Queue<String> _thumbnailPrefetchQueue = Queue<String>();
-  final Set<String> _scheduledThumbnailPaths = <String>{};
-  String? _thumbnailPreloadCursor;
+  final Map<String, int> _warmPaths = {};
+  Map<String, int> _entityPositions = {};
+  Timer? _warmTimer;
+  bool _warmRunning = false;
   String _activePreloadScope = '';
   int _thumbnailPreloadGeneration = 0;
-  bool _thumbnailPreloadHasMore = true;
-  bool _thumbnailPreloadLoading = false;
-  bool _prefetchRunning = false;
   final _EntitySelectionRegistry _selectionRegistry =
       _EntitySelectionRegistry();
   final Map<int, Map<String, EntityListItem>> _dragEntitiesByPointer =
@@ -397,24 +393,30 @@ class _BrowserScrollShellState extends State<_BrowserScrollShell> {
   void initState() {
     super.initState();
     _activePreloadScope = widget.preloadScopeKey;
+    _indexEntities();
     _scrollController.addListener(_handleScroll);
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _resetThumbnailPreload());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleWarmup());
   }
 
   @override
   void didUpdateWidget(covariant _BrowserScrollShell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.preloadScopeKey == _activePreloadScope) return;
+    if (!identical(widget.entities, oldWidget.entities)) _indexEntities();
+    if (widget.preloadScopeKey == _activePreloadScope) {
+      _scheduleWarmup();
+      return;
+    }
     _activePreloadScope = widget.preloadScopeKey;
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _resetThumbnailPreload());
+    _thumbnailPreloadGeneration++;
+    _clearWarmup();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleWarmup());
   }
 
   @override
   void dispose() {
-    _thumbnailPrefetchQueue.clear();
-    _scheduledThumbnailPaths.clear();
+    _thumbnailPreloadGeneration++;
+    _warmTimer?.cancel();
+    _clearWarmup();
     _scrollController
       ..removeListener(_handleScroll)
       ..dispose();
@@ -422,6 +424,7 @@ class _BrowserScrollShellState extends State<_BrowserScrollShell> {
   }
 
   void _handleScroll() {
+    _scheduleWarmup();
     if (!_scrollController.hasClients) return;
     if (widget.hasMore && _scrollController.position.extentAfter < 640) {
       widget.onLoadMore();
@@ -451,81 +454,83 @@ class _BrowserScrollShellState extends State<_BrowserScrollShell> {
     widget.onSelectEntitiesByDrag([entity]);
   }
 
-  void _resetThumbnailPreload() {
+  void _indexEntities() {
+    _entityPositions = {
+      for (var i = 0; i < widget.entities.length; i++) widget.entities[i].id: i,
+    };
+  }
+
+  void _clearWarmup() {
+    for (final path in _warmPaths.keys) {
+      PaintingBinding.instance.imageCache.evict(FileImage(File(path)));
+    }
+    _warmPaths.clear();
+  }
+
+  void _scheduleWarmup() {
     if (!mounted) return;
     _thumbnailPreloadGeneration++;
-    _thumbnailPreloadCursor = null;
-    _thumbnailPreloadHasMore = true;
-    _thumbnailPreloadLoading = false;
-    _thumbnailPrefetchQueue.clear();
-    _scheduledThumbnailPaths.clear();
-    unawaited(_fillThumbnailPreloadQueue(_thumbnailPreloadGeneration));
+    _warmTimer?.cancel();
+    _warmTimer = Timer(const Duration(milliseconds: 150), () {
+      unawaited(_warmVisibleNeighbors(_thumbnailPreloadGeneration));
+    });
   }
 
-  Future<void> _fillThumbnailPreloadQueue(int generation) async {
-    if (!mounted ||
-        generation != _thumbnailPreloadGeneration ||
-        _thumbnailPreloadLoading ||
-        !_thumbnailPreloadHasMore ||
-        _thumbnailPrefetchQueue.length >= 80) {
-      return;
-    }
-    _thumbnailPreloadLoading = true;
+  Future<void> _warmVisibleNeighbors(int generation) async {
+    if (_warmRunning) return;
+    _warmRunning = true;
     try {
-      final page =
-          await widget.onLoadThumbnailPreloadPage(_thumbnailPreloadCursor);
+      await _performWarmup(generation);
+    } finally {
+      _warmRunning = false;
+      if (mounted && generation != _thumbnailPreloadGeneration) {
+        _scheduleWarmup();
+      }
+    }
+  }
+
+  Future<void> _performWarmup(int generation) async {
+    if (!mounted || generation != _thumbnailPreloadGeneration) return;
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.attached) return;
+    final viewport = box.localToGlobal(Offset.zero) & box.size;
+    final visible = _selectionRegistry.entitiesIn(viewport).toList();
+    final positions = visible
+        .map((e) => _entityPositions[e.id])
+        .whereType<int>()
+        .toList()
+      ..sort();
+    final visiblePaths = visible.map((e) => e.thumbnailPath).toSet();
+    // Once displayed, an image belongs to the normal LRU cache, not preheating.
+    _warmPaths.removeWhere((path, _) => visiblePaths.contains(path));
+    final candidates = positions.isEmpty
+        ? const <EntityListItem>[]
+        : thumbnailWarmupWindow(widget.entities,
+            firstVisible: positions.first,
+            lastVisible: positions.last,
+            cacheBytes: PaintingBinding.instance.imageCache.maximumSizeBytes);
+    final nextPaths = candidates.map((e) => e.thumbnailPath).toSet();
+    for (final path in _warmPaths.keys.toList()) {
+      if (!nextPaths.contains(path)) {
+        PaintingBinding.instance.imageCache.evict(FileImage(File(path)));
+        _warmPaths.remove(path);
+      }
+    }
+    for (final entity in candidates) {
       if (!mounted || generation != _thumbnailPreloadGeneration) return;
-      _thumbnailPreloadCursor = page.nextEntityId;
-      _thumbnailPreloadHasMore = page.hasMore;
-      for (final path in page.paths) {
-        if (_scheduledThumbnailPaths.add(path)) {
-          _thumbnailPrefetchQueue.add(path);
-        }
+      final path = entity.thumbnailPath!;
+      if (_warmPaths.containsKey(path)) continue;
+      final provider = FileImage(File(path));
+      final status = PaintingBinding.instance.imageCache.statusForKey(provider);
+      if (status.keepAlive || status.live || status.pending) continue;
+      _warmPaths[path] = thumbnailDecodedBytes(entity);
+      await precacheImage(provider, context, onError: (_, __) {});
+      if (!mounted || generation != _thumbnailPreloadGeneration) {
+        PaintingBinding.instance.imageCache.evict(provider);
+        _warmPaths.remove(path);
+        return;
       }
-    } finally {
-      if (generation == _thumbnailPreloadGeneration) {
-        _thumbnailPreloadLoading = false;
-      }
-    }
-    unawaited(_drainThumbnailPrefetchQueue());
-  }
-
-  Future<void> _drainThumbnailPrefetchQueue() async {
-    if (_prefetchRunning || !mounted || _thumbnailPrefetchQueue.isEmpty) {
-      return;
-    }
-    _prefetchRunning = true;
-    try {
-      await Future.wait([
-        _runThumbnailPrefetchWorker(),
-        _runThumbnailPrefetchWorker(),
-      ]);
-    } finally {
-      _prefetchRunning = false;
-      if (mounted && _thumbnailPrefetchQueue.isNotEmpty) {
-        unawaited(_drainThumbnailPrefetchQueue());
-      }
-    }
-  }
-
-  Future<void> _runThumbnailPrefetchWorker() async {
-    while (mounted && _thumbnailPrefetchQueue.isNotEmpty) {
-      final path = _thumbnailPrefetchQueue.removeFirst();
-      try {
-        if (!mounted) return;
-        await precacheImage(
-          FileImage(File(path)),
-          context,
-          onError: (_, __) {},
-        );
-      } finally {
-        // Yield before the next decode so scrolling and gesture handling get
-        // a frame even on slower Android storage.
-        await Future<void>.delayed(Duration.zero);
-        if (_thumbnailPrefetchQueue.length < 60) {
-          unawaited(_fillThumbnailPreloadQueue(_thumbnailPreloadGeneration));
-        }
-      }
+      await Future<void>.delayed(Duration.zero);
     }
   }
 
@@ -553,6 +558,23 @@ class _EntitySelectionRegistry {
   GlobalKey keyFor(EntityListItem entity) {
     _entities[entity.id] = entity;
     return _keys.putIfAbsent(entity.id, GlobalKey.new);
+  }
+
+  Iterable<EntityListItem> entitiesIn(Rect viewport) sync* {
+    for (final id in _keys.keys.toList()) {
+      final context = _keys[id]!.currentContext;
+      if (context == null) {
+        _keys.remove(id);
+        _entities.remove(id);
+        continue;
+      }
+      final box = context.findRenderObject();
+      if (box is RenderBox &&
+          box.attached &&
+          viewport.overlaps(box.localToGlobal(Offset.zero) & box.size)) {
+        yield _entities[id]!;
+      }
+    }
   }
 
   EntityListItem? entityAt(Offset globalPosition) {

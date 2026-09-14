@@ -97,6 +97,25 @@ Local commits only; no push or tablet installation. Keep release signing compati
 - This does not finish module capability separation, native cancellation,
   UI/runtime, cache policy or release/device acceptance.
 
+### Bounded browser warmup (2026-09-15)
+
+- Removed full-node thumbnail-path pagination and its unused read-worker,
+  repository, DTO and shell callback paths.
+- Visible sliver children decode on demand. After 150 ms of scroll inactivity,
+  warm at most 16 neighbors in each direction, in display order, within one
+  quarter of the configured image-cache byte budget. No whole-node decode pass.
+- Scope/scroll changes invalidate old warmup; only one warmup loop decodes at a
+  time. Off-window speculative entries are evicted; displayed images return to
+  ordinary LRU ownership. Selection registry drops unmounted keys.
+- Original-image prefetch now cleans up failed source reads, skips stale window
+  entries and stops queued work on disposal. Removed the viewer's independent
+  cache-budget enlargement; the runtime retains sole global budget ownership.
+- Validation: full suite 75 passed; after dead-path cleanup, 8 read-worker/budget
+  tests passed and the shell test passed after importing Flutter's new explicit
+  ScrollCacheExtent type. Real Android scroll/frame profiling remains pending.
+- Remaining original-image gate: source leases and a separate measured original
+  decode budget (the shared global byte cap is still the current limit).
+
 ### Implemented safety/frontier foundation
 
 - Schema 6 additive migration, schema-5 snapshot before file-backed migration.

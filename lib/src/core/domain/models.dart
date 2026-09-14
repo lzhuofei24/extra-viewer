@@ -599,20 +599,6 @@ class EntityPage {
   final RecursiveEntityPageCursor? recursiveCursor;
 }
 
-/// A lightweight cursor page used by node-scoped thumbnail warming. It avoids
-/// materializing every entity card merely to preload its already-built WebP.
-class ThumbnailPreloadPage {
-  const ThumbnailPreloadPage({
-    required this.paths,
-    this.nextEntityId,
-  });
-
-  final List<String> paths;
-  final String? nextEntityId;
-
-  bool get hasMore => nextEntityId != null;
-}
-
 enum EntitySortMode {
   nameAsc,
   nameDesc,
@@ -623,8 +609,7 @@ enum EntitySortMode {
   typeAsc;
 }
 
-/// The only recoverable build state machine. Stages before asset generation
-/// deliberately restart as a whole; asset stages checkpoint their work rows.
+/// Durable scan frontiers and per-item preview work share one task lifecycle.
 enum LibraryBuildStage {
   manifest,
   indexWrite,

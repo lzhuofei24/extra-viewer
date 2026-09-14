@@ -559,28 +559,6 @@ class _AppShellState extends State<AppShell> {
     _browsingThumbnails?.requestEntityId(entityId);
   }
 
-  Future<ThumbnailPreloadPage> _loadCurrentNodeThumbnailPreloadPage(
-    String? afterEntityId,
-  ) async {
-    final node = _currentIndexNode;
-    if (node == null) {
-      return const ThumbnailPreloadPage(paths: []);
-    }
-    try {
-      return await _read(
-        (worker) => worker.loadThumbnailPreloadPage(
-          nodeId: node.id,
-          afterEntityId: afterEntityId,
-          recursive:
-              _browserState.contentScope == BrowserContentScope.recursive,
-        ),
-      );
-    } catch (error, stackTrace) {
-      _setReadError(error, stackTrace);
-      return const ThumbnailPreloadPage(paths: []);
-    }
-  }
-
   void _handlePetChanged() {
     final request = _petController.voiceRequest;
     if (_petController.muted) {
@@ -2612,7 +2590,6 @@ class _AppShellState extends State<AppShell> {
           onShowEntityMenu: _showEntityContextMenu,
           onThumbnailNeeded: _requestBrowseThumbnail,
           onThumbnailEntityNeeded: _requestBrowseThumbnailById,
-          onLoadThumbnailPreloadPage: _loadCurrentNodeThumbnailPreloadPage,
           onLoadMoreEntities: _loadMoreEntities,
           selectedEntityIds: _selectedEntityIds,
           onToggleEntitySelection: _toggleEntitySelection,

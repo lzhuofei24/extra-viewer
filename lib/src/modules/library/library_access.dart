@@ -204,11 +204,4 @@ abstract interface class LibraryAccess {
   FutureOr<bool> commitEntityPreview(
       EntityPreviewTicket ticket, ThumbnailDatabaseUpdate update,
       {int byteSize = 0});
-  FutureOr<ThumbnailPreloadPage> listThumbnailPreloadPageUnderNode(
-      String? indexNodeId,
-      {String? afterEntityId,
-      bool recursive = false,
-      int limit = 240});
-  FutureOr<Map<String, List<String>>> listDirectThumbnailPathsUnderRoot(
-      String rootId);
 }

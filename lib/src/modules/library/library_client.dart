@@ -796,26 +796,4 @@ class LibraryClient implements LibraryAccess {
     return (await host.call('library', 'commitEntityPreview',
         {'ticket': ticket, 'update': update, 'byteSize': byteSize})) as bool;
   }
-
-  @override
-  Future<ThumbnailPreloadPage> listThumbnailPreloadPageUnderNode(
-      String? indexNodeId,
-      {String? afterEntityId,
-      bool recursive = false,
-      int limit = 240}) async {
-    return (await host.call('library', 'listThumbnailPreloadPageUnderNode', {
-      'indexNodeId': indexNodeId,
-      'afterEntityId': afterEntityId,
-      'recursive': recursive,
-      'limit': limit
-    })) as ThumbnailPreloadPage;
-  }
-
-  @override
-  Future<Map<String, List<String>>> listDirectThumbnailPathsUnderRoot(
-      String rootId) async {
-    return (await host.call(
-            'library', 'listDirectThumbnailPathsUnderRoot', {'rootId': rootId}))
-        as Map<String, List<String>>;
-  }
 }

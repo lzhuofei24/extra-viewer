@@ -368,15 +368,6 @@ Future<Object?> dispatchLibrary(LibraryRepository repository, String method,
           args['ticket'] as EntityPreviewTicket,
           args['update'] as ThumbnailDatabaseUpdate,
           byteSize: (args['byteSize'] as int?) ?? 0);
-    case 'listThumbnailPreloadPageUnderNode':
-      return repository.listThumbnailPreloadPageUnderNode(
-          args['indexNodeId'] as String?,
-          afterEntityId: args['afterEntityId'] as String?,
-          recursive: (args['recursive'] as bool?) ?? false,
-          limit: (args['limit'] as int?) ?? 240);
-    case 'listDirectThumbnailPathsUnderRoot':
-      return repository
-          .listDirectThumbnailPathsUnderRoot(args['rootId'] as String);
     default:
       throw ArgumentError.value(method, 'method', 'Unknown library operation');
   }

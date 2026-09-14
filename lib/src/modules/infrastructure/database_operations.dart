@@ -60,8 +60,6 @@ bool isDatabaseQuery(String domain, String method) => switch (domain) {
           'listIndexNodeDescendantIds',
           'listNodePreviewCandidates',
           'getNodePreviewOverride',
-          'listThumbnailPreloadPageUnderNode',
-          'listDirectThumbnailPathsUnderRoot',
         }.contains(method),
       _ => false,
     };

@@ -213,25 +213,6 @@ class LibraryReadWorker {
         : _fullEntityFromMap(raw as Map<Object?, Object?>);
   }
 
-  Future<ThumbnailPreloadPage> loadThumbnailPreloadPage({
-    required String nodeId,
-    String? afterEntityId,
-    bool recursive = false,
-    int limit = 240,
-  }) async {
-    final message = await _request(<String, Object?>{
-      'type': 'thumbnailPreload',
-      'nodeId': nodeId,
-      'afterEntityId': afterEntityId,
-      'recursive': recursive,
-      'limit': limit,
-    });
-    return ThumbnailPreloadPage(
-      paths: (message['paths'] as List<Object?>).cast<String>(),
-      nextEntityId: message['nextEntityId'] as String?,
-    );
-  }
-
   Future<void> close() => _closeFuture ??= _closeImpl();
 
   Future<Map<Object?, Object?>> _request(Map<String, Object?> request) async {
@@ -359,8 +340,6 @@ void _readWorkerMain(Map<String, Object> config) {
         'nodePreviews' =>
           _loadNodePreviews(database, storageDirectoryPath, request),
         'entity' => _loadEntity(database, storageDirectoryPath, request),
-        'thumbnailPreload' =>
-          _loadThumbnailPreload(database, storageDirectoryPath, request),
         _ => throw ArgumentError.value(
             request['type'], 'type', 'Unknown read request'),
       };
@@ -379,8 +358,6 @@ void _readWorkerMain(Map<String, Object> config) {
         'counts': page.counts,
         'previews': page.previews,
         'entity': page.entity,
-        'paths': page.paths,
-        'nextEntityId': page.nextEntityId,
       });
     } catch (error) {
       replyPort.send(<String, Object?>{'ok': false, 'error': '$error'});
@@ -818,71 +795,6 @@ _RawReadPage _loadEntity(
   );
 }
 
-_RawReadPage _loadThumbnailPreload(
-  Database database,
-  String storageDirectoryPath,
-  Map<Object?, Object?> request,
-) {
-  final nodeId = request['nodeId']! as String;
-  final afterEntityId = request['afterEntityId'] as String?;
-  final recursive = request['recursive'] == true;
-  final requestedLimit = (request['limit'] as num?)?.toInt() ?? 240;
-  final limit = requestedLimit.clamp(1, 500).toInt();
-  final rows = recursive
-      ? database.select('''
-          WITH RECURSIVE subtree(id) AS (
-            SELECT ?
-            UNION ALL
-            SELECT node.id FROM index_nodes node
-            JOIN subtree parent ON node.parent_id = parent.id
-          ), entity_ids AS (
-            SELECT link.entity_id AS id
-            FROM index_node_entities link
-            JOIN subtree ON subtree.id = link.index_node_id
-            GROUP BY link.entity_id
-          )
-          SELECT entity.id, entity.thumbnail_key, entity.thumbnail_format
-          FROM entity_ids
-          JOIN entities entity ON entity.id = entity_ids.id
-          WHERE entity.archived = 0
-            AND entity.thumbnail_status = 'success'
-            AND entity.thumbnail_key IS NOT NULL
-            AND entity.thumbnail_format IS NOT NULL
-            AND (? IS NULL OR entity.id > ?)
-          ORDER BY entity.id ASC
-          LIMIT ?
-        ''', [nodeId, afterEntityId, afterEntityId, limit + 1])
-      : database.select('''
-          SELECT entity.id, entity.thumbnail_key, entity.thumbnail_format
-          FROM index_node_entities link
-          JOIN entities entity ON entity.id = link.entity_id
-          WHERE link.index_node_id = ?
-            AND entity.archived = 0
-            AND entity.thumbnail_status = 'success'
-            AND entity.thumbnail_key IS NOT NULL
-            AND entity.thumbnail_format IS NOT NULL
-            AND (? IS NULL OR entity.id > ?)
-          ORDER BY entity.id ASC
-          LIMIT ?
-        ''', [nodeId, afterEntityId, afterEntityId, limit + 1]);
-  final hasMore = rows.length > limit;
-  final visible = hasMore ? rows.sublist(0, limit) : rows;
-  final paths = visible
-      .map((row) => _thumbnailPath(
-            storageDirectoryPath,
-            row['thumbnail_key'] as String,
-            row['thumbnail_format'] as String,
-          ))
-      .toList(growable: false);
-  return _RawReadPage(
-    childNodes: const [],
-    entities: const [],
-    hasMore: hasMore,
-    paths: paths,
-    nextEntityId: hasMore ? visible.last['id'] as String : null,
-  );
-}
-
 _RawReadPage _loadRecursivePage(
   Database database,
   String storageDirectoryPath,
@@ -966,8 +878,6 @@ class _RawReadPage {
     this.summaries = const [],
     this.counts = const [],
     this.entity,
-    this.paths = const [],
-    this.nextEntityId,
     this.previews = const [],
   });
 
@@ -983,8 +893,6 @@ class _RawReadPage {
   final List<Map<String, Object?>> summaries;
   final List<Map<String, Object?>> counts;
   final Map<String, Object?>? entity;
-  final List<String> paths;
-  final String? nextEntityId;
   final List<Map<String, Object?>> previews;
 }
 

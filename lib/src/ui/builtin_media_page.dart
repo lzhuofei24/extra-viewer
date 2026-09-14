@@ -168,7 +168,6 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
     _currentIndex = index < 0 ? 0 : index;
     _textSettings = _TextReaderSettings.fromJson(_current.extraStateJson);
     _documentFuture = _loadDocument();
-    _configureImageCacheBudget();
     _scheduleImageWindowPrefetch();
     if (_current.entityType == EntityType.video) {
       widget.audioController.pause();
@@ -177,6 +176,8 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
 
   @override
   void dispose() {
+    _imagePrefetchQueue.clear();
+    _activePrefetchWindow.clear();
     _persistCurrentReaderState();
     super.dispose();
   }
@@ -288,9 +289,11 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
         final entity = _imagePrefetchQueue.removeFirst();
         if (!_activePrefetchWindow.containsKey(entity.id)) continue;
         _inFlightPrefetchIds.add(entity.id);
-        final file = await _sourceResolver.localFileAsync(entity);
         try {
-          if (file.existsSync()) {
+          final file = await _sourceResolver.localFileAsync(entity);
+          if (!mounted) return;
+          if (!_activePrefetchWindow.containsKey(entity.id)) continue;
+          if (await file.exists()) {
             if (!mounted) return;
             final provider = FileImage(file);
             await precacheImage(
@@ -302,7 +305,11 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                 PaintingBinding.instance.imageCache.evict(provider);
               },
             );
+          } else {
+            _failedImagePrefetchIds.add(entity.id);
           }
+        } catch (_) {
+          _failedImagePrefetchIds.add(entity.id);
         } finally {
           _inFlightPrefetchIds.remove(entity.id);
         }
@@ -322,15 +329,6 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
     if (SourceHandle.parse(entity.path).isAndroidContentUri) return;
     final file = _sourceResolver.localFile(entity);
     PaintingBinding.instance.imageCache.evict(FileImage(file));
-  }
-
-  void _configureImageCacheBudget() {
-    final imageCache = PaintingBinding.instance.imageCache;
-    final desiredBytes =
-        Platform.isAndroid ? 512 * 1024 * 1024 : 1024 * 1024 * 1024;
-    if (imageCache.maximumSizeBytes < desiredBytes) {
-      imageCache.maximumSizeBytes = desiredBytes;
-    }
   }
 
   void _startEntitySwipe(PointerDownEvent event) {
