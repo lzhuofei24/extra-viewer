@@ -16,6 +16,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../core/domain/models.dart';
 import '../modules/browser/original_image_budget.dart';
+import '../modules/viewer/reading_position.dart';
 import '../core/formats/file_format_handlers.dart';
 import '../core/media/audio_waveform_service.dart';
 import '../core/media/app_audio_controller.dart';
@@ -112,6 +113,31 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
   final _PlaybackQueueMode _queueMode = _PlaybackQueueMode.stop;
   _TextReaderSettings _textSettings = const _TextReaderSettings();
   double _lastReaderOffset = 0;
+  final _readingPositions = <String, ReadingPosition>{};
+
+  String _readerStateJson(EntityListItem entity, [String? update]) {
+    var position = ReadingPosition.fromJson(update) ??
+        _readingPositions[entity.id] ??
+        ReadingPosition.fromJson(entity.extraStateJson);
+    if (position == null) {
+      try {
+        final legacy = jsonDecode(entity.extraStateJson ?? '{}');
+        if (legacy is Map && legacy['epubChapter'] is num) {
+          position = ReadingPosition(
+              sourceRevision: entity.sourceRevision,
+              chapter: max(0, (legacy['epubChapter'] as num).toInt()),
+              scrollOffset: max(0, entity.readerScrollOffset ?? 0));
+        }
+      } catch (_) {
+        // Old malformed preferences are ignored, not rewritten as an error.
+      }
+    }
+    if (position != null) _readingPositions[entity.id] = position;
+    final settings = jsonDecode(_textSettings.toJson()) as Map<String, dynamic>;
+    if (position != null) settings['readingPosition'] = position.toMap();
+    return jsonEncode(settings);
+  }
+
   final Random _random = Random();
   bool _chromeVisible = true;
   int? _swipePointer;
@@ -246,7 +272,7 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
     widget.onReaderStateChanged?.call(
       entityId: _current.id,
       scrollOffset: _lastReaderOffset,
-      extraStateJson: _textSettings.toJson(),
+      extraStateJson: _readerStateJson(_current),
     );
   }
 
@@ -577,6 +603,9 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                             key: ValueKey(entity.id),
                             documentFuture: _documentFuture,
                             initialScrollOffset: entity.readerScrollOffset,
+                            initialPosition: ReadingPosition.fromJson(
+                                _readerStateJson(entity)),
+                            sourceRevision: entity.sourceRevision,
                             settings: _textSettings,
                             onReaderStateChanged: (
                                 {scrollOffset, zoomScale, extraStateJson}) {
@@ -586,7 +615,8 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                                 entityId: entity.id,
                                 scrollOffset: scrollOffset,
                                 zoomScale: zoomScale,
-                                extraStateJson: _textSettings.toJson(),
+                                extraStateJson:
+                                    _readerStateJson(entity, extraStateJson),
                               );
                             },
                           ),
@@ -594,6 +624,9 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                             key: ValueKey(entity.id),
                             documentFuture: _documentFuture,
                             initialScrollOffset: entity.readerScrollOffset,
+                            initialPosition: ReadingPosition.fromJson(
+                                _readerStateJson(entity)),
+                            sourceRevision: entity.sourceRevision,
                             settings: _textSettings,
                             onReaderStateChanged: (
                                 {scrollOffset, zoomScale, extraStateJson}) {
@@ -601,7 +634,8 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                                 entityId: entity.id,
                                 scrollOffset: scrollOffset,
                                 zoomScale: zoomScale,
-                                extraStateJson: _textSettings.toJson(),
+                                extraStateJson:
+                                    _readerStateJson(entity, extraStateJson),
                               );
                             },
                           ),
@@ -654,6 +688,9 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                                 key: ValueKey(entity.id),
                                 documentFuture: _documentFuture,
                                 initialScrollOffset: entity.readerScrollOffset,
+                                initialPosition: ReadingPosition.fromJson(
+                                    _readerStateJson(entity)),
+                                sourceRevision: entity.sourceRevision,
                                 settings: _textSettings,
                                 onReaderStateChanged: (
                                     {scrollOffset, zoomScale, extraStateJson}) {
@@ -661,7 +698,8 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                                     entityId: entity.id,
                                     scrollOffset: scrollOffset,
                                     zoomScale: zoomScale,
-                                    extraStateJson: _textSettings.toJson(),
+                                    extraStateJson: _readerStateJson(
+                                        entity, extraStateJson),
                                   );
                                 },
                               ),
@@ -757,7 +795,7 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
     if (_isTextReader) {
       widget.onReaderStateChanged?.call(
         entityId: _current.id,
-        extraStateJson: _textSettings.toJson(),
+        extraStateJson: _readerStateJson(_current),
       );
     }
   }

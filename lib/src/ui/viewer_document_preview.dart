@@ -29,12 +29,16 @@ class _ReflowDocumentPreview extends StatefulWidget {
     super.key,
     required this.documentFuture,
     required this.initialScrollOffset,
+    this.initialPosition,
+    this.sourceRevision = 1,
     required this.settings,
     required this.onReaderStateChanged,
   });
 
   final Future<ReflowDocument?> documentFuture;
   final double? initialScrollOffset;
+  final ReadingPosition? initialPosition;
+  final int sourceRevision;
   final _TextReaderSettings settings;
   final ReaderStateChanged? onReaderStateChanged;
 
@@ -46,13 +50,26 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
   late final ScrollController _controller;
   double? _lastPersistedOffset;
   int _chapterIndex = 0;
+  String _chapterTitle = '';
+  bool _restored = false;
+  int _page = 0;
+  bool _bookMode = false;
 
   @override
   void initState() {
     super.initState();
     _controller = ScrollController(
-      initialScrollOffset: widget.initialScrollOffset ?? 0,
+      initialScrollOffset: widget.initialPosition != null
+          ? (widget.initialPosition!.sourceRevision == widget.sourceRevision
+              ? widget.initialPosition!.scrollOffset
+              : 0)
+          : (widget.settings.layoutMode == _ReaderLayoutMode.scroll
+              ? widget.initialScrollOffset ?? 0
+              : 0),
     );
+    _page = widget.initialPosition?.sourceRevision == widget.sourceRevision
+        ? widget.initialPosition!.page
+        : 0;
   }
 
   @override
@@ -67,8 +84,7 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
   }
 
   bool _handleScrollNotification(ScrollNotification notification) {
-    // SQLite writes run on the UI isolate. Saving every few hundred
-    // milliseconds while the finger is moving causes visible scroll hitches.
+    // Save at interaction boundaries; avoid writes for every scroll event.
     if (notification is ScrollEndNotification) {
       _saveState();
     }
@@ -76,15 +92,19 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
   }
 
   void _saveState() {
-    if (_controller.hasClients) {
-      final offset = _controller.offset;
-      if (_lastPersistedOffset != null &&
-          (offset - _lastPersistedOffset!).abs() < 1) {
-        return;
-      }
-      _lastPersistedOffset = offset;
-      widget.onReaderStateChanged?.call(scrollOffset: offset);
-    }
+    if (!_restored) return;
+    final offset =
+        _controller.hasClients ? _controller.offset : _lastPersistedOffset ?? 0;
+    _lastPersistedOffset = offset;
+    final position = ReadingPosition(
+        sourceRevision: widget.sourceRevision,
+        chapter: _chapterIndex,
+        chapterTitle: _chapterTitle,
+        scrollOffset: offset,
+        page: _page,
+        mode: _bookMode ? 'book' : 'scroll');
+    widget.onReaderStateChanged?.call(
+        extraStateJson: jsonEncode({'readingPosition': position.toMap()}));
   }
 
   void _selectChapter(int index) {
@@ -92,6 +112,8 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
     _saveState();
     setState(() {
       _chapterIndex = index;
+      _page = 0;
+      _lastPersistedOffset = 0;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_controller.hasClients) _controller.jumpTo(0);
@@ -127,9 +149,16 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
         if (document.chapters.isEmpty) {
           return const Center(child: Text('文档没有可显示的内容'));
         }
+        if (!_restored) {
+          _chapterIndex = widget.initialPosition?.resolveChapter(
+                  document.chapters.map((chapter) => chapter.title).toList()) ??
+              0;
+          _restored = true;
+        }
         final chapterIndex =
             _chapterIndex.clamp(0, document.chapters.length - 1).toInt();
         final chapter = document.chapters[chapterIndex];
+        _chapterTitle = chapter.title;
         final visibleBlocks = _spineBlocksFrom(document, chapterIndex);
         return ColoredBox(
           color: widget.settings.background,
@@ -148,6 +177,9 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
               Expanded(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
+                    _bookMode =
+                        widget.settings.layoutMode == _ReaderLayoutMode.book &&
+                            constraints.maxWidth > constraints.maxHeight;
                     final blocks = visibleBlocks;
                     if (widget.settings.layoutMode ==
                             _ReaderLayoutMode.scroll ||
@@ -176,11 +208,15 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
                       );
                     }
                     return _ReflowBookSpread(
+                      key: ValueKey(chapterIndex),
+                      initialPage: _page,
                       blocks: blocks,
                       settings: widget.settings,
                       viewport: constraints.biggest,
-                      onPageChanged: (page) => widget.onReaderStateChanged
-                          ?.call(scrollOffset: page.toDouble()),
+                      onPageChanged: (page) {
+                        _page = page;
+                        _saveState();
+                      },
                     );
                   },
                 ),
@@ -215,11 +251,14 @@ List<ReflowBlock> _spineBlocksFrom(ReflowDocument document, int startChapter) {
 
 class _ReflowBookSpread extends StatefulWidget {
   const _ReflowBookSpread(
-      {required this.blocks,
+      {super.key,
+      this.initialPage = 0,
+      required this.blocks,
       required this.settings,
       required this.viewport,
       required this.onPageChanged});
   final List<ReflowBlock> blocks;
+  final int initialPage;
   final _TextReaderSettings settings;
   final Size viewport;
   final ValueChanged<int> onPageChanged;
@@ -249,8 +288,13 @@ class _ReflowBookSpreadState extends State<_ReflowBookSpread> {
       _layoutKey = key;
       _pages = _paginateBookBlocks(
           widget.blocks, widget.settings, pageWidth, pageHeight);
+      final previousPage = _controller?.hasClients == true
+          ? (_controller!.page ?? 0).round()
+          : widget.initialPage ~/ 2;
       _controller?.dispose();
-      _controller = PageController();
+      _controller = PageController(
+          initialPage:
+              previousPage.clamp(0, max(0, (_pages.length / 2).ceil() - 1)));
     }
     final pages = _pages.isEmpty ? <List<ReflowBlock>>[const []] : _pages;
     final spreadCount = (pages.length / 2).ceil();

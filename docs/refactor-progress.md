@@ -8,6 +8,25 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Baseline
 
+### Structured reflow reading coordinates
+
+- Added immutable ReadingPosition with source revision, chapter index/title,
+  scroll coordinate, page coordinate and mode. Reflow reader callbacks merge
+  this record with typography settings instead of overwriting it with settings.
+- EPUB/DOCX/text restore chapter identity; an inserted chapter can be matched
+  by title. Changed source revisions reset unsafe within-chapter coordinates.
+  Legacy epubChapter/scroll state remains readable. Malformed/future versions
+  are ignored safely. Book pages no longer save as scroll pixels.
+- Spread PageController starts at its stored page and clamps against available
+  pages. Chapter changes reset the spread key; layout recreation samples the
+  old controller before disposing it. Legacy book offsets are not guessed to
+  be page numbers.
+- Validation: 12 targeted reading/parser/shell tests and analyze passed before
+  the final legacy conversion addition; final checks recorded with commit.
+- This is coordinate/merge repair, not complete reading-anchor delivery:
+  visible content-block anchors, within-block relocation and cross-mode semantic
+  position conversion remain pending, together with the broader plan backlog.
+
 ### Global dirty-preview scheduling
 
 - Added durable dirty-root discovery across directory, custom and graph roots.
