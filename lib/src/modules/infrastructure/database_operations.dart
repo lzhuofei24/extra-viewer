@@ -54,6 +54,7 @@ bool isDatabaseQuery(String domain, String method) => switch (domain) {
           'getEntity',
           'listIndexNodeIdsForEntity',
           'listIndexNodePreviews',
+          'listDirtyPreviewRoots',
           'nodePreviewAssetPath',
           'owningIndexRootForNode',
           'listIndexNodeAncestors',

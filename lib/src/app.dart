@@ -12,6 +12,7 @@ import 'package:window_manager/window_manager.dart';
 import 'core/database/app_database.dart';
 import 'modules/infrastructure/database_runtime.dart';
 import 'modules/infrastructure/app_runtime.dart';
+import 'modules/previews/dirty_preview_scheduler.dart';
 import 'core/database/library_write_worker.dart';
 import 'modules/library/library_client.dart';
 import 'modules/build/build_client.dart';
@@ -115,6 +116,7 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
+  DirtyPreviewScheduler? _dirtyPreviews;
   Future<void>? _bootstrapFuture;
   final _runtime = AppRuntime(onFailure: (failure) {
     AppDiagnosticLog.instance.error(
@@ -184,7 +186,11 @@ class _AppShellState extends State<AppShell> {
     IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,
     String? reason,
   }) async {
-    await _buildTasks?.rebuildNodePreview(nodeId, scope: scope);
+    if (reason == 'manual_rebuild') {
+      await _buildTasks?.rebuildNodePreview(nodeId, scope: scope);
+    } else {
+      await _dirtyPreviews?.tick();
+    }
   }
 
   bool get _isInsideCustomIndex =>
@@ -227,6 +233,7 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    _dirtyPreviews?.stop();
     AppDiagnosticLog.instance.info('app_shell_dispose_started');
     _indexPathController.dispose();
     _buildTasks?.removeListener(_handleBuildTaskChanged);
@@ -239,6 +246,8 @@ class _AppShellState extends State<AppShell> {
 
   void _registerRuntimeResources() {
     _runtime
+      ..register('dirty-preview-stop', RuntimeClosePhase.stopWork,
+          () => _dirtyPreviews?.stop())
       ..register('bootstrap', RuntimeClosePhase.stopWork, () async {
         await _bootstrapFuture;
       })
@@ -249,6 +258,9 @@ class _AppShellState extends State<AppShell> {
       })
       ..register('audio', RuntimeClosePhase.media, () async {
         await _audioController?.close();
+      })
+      ..register('dirty-previews', RuntimeClosePhase.caches, () async {
+        await _dirtyPreviews?.close();
       })
       ..register('thumbnails', RuntimeClosePhase.caches, () async {
         await _browsingThumbnails?.close();
@@ -531,6 +543,20 @@ class _AppShellState extends State<AppShell> {
       _buildTasks = buildTasks;
       _loading = false;
     });
+    _dirtyPreviews = DirtyPreviewScheduler(
+      isBusy: () => !mounted || _runtime.isClosing || buildTasks.isRunning,
+      load: () async => repository.listDirtyPreviewRoots(),
+      rebuild: (rootId) async {
+        await buildTasks.rebuildNodePreview(rootId,
+            scope: IndexPreviewRebuildScope.subtree, force: false);
+        if (mounted && !_runtime.isClosing) {
+          _reload(
+              indexNodeId: _currentIndexNode?.id, invalidateBrowserCache: true);
+        }
+      },
+      onError: (error, stack) => AppDiagnosticLog.instance
+          .error('dirty_preview_scheduler_failed', error, stack),
+    )..start();
     final activeSessions = (await repository.listAudioPlaybackSessions());
     if (!mounted) return;
     setState(() => _audioSessions = activeSessions);
@@ -579,6 +605,8 @@ class _AppShellState extends State<AppShell> {
       message: '将删除本应用保存的索引、任务、缩略图和播放缓存。不会删除、移动或修改任何真实资料文件。',
     );
     if (!confirmed || !mounted) return;
+    await _dirtyPreviews?.close();
+    _dirtyPreviews = null;
     setState(() {
       _loading = true;
       _resettingLocalIndex = true;

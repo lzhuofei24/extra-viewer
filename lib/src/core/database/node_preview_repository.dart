@@ -3,6 +3,28 @@ part of 'library_repository.dart';
 /// Node preview cache: representative tiles, composite assets, overrides,
 /// and the bottom-up rebuild chain that propagates thumbnail changes.
 mixin NodePreviewRepositoryMixin on LibraryRepositoryBase {
+  Map<String, String> listDirtyPreviewRoots() {
+    final rows = database.db.select('''
+      WITH RECURSIVE ancestry(node_id, revision, ancestor_id) AS (
+        SELECT node_id, revision, node_id FROM node_preview_dirty
+        UNION ALL
+        SELECT a.node_id, a.revision, n.parent_id FROM ancestry a
+        JOIN index_nodes n ON n.id = a.ancestor_id WHERE n.parent_id IS NOT NULL
+      )
+      SELECT ancestor_id AS root_id, GROUP_CONCAT(node_id || ':' || revision) AS signature
+      FROM (SELECT a.* FROM ancestry a JOIN index_nodes root ON root.id = a.ancestor_id
+        WHERE root.node_type IN ('directory_index_root', 'category_index_root', 'graph_index_root')
+        AND NOT EXISTS (SELECT 1 FROM library_build_jobs job
+          WHERE job.index_root_id = root.id AND job.status NOT IN ('completed', 'abandoned'))
+        ORDER BY a.ancestor_id, a.node_id)
+      GROUP BY ancestor_id
+    ''');
+    return {
+      for (final row in rows)
+        row['root_id'] as String: row['signature'] as String
+    };
+  }
+
   /// Builds render descriptions for a page of index nodes in two batched
   /// queries. A parent only receives each child's representative tile, never
   /// the child's full mosaic, so thumbnail composition cannot recurse.

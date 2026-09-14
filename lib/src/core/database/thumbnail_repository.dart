@@ -89,8 +89,11 @@ mixin ThumbnailRepositoryMixin on LibraryRepositoryBase {
           _retirePreviewAsset('entity', oldKey, oldFormat);
         }
         for (final row in database.db.select(
-            'SELECT index_node_id FROM index_node_entities WHERE entity_id = ?',
-            [ticket.entityId])) {
+            '''SELECT index_node_id FROM index_node_entities WHERE entity_id = ?
+            UNION SELECT override.node_id FROM node_preview_overrides override,
+              json_each(CASE WHEN json_valid(override.items_json) THEN override.items_json ELSE '[]' END) item
+            WHERE json_extract(CASE WHEN item.type = 'object' THEN item.value ELSE '{}' END, '\$.entityId') = ?''',
+            [ticket.entityId, ticket.entityId])) {
           markIndexNodePreviewDirty(row['index_node_id'] as String,
               reason: 'entity_preview_published');
         }

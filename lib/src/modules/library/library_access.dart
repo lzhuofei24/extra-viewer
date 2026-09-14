@@ -180,6 +180,7 @@ abstract interface class LibraryAccess {
   FutureOr<void> markIndexNodePreviewDirty(String nodeId,
       {IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,
       String? reason});
+  FutureOr<Map<String, String>> listDirtyPreviewRoots();
   FutureOr<Map<String, IndexNodePreview>> listIndexNodePreviews(
       Iterable<String> nodeIds);
   FutureOr<String> nodePreviewAssetPath(String assetKey, String format);

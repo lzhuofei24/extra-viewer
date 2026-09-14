@@ -686,6 +686,12 @@ class LibraryClient implements LibraryAccess {
   }
 
   @override
+  Future<Map<String, String>> listDirtyPreviewRoots() async {
+    return (await host.call('library', 'listDirtyPreviewRoots', {}))
+        as Map<String, String>;
+  }
+
+  @override
   Future<Map<String, IndexNodePreview>> listIndexNodePreviews(
       Iterable<String> nodeIds) async {
     return (await host.call('library', 'listIndexNodePreviews', {

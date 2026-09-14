@@ -525,16 +525,22 @@ LEFT JOIN child_counts ON child_counts.id = node.id
   }) {
     writeTransaction(() {
       final rows = database.db.select('''
-        WITH RECURSIVE ancestors(id) AS (
-          SELECT id FROM index_nodes WHERE id = ?
-          UNION SELECT node.parent_id FROM index_nodes node JOIN ancestors ON node.id = ancestors.id
-          WHERE node.parent_id IS NOT NULL
+        WITH RECURSIVE dependencies(source_id, dependent_id) AS (
+          SELECT id, parent_id FROM index_nodes WHERE parent_id IS NOT NULL
+          UNION
+          SELECT json_extract(CASE WHEN item.type = 'object' THEN item.value ELSE '{}' END, '\$.nodeId'), override.node_id
+          FROM node_preview_overrides override,
+            json_each(CASE WHEN json_valid(override.items_json) THEN override.items_json ELSE '[]' END) item
         ), descendants(id) AS (
           SELECT id FROM index_nodes WHERE id = ?
           UNION SELECT node.id FROM index_nodes node JOIN descendants ON node.parent_id = descendants.id
           WHERE ?
-        ) SELECT id FROM ancestors UNION SELECT id FROM descendants
-      ''', [nodeId, nodeId, scope == IndexPreviewRebuildScope.subtree ? 1 : 0]);
+        ), affected(id) AS (
+          SELECT id FROM descendants
+          UNION SELECT dependency.dependent_id FROM dependencies dependency
+            JOIN affected ON dependency.source_id = affected.id
+        ) SELECT id FROM affected WHERE id IN (SELECT id FROM index_nodes)
+      ''', [nodeId, scope == IndexPreviewRebuildScope.subtree ? 1 : 0]);
       final version = database.db.prepare('''
         INSERT INTO node_preview_versions(node_id, revision) VALUES (?, 1)
         ON CONFLICT(node_id) DO UPDATE SET revision = revision + 1

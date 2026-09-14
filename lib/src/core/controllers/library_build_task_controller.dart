@@ -206,6 +206,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
   Future<LibraryBuildJob?> rebuildNodePreview(
     String nodeId, {
     IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,
+    bool force = true,
   }) =>
       _schedule(() async {
         final root = (await library.owningIndexRootForNode(nodeId));
@@ -222,7 +223,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
           scopeNodeId: nodeId,
           rootNodeId: root.id,
           scope: scope,
-          force: true,
+          force: force,
         ));
         final prepared = (await builds.get(job.id))!;
         (await builds.checkpointStage(

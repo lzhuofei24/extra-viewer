@@ -319,6 +319,8 @@ Future<Object?> dispatchLibrary(LibraryRepository repository, String method,
               IndexPreviewRebuildScope.node,
           reason: args['reason'] as String?);
       return null;
+    case 'listDirtyPreviewRoots':
+      return repository.listDirtyPreviewRoots();
     case 'listIndexNodePreviews':
       return repository
           .listIndexNodePreviews(args['nodeIds'] as Iterable<String>);

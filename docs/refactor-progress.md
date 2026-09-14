@@ -8,6 +8,26 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Baseline
 
+### Global dirty-preview scheduling
+
+- Added durable dirty-root discovery across directory, custom and graph roots.
+  Roots with unfinished tasks are excluded so automatic repair does not resume
+  user-paused tasks. Startup and two-second polling recover missed wakeups.
+- DirtyPreviewScheduler coalesces unchanged signatures, serializes rebuilds,
+  stops dispatch on shutdown and drains its active task. It reuses durable node
+  preview tasks with force=false; failed signatures do not spin within a process.
+- Node override references now propagate dirty marks through a deduplicating
+  recursive dependency query, including cross-collection references and cycles.
+  Entity preview publication also invalidates explicit override consumers.
+- Automatic frontend refresh callbacks now wake the scheduler instead of forcing
+  additional revisions; explicit manual rebuild remains available.
+- Validation: full 106 tests and analyze passed before final callback routing;
+  targeted follow-up covers scheduler, publication and shell behavior.
+- Remaining: full capability separation, Runtime/session ownership, reflow
+  anchors, recursive browse cache/selection predicates, toolbar consolidation,
+  pressure tests and releases. Cross-root dependency publication ordering needs
+  further acceptance coverage; no claim of whole-plan completion.
+
 ### Original-image decode admission
 
 - Read encoded image dimensions through ImageDescriptor before speculative
