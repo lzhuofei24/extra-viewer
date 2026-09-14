@@ -54,6 +54,71 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
   bool _restored = false;
   int _page = 0;
   bool _bookMode = false;
+  final _blockWidgets = <int, GlobalKey>{};
+  final _viewportKey = GlobalKey();
+  List<String> _blockKeys = const [];
+  ReflowDocument? _indexedDocument;
+  int? _indexedChapter;
+  List<ReflowBlock> _indexedBlocks = const [];
+  int _block = 0;
+  double _blockFraction = 0;
+  bool _anchorRestoring = false;
+
+  String _contentKey(ReflowBlock block) => readingBlockKey(
+      '${block.kind.name}:${block.text ?? block.imageArchivePath ?? block.imageEpubPath ?? block.altText ?? ''}');
+
+  void _captureAnchor() {
+    final viewport = _viewportKey.currentContext?.findRenderObject();
+    if (viewport is! RenderBox) return;
+    final top = viewport.localToGlobal(Offset.zero).dy;
+    for (final entry in _blockWidgets.entries.toList()
+      ..sort((a, b) => a.key.compareTo(b.key))) {
+      final box = entry.value.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.hasSize) continue;
+      final y = box.localToGlobal(Offset.zero).dy;
+      if (y + box.size.height <= top) continue;
+      if (y >= top + viewport.size.height) continue;
+      _block = entry.key;
+      _blockFraction =
+          box.size.height > 0 ? ((top - y) / box.size.height).clamp(0, 1) : 0;
+      break;
+    }
+    _blockWidgets.removeWhere((_, key) => key.currentContext == null);
+  }
+
+  Future<void> _restoreAnchor(int target, double fraction) async {
+    _anchorRestoring = true;
+    try {
+      for (var attempt = 0; attempt < 40 && mounted; attempt++) {
+        await WidgetsBinding.instance.endOfFrame;
+        if (!mounted || !_controller.hasClients) return;
+        final box = _blockWidgets[target]?.currentContext?.findRenderObject();
+        final viewport = _viewportKey.currentContext?.findRenderObject();
+        if (box is RenderBox && viewport is RenderBox) {
+          final delta = box.localToGlobal(Offset.zero).dy -
+              viewport.localToGlobal(Offset.zero).dy +
+              box.size.height * fraction;
+          _controller.jumpTo((_controller.offset + delta)
+              .clamp(0, _controller.position.maxScrollExtent));
+          return;
+        }
+        final visible = _blockWidgets.entries
+            .where((e) => e.value.currentContext != null)
+            .map((e) => e.key)
+            .toList()
+          ..sort();
+        if (visible.isEmpty) return;
+        final direction = target < visible.first ? -1 : 1;
+        final next = (_controller.offset +
+                direction * _controller.position.viewportDimension * 2)
+            .clamp(0, _controller.position.maxScrollExtent);
+        if (next == _controller.offset) return;
+        _controller.jumpTo(next.toDouble());
+      }
+    } finally {
+      _anchorRestoring = false;
+    }
+  }
 
   @override
   void initState() {
@@ -92,7 +157,8 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
   }
 
   void _saveState() {
-    if (!_restored) return;
+    if (!_restored || _anchorRestoring) return;
+    if (!_bookMode) _captureAnchor();
     final offset =
         _controller.hasClients ? _controller.offset : _lastPersistedOffset ?? 0;
     _lastPersistedOffset = offset;
@@ -102,6 +168,9 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
         chapterTitle: _chapterTitle,
         scrollOffset: offset,
         page: _page,
+        block: _block,
+        blockKey: _block < _blockKeys.length ? _blockKeys[_block] : '',
+        blockFraction: _blockFraction,
         mode: _bookMode ? 'book' : 'scroll');
     widget.onReaderStateChanged?.call(
         extraStateJson: jsonEncode({'readingPosition': position.toMap()}));
@@ -114,6 +183,9 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
       _chapterIndex = index;
       _page = 0;
       _lastPersistedOffset = 0;
+      _blockWidgets.clear();
+      _block = 0;
+      _blockFraction = 0;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_controller.hasClients) _controller.jumpTo(0);
@@ -149,6 +221,7 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
         if (document.chapters.isEmpty) {
           return const Center(child: Text('文档没有可显示的内容'));
         }
+        final firstLayout = !_restored;
         if (!_restored) {
           _chapterIndex = widget.initialPosition?.resolveChapter(
                   document.chapters.map((chapter) => chapter.title).toList()) ??
@@ -159,7 +232,24 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
             _chapterIndex.clamp(0, document.chapters.length - 1).toInt();
         final chapter = document.chapters[chapterIndex];
         _chapterTitle = chapter.title;
-        final visibleBlocks = _spineBlocksFrom(document, chapterIndex);
+        if (!identical(_indexedDocument, document) ||
+            _indexedChapter != chapterIndex) {
+          _indexedDocument = document;
+          _indexedChapter = chapterIndex;
+          _indexedBlocks = _spineBlocksFrom(document, chapterIndex);
+          _blockKeys = _indexedBlocks.map(_contentKey).toList(growable: false);
+        }
+        final visibleBlocks = _indexedBlocks;
+        if (firstLayout &&
+            widget.initialPosition?.blockKey.isNotEmpty == true) {
+          _block = widget.initialPosition!.resolveBlock(_blockKeys);
+          _blockFraction = widget.initialPosition!.blockFraction;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && !_bookMode) {
+              unawaited(_restoreAnchor(_block, _blockFraction));
+            }
+          });
+        }
         return ColoredBox(
           color: widget.settings.background,
           child: Column(
@@ -187,10 +277,13 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
                       return NotificationListener<ScrollNotification>(
                         onNotification: _handleScrollNotification,
                         child: ListView.builder(
+                          key: _viewportKey,
                           controller: _controller,
                           padding: const EdgeInsets.only(top: 28, bottom: 64),
                           itemCount: blocks.length,
                           itemBuilder: (context, index) => Center(
+                            key:
+                                _blockWidgets.putIfAbsent(index, GlobalKey.new),
                             child: ConstrainedBox(
                               constraints: BoxConstraints(
                                   maxWidth: 780 + widget.settings.padding * 2),

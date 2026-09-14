@@ -8,6 +8,19 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Baseline
 
+### Scroll content anchors
+
+- ReadingPosition now persists content digest, block index and within-block
+  fraction. Matching prefers the original index, then the nearest identical
+  digest, with bounded index fallback for removed content.
+- Scroll reader captures the top visible block at interaction boundaries.
+  Lazy restoration adjusts toward the anchor for at most 40 frames, stops after
+  disposal and suppresses intermediate position writes. Block digests/spine
+  lists are cached per document/chapter rather than recomputed per build.
+- Added insertion, duplicate-content and serialization regression coverage.
+  Book pagination fragment-to-source anchors and cross-mode semantic conversion
+  remain pending; this step does not claim complete reader or plan acceptance.
+
 ### Structured reflow reading coordinates
 
 - Added immutable ReadingPosition with source revision, chapter index/title,

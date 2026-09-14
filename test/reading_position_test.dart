@@ -3,6 +3,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:best_viewer/src/modules/viewer/reading_position.dart';
 
 void main() {
+  test('content anchors survive inserted blocks and choose nearest duplicate',
+      () {
+    final key = readingBlockKey('paragraph:original');
+    final position = ReadingPosition(
+        sourceRevision: 1, block: 2, blockKey: key, blockFraction: .3);
+    expect(position.resolveBlock(['new', 'a', 'b', key]), 3);
+    expect(position.resolveBlock([key, 'a', 'b', key]), 3);
+    expect(position.resolveBlock(['only']), 0);
+    final restored = ReadingPosition.fromJson(
+        jsonEncode({'readingPosition': position.toMap()}))!;
+    expect(restored.blockFraction, .3);
+    expect(restored.blockKey, key);
+  });
   test('page and scroll coordinates round-trip independently', () {
     const position = ReadingPosition(
         sourceRevision: 4,
