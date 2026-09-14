@@ -77,18 +77,18 @@ class ThumbnailService {
     cancellationToken?.throwIfCancelled();
     final handler = FileFormatRegistry.resolveFormat(entity.format);
     if (handler == null || !handler.supportsGeneratedThumbnail) return false;
-    final expectedKey = thumbnailCacheKeyFor(
-      fingerprint: entity.hash,
-    );
     if (!force &&
         entity.thumbnailStatus == ThumbnailStatus.success &&
-        entity.thumbnailKey == expectedKey &&
+        entity.thumbnailKey != null &&
         entity.thumbnailFormat != null &&
-        store.exists(expectedKey, entity.thumbnailFormat!)) {
+        await store
+            .fileFor(entity.thumbnailKey!, entity.thumbnailFormat!)
+            .exists()) {
       return false;
     }
 
-    await _recordUpdate(ThumbnailDatabaseUpdate.pending(entity.id));
+    final ticket = await repository.beginEntityPreview(entity);
+    final expectedKey = ticket.assetKey;
     ThumbnailArtifact? artifact;
     try {
       final sourceFile =
@@ -177,7 +177,8 @@ class ThumbnailService {
         }
       }
       if (artifact == null) {
-        await _recordUpdate(ThumbnailDatabaseUpdate.none(entity.id));
+        await repository.commitEntityPreview(
+            ticket, ThumbnailDatabaseUpdate.none(entity.id));
         return true;
       }
       cancellationToken?.throwIfCancelled();
@@ -191,26 +192,25 @@ class ThumbnailService {
         throw FileSystemException(
             'Native thumbnail output was missing', artifact.persistedPath);
       }
-      (await repository.recordThumbnailAsset(
-        key: expectedKey,
-        format: 'webp',
-        byteSize: artifact.persistedPath == null
-            ? artifact.bytes.length
-            : await File(artifact.persistedPath!).length(),
-      ));
-      await _recordUpdate(ThumbnailDatabaseUpdate.success(
-        entityId: entity.id,
-        key: expectedKey,
-        format: 'webp',
-        width: artifact.width,
-        height: artifact.height,
-        durationMs: artifact.durationMs,
-      ));
+      await repository.commitEntityPreview(
+          ticket,
+          ThumbnailDatabaseUpdate.success(
+            entityId: entity.id,
+            key: expectedKey,
+            format: 'webp',
+            width: artifact.width,
+            height: artifact.height,
+            durationMs: artifact.durationMs,
+          ),
+          byteSize: artifact.persistedPath == null
+              ? artifact.bytes.length
+              : await File(artifact.persistedPath!).length());
       return true;
     } on ThumbnailTaskCanceledException {
       rethrow;
     } catch (error) {
-      await _recordUpdate(ThumbnailDatabaseUpdate.failed(entity.id, '$error'));
+      await repository.commitEntityPreview(
+          ticket, ThumbnailDatabaseUpdate.failed(entity.id, '$error'));
       return true;
     } finally {
       stopwatch.stop();
@@ -221,10 +221,6 @@ class ThumbnailService {
 
   Future<bool> regenerateThumbnail(Entity entity) async {
     return ensureThumbnail(entity, force: true);
-  }
-
-  Future<void> _recordUpdate(ThumbnailDatabaseUpdate update) async {
-    await repository.applyThumbnailUpdates([update]);
   }
 }
 
@@ -261,7 +257,6 @@ class ThumbnailConcurrencyAdvisor {
   int _smoothed(int previous, int next) =>
       previous == 0 ? next : ((previous * 7) + next) ~/ 8;
 }
-
 
 class ThumbnailTimingCollector {
   int imageMs = 0;

@@ -98,14 +98,10 @@ void main() {
         child.id,
       ],
     );
-    repository.recordNodePreviewAsset(
-      nodeId: child.id,
-      signature: 'signature',
-      assetKey: 'node-asset',
-      format: 'webp',
-      width: 420,
-      height: 300,
-    );
+    // A legacy pointer with a missing file must remain readable without IO.
+    database.db.execute(
+        'INSERT INTO node_preview_assets VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [child.id, 'signature', 'node-asset', 'webp', 420, 300, 0]);
 
     final worker = await LibraryReadWorker.start(
       databasePath: database.databasePath!,

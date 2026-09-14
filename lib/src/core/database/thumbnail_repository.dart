@@ -2,150 +2,100 @@ part of 'library_repository.dart';
 
 /// Thumbnail status transitions, batched updates, and asset file lifecycle.
 mixin ThumbnailRepositoryMixin on LibraryRepositoryBase {
-  void updateEntityThumbnailPending(String entityId) {
-    database.db.execute(
-      '''
-      UPDATE entities
-      SET thumbnail_status = ?, thumbnail_error = NULL, updated_at = ?
-      WHERE id = ?
-      ''',
-      [ThumbnailStatus.pending.value, nowMillis(), entityId],
-    );
-  }
+  EntityPreviewTicket beginEntityPreview(Entity entity) => writeTransaction(() {
+        final rows = database.db.select(
+            'SELECT source_revision, preview_revision, hash, size FROM entities WHERE id = ?',
+            [entity.id]);
+        if (rows.isEmpty ||
+            rows.single['source_revision'] != entity.sourceRevision ||
+            rows.single['hash'] != entity.hash ||
+            rows.single['size'] != entity.size) {
+          throw StateError('Entity changed before preview generation');
+        }
+        final revision = (rows.single['preview_revision'] as int) + 1;
+        final digest = sha256.convert(utf8.encode(
+            '${entity.id}|${entity.sourceRevision}|$revision|webp80-area360000-v7'));
+        final ticket = EntityPreviewTicket(
+            entityId: entity.id,
+            sourceRevision: entity.sourceRevision,
+            previewRevision: revision,
+            assetKey: 'v7_$digest');
+        database.db.execute(
+            "UPDATE entities SET preview_revision = ?, thumbnail_status = 'pending', thumbnail_error = NULL WHERE id = ?",
+            [revision, entity.id]);
+        // Register before writing, so a crash leaves a reclaimable, unreferenced file.
+        _retirePreviewAsset('entity', ticket.assetKey, 'webp');
+        return ticket;
+      });
 
-  /// Applies a bounded group of thumbnail state changes in one SQLite savepoint.
-  /// Scanner workers use this path so thumbnail throughput is not limited by
-  /// per-file transactions.
-  void applyThumbnailUpdates(Iterable<ThumbnailDatabaseUpdate> updates) {
-    final batch = updates.toList(growable: false);
-    if (batch.isEmpty) return;
-    final now = nowMillis();
-    writeTransaction(() {
-      for (final update in batch) {
+  bool commitEntityPreview(
+          EntityPreviewTicket ticket, ThumbnailDatabaseUpdate update,
+          {int byteSize = 0}) =>
+      writeTransaction(() {
+        if (update.entityId != ticket.entityId ||
+            update.type == ThumbnailUpdateType.pending) {
+          throw ArgumentError('Invalid preview result');
+        }
+        final rows = database.db.select(
+            'SELECT thumbnail_key, thumbnail_format FROM entities WHERE id = ? AND source_revision = ? AND preview_revision = ?',
+            [ticket.entityId, ticket.sourceRevision, ticket.previewRevision]);
+        if (rows.isEmpty) return false;
+        final oldKey = rows.single['thumbnail_key'] as String?;
+        final oldFormat = rows.single['thumbnail_format'] as String?;
         switch (update.type) {
-          case ThumbnailUpdateType.pending:
-            database.db.execute(
-              'UPDATE entities SET thumbnail_status = ?, thumbnail_error = NULL, updated_at = ? WHERE id = ?',
-              [ThumbnailStatus.pending.value, now, update.entityId],
-            );
           case ThumbnailUpdateType.success:
+            if (update.key != ticket.assetKey ||
+                update.format != 'webp' ||
+                (update.width ?? 0) <= 0 ||
+                (update.height ?? 0) <= 0 ||
+                byteSize <= 0 ||
+                thumbnailStore.fileFor(ticket.assetKey, 'webp').lengthSync() !=
+                    byteSize) {
+              throw StateError('Preview file is not ready to publish');
+            }
+            database.db.execute('''
+          INSERT OR IGNORE INTO thumbnail_assets(asset_key, format, byte_size, created_at)
+          VALUES (?, 'webp', ?, ?)
+        ''', [ticket.assetKey, byteSize, nowMillis()]);
+            database.db.execute('''
+          UPDATE entities SET thumbnail_status = 'success', thumbnail_key = ?, thumbnail_format = 'webp',
+            thumbnail_width = ?, thumbnail_height = ?, thumbnail_error = NULL,
+            duration_ms = COALESCE(?, duration_ms), updated_at = ? WHERE id = ?
+        ''', [
+              ticket.assetKey,
+              update.width,
+              update.height,
+              update.durationMs,
+              nowMillis(),
+              ticket.entityId
+            ]);
             database.db.execute(
-              '''
-              UPDATE entities SET thumbnail_status = ?, thumbnail_key = ?, thumbnail_format = ?,
-                thumbnail_width = ?, thumbnail_height = ?, thumbnail_error = NULL,
-                duration_ms = COALESCE(?, duration_ms), updated_at = ? WHERE id = ?
-              ''',
-              [
-                ThumbnailStatus.success.value,
-                update.key,
-                update.format,
-                update.width,
-                update.height,
-                update.durationMs,
-                now,
-                update.entityId,
-              ],
-            );
+                "DELETE FROM retired_preview_assets WHERE kind = 'entity' AND asset_key = ?",
+                [ticket.assetKey]);
           case ThumbnailUpdateType.failed:
             database.db.execute(
-              '''
-              UPDATE entities SET thumbnail_status = ?, thumbnail_error = ?, thumbnail_key = NULL,
-                thumbnail_format = NULL, thumbnail_width = NULL, thumbnail_height = NULL,
-                updated_at = ? WHERE id = ?
-              ''',
-              [
-                ThumbnailStatus.failed.value,
-                update.error?.trim(),
-                now,
-                update.entityId,
-              ],
-            );
+                "UPDATE entities SET thumbnail_status = 'failed', thumbnail_error = ?, updated_at = ? WHERE id = ?",
+                [update.error, nowMillis(), ticket.entityId]);
+            return true;
           case ThumbnailUpdateType.none:
-            database.db.execute(
-              '''
-              UPDATE entities SET thumbnail_status = ?, thumbnail_key = NULL, thumbnail_format = NULL,
-                thumbnail_width = NULL, thumbnail_height = NULL, thumbnail_error = NULL,
-                updated_at = ? WHERE id = ?
-              ''',
-              [ThumbnailStatus.none.value, now, update.entityId],
-            );
+            database.db.execute('''
+          UPDATE entities SET thumbnail_status = 'none', thumbnail_key = NULL, thumbnail_format = NULL,
+            thumbnail_width = NULL, thumbnail_height = NULL, thumbnail_error = NULL, updated_at = ? WHERE id = ?
+        ''', [nowMillis(), ticket.entityId]);
+          case ThumbnailUpdateType.pending:
+            throw StateError('Use beginEntityPreview');
         }
-      }
-    });
-  }
-
-
-  void updateEntityThumbnailSuccess({
-    required String entityId,
-    required String key,
-    required String format,
-    required int width,
-    required int height,
-  }) {
-    database.db.execute(
-      '''
-      UPDATE entities
-      SET thumbnail_status = ?, thumbnail_key = ?, thumbnail_format = ?,
-          thumbnail_width = ?, thumbnail_height = ?, thumbnail_error = NULL,
-          updated_at = ?
-      WHERE id = ?
-      ''',
-      [
-        ThumbnailStatus.success.value,
-        key,
-        format,
-        width,
-        height,
-        nowMillis(),
-        entityId,
-      ],
-    );
-  }
-
-  void updateEntityThumbnailFailed(String entityId, String error) {
-    database.db.execute(
-      '''
-      UPDATE entities
-      SET thumbnail_status = ?, thumbnail_error = ?, thumbnail_key = NULL,
-          thumbnail_format = NULL, thumbnail_width = NULL, thumbnail_height = NULL,
-          updated_at = ?
-      WHERE id = ?
-      ''',
-      [ThumbnailStatus.failed.value, error.trim(), nowMillis(), entityId],
-    );
-  }
-
-  void updateEntityThumbnailNone(String entityId) {
-    database.db.execute(
-      '''
-      UPDATE entities
-      SET thumbnail_status = ?, thumbnail_key = NULL, thumbnail_format = NULL,
-          thumbnail_width = NULL, thumbnail_height = NULL, thumbnail_error = NULL,
-          updated_at = ?
-      WHERE id = ?
-      ''',
-      [ThumbnailStatus.none.value, nowMillis(), entityId],
-    );
-  }
-
-  void recordThumbnailAsset({
-    required String key,
-    required String format,
-    required int byteSize,
-  }) {
-    _enqueueBackgroundWrite(
-      'record_thumbnail_asset',
-      '''
-      INSERT INTO thumbnail_assets(asset_key, format, byte_size, created_at)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(asset_key) DO UPDATE SET
-        format = excluded.format,
-        byte_size = excluded.byte_size,
-        created_at = excluded.created_at
-      ''',
-      [key, format, byteSize < 0 ? 0 : byteSize, nowMillis()],
-    );
-  }
+        if (oldKey != null && oldFormat != null && oldKey != ticket.assetKey) {
+          _retirePreviewAsset('entity', oldKey, oldFormat);
+        }
+        for (final row in database.db.select(
+            'SELECT index_node_id FROM index_node_entities WHERE entity_id = ?',
+            [ticket.entityId])) {
+          markIndexNodePreviewDirty(row['index_node_id'] as String,
+              reason: 'entity_preview_published');
+        }
+        return true;
+      });
 
   ThumbnailPreloadPage listThumbnailPreloadPageUnderNode(
     String? indexNodeId, {

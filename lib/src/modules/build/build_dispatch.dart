@@ -112,11 +112,9 @@ Future<Object?> dispatchBuild(LibraryBuildRepository repository, String method,
           scopeNodeId: args['scopeNodeId'] as String,
           rootNodeId: args['rootNodeId'] as String,
           scope: (args['scope'] as IndexPreviewRebuildScope?) ??
-              IndexPreviewRebuildScope.subtree);
+              IndexPreviewRebuildScope.subtree,
+          force: (args['force'] as bool?) ?? false);
       return null;
-    case 'nodePreviewWorkIncludesDescendants':
-      return repository.nodePreviewWorkIncludesDescendants(
-          args['jobId'] as String, args['scopeNodeId'] as String);
     case 'claimEntityPreviewWork':
       return repository.claimEntityPreviewWork(args['jobId'] as String,
           limit: (args['limit'] as int?) ?? 100);
@@ -130,19 +128,25 @@ Future<Object?> dispatchBuild(LibraryBuildRepository repository, String method,
       repository.completeEntityPreviewWork(
           args['jobId'] as String,
           args['results']
-              as Map<String, ({LibraryBuildWorkState state, String? error})>);
+              as Map<String, ({LibraryBuildWorkState state, String? error})>,
+          attempts: args['attempts'] as Map<String, BuildWorkAttempt>);
       return null;
     case 'completeDocumentPreviewWork':
       repository.completeDocumentPreviewWork(
           args['jobId'] as String,
           args['results']
-              as Map<String, ({LibraryBuildWorkState state, String? error})>);
+              as Map<String, ({LibraryBuildWorkState state, String? error})>,
+          attempts: args['attempts'] as Map<String, BuildWorkAttempt>,
+          metadata:
+              (args['metadata'] as Map<String, DocumentPreviewMetadata>?) ??
+                  const {});
       return null;
     case 'completeNodePreviewWork':
       repository.completeNodePreviewWork(
           args['jobId'] as String,
           args['results']
-              as Map<String, ({LibraryBuildWorkState state, String? error})>);
+              as Map<String, ({LibraryBuildWorkState state, String? error})>,
+          attempts: args['attempts'] as Map<String, BuildWorkAttempt>);
       return null;
     case 'hasPendingEntityPreviewWork':
       return repository.hasPendingEntityPreviewWork(args['jobId'] as String);

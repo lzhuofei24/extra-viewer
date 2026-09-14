@@ -77,11 +77,12 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
         final status = preserveThumbnail
             ? current.thumbnailStatus.value
             : ThumbnailStatus.none.value;
-        final preserveFields = status == ThumbnailStatus.success.value;
+        final preserveFields = current.thumbnailKey != null;
         statements.add(LibraryWriteStatement(
           '''
           UPDATE entities
-          SET name = ?, format = ?, media_type = ?, hash = ?,
+          SET source_revision = source_revision + CASE WHEN hash != ? OR size != ? THEN 1 ELSE 0 END,
+              name = ?, format = ?, media_type = ?, hash = ?,
               metadata_preview = ?, thumbnail_status = ?,
               thumbnail_key = CASE WHEN ? THEN thumbnail_key ELSE NULL END,
               thumbnail_format = CASE WHEN ? THEN thumbnail_format ELSE NULL END,
@@ -94,6 +95,8 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
           WHERE id = ?
           ''',
           [
+            details.$1,
+            details.$2,
             item.name,
             item.format,
             item.entityType.value,
@@ -154,6 +157,9 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
               .putIfAbsent(
                   statement.sql, () => database.db.prepare(statement.sql))
               .execute(statement.parameters);
+        }
+        for (final nodeId in touchedNodes) {
+          markIndexNodePreviewDirty(nodeId, reason: 'index_page_committed');
         }
       } finally {
         for (final statement in prepared.values) {

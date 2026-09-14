@@ -81,16 +81,14 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
       if (requiresRuntimePreview &&
           existing.thumbnailKey != null &&
           existing.thumbnailFormat != null) {
-        final staleThumbnail = thumbnailStore.fileFor(
-          existing.thumbnailKey!,
-          existing.thumbnailFormat!,
-        );
-        if (staleThumbnail.existsSync()) staleThumbnail.deleteSync();
+        _retirePreviewAsset(
+            'entity', existing.thumbnailKey!, existing.thumbnailFormat!);
       }
       database.db.execute(
         '''
         UPDATE entities
-        SET name = ?, format = ?, media_type = ?, hash = ?, metadata_preview = ?,
+        SET source_revision = source_revision + CASE WHEN hash != ? OR size != ? THEN 1 ELSE 0 END,
+            name = ?, format = ?, media_type = ?, hash = ?, metadata_preview = ?,
             thumbnail_status = ?, thumbnail_key = CASE WHEN ? = 'success' THEN thumbnail_key ELSE NULL END,
             thumbnail_format = CASE WHEN ? = 'success' THEN thumbnail_format ELSE NULL END,
             thumbnail_width = CASE WHEN ? = 'success' THEN thumbnail_width ELSE NULL END,
@@ -101,16 +99,18 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
         WHERE id = ?
         ''',
         [
+          normalizedHash,
+          size,
           normalizedName,
           normalizedFormat,
           entityType.value,
           normalizedHash,
           normalizedPreview,
           thumbnailReset.value,
-          thumbnailReset.value,
-          thumbnailReset.value,
-          thumbnailReset.value,
-          thumbnailReset.value,
+          requiresRuntimePreview ? 'none' : 'success',
+          requiresRuntimePreview ? 'none' : 'success',
+          requiresRuntimePreview ? 'none' : 'success',
+          requiresRuntimePreview ? 'none' : 'success',
           thumbnailReset.value,
           size,
           sourceCreatedAtMs,
@@ -122,15 +122,18 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
           existing.id,
         ],
       );
-      final thumbnailKey = thumbnailReset == ThumbnailStatus.success
-          ? existing.thumbnailKey
-          : null;
-      final thumbnailFormat = thumbnailReset == ThumbnailStatus.success
-          ? existing.thumbnailFormat
-          : null;
+      final thumbnailKey =
+          !requiresRuntimePreview ? existing.thumbnailKey : null;
+      final thumbnailFormat =
+          !requiresRuntimePreview ? existing.thumbnailFormat : null;
       return EntityUpsertResult(
         entity: Entity(
           id: existing.id,
+          sourceRevision: existing.sourceRevision +
+              ((existing.hash != normalizedHash || existing.size != size)
+                  ? 1
+                  : 0),
+          previewRevision: existing.previewRevision,
           path: normalizedPath,
           name: normalizedName,
           format: normalizedFormat,
@@ -145,12 +148,10 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
           thumbnailStatus: thumbnailReset,
           thumbnailKey: thumbnailKey,
           thumbnailFormat: thumbnailFormat,
-          thumbnailWidth: thumbnailReset == ThumbnailStatus.success
-              ? existing.thumbnailWidth
-              : null,
-          thumbnailHeight: thumbnailReset == ThumbnailStatus.success
-              ? existing.thumbnailHeight
-              : null,
+          thumbnailWidth:
+              !requiresRuntimePreview ? existing.thumbnailWidth : null,
+          thumbnailHeight:
+              !requiresRuntimePreview ? existing.thumbnailHeight : null,
           thumbnailError: thumbnailReset == ThumbnailStatus.failed
               ? existing.thumbnailError
               : null,
@@ -274,7 +275,6 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
       [id],
     );
   }
-
 
   Entity? getEntityByPath(String path) {
     final rows = database.db.select(

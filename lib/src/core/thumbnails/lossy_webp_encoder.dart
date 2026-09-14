@@ -53,13 +53,15 @@ Future<LossyWebpArtifact> encodeRgbaCanvasToWebp({
         () => _encodeLosslessFallback(pixels, width, height),
       );
   final output = File(outputPath);
-  output.parent.createSync(recursive: true);
+  await output.parent.create(recursive: true);
   final temporary = File(
-    '${output.path}.tmp-${DateTime.now().microsecondsSinceEpoch}',
+    '${output.path}.tmp',
   );
   try {
     await temporary.writeAsBytes(bytes, flush: true);
-    if (output.existsSync()) await output.delete();
+    if (await output.exists()) {
+      throw StateError('Refusing to replace an immutable preview asset');
+    }
     await temporary.rename(output.path);
   } catch (_) {
     if (temporary.existsSync()) await temporary.delete();

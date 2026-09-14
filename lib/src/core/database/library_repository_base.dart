@@ -12,6 +12,63 @@ class LibraryRepositoryBase {
   String get storageDirectoryPath => database.storageDirectoryPath;
 
   int _transactionSequence = 0;
+  void _retirePreviewAsset(String kind, String key, String format) {
+    database.db.execute('''
+      INSERT INTO retired_preview_assets(kind, asset_key, format, not_before)
+      VALUES (?, ?, ?, ?) ON CONFLICT(kind, asset_key) DO UPDATE SET not_before = excluded.not_before
+    ''', [
+      kind,
+      key,
+      format,
+      nowMillis() + const Duration(days: 1).inMilliseconds
+    ]);
+  }
+
+  int collectRetiredPreviewAssets({int limit = 100}) {
+    final rows = database.db.select(
+        'SELECT * FROM retired_preview_assets WHERE not_before <= ? ORDER BY not_before LIMIT ?',
+        [nowMillis(), limit.clamp(1, 1000)]);
+    var removed = 0;
+    for (final row in rows) {
+      final key = row['asset_key'] as String;
+      final format = row['format'] as String;
+      final kind = row['kind'] as String;
+      if (!RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(key) ||
+          !RegExp(r'^[a-zA-Z0-9]+$').hasMatch(format)) {
+        continue;
+      }
+      final referenced = kind == 'entity'
+          ? database.db.select(
+              'SELECT 1 FROM entities WHERE thumbnail_key = ? LIMIT 1',
+              [key]).isNotEmpty
+          : database.db.select(
+              'SELECT 1 FROM node_preview_assets WHERE asset_key = ? LIMIT 1',
+              [key]).isNotEmpty;
+      if (referenced) continue;
+      final file = kind == 'entity'
+          ? thumbnailStore.fileFor(key, format)
+          : File(nodePreviewAssetPathFor(storageDirectoryPath, key, format));
+      try {
+        if (file.existsSync()) file.deleteSync();
+        final partial = File('${file.path}.tmp');
+        if (partial.existsSync()) partial.deleteSync();
+      } on FileSystemException {
+        continue;
+      }
+      writeTransaction(() {
+        if (kind == 'entity') {
+          database.db.execute(
+              'DELETE FROM thumbnail_assets WHERE asset_key = ?', [key]);
+        }
+        database.db.execute(
+            'DELETE FROM retired_preview_assets WHERE kind = ? AND asset_key = ?',
+            [kind, key]);
+      });
+      removed++;
+    }
+    return removed;
+  }
+
   var _indexStatsBatchDepth = 0;
   var _indexStatsDirty = false;
 
@@ -23,7 +80,6 @@ class LibraryRepositoryBase {
   ]) {
     database.db.execute(sql, parameters);
   }
-
 
   T batchIndexMutations<T>(T Function() action) {
     _indexStatsBatchDepth++;
@@ -51,7 +107,6 @@ class LibraryRepositoryBase {
       rethrow;
     }
   }
-
 
   IndexNode _ensureGlobalRoot() {
     final rows = database.db.select(
@@ -467,7 +522,40 @@ LEFT JOIN child_counts ON child_counts.id = node.id
     String nodeId, {
     IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,
     String? reason,
-  }) {}
+  }) {
+    writeTransaction(() {
+      final rows = database.db.select('''
+        WITH RECURSIVE ancestors(id) AS (
+          SELECT id FROM index_nodes WHERE id = ?
+          UNION SELECT node.parent_id FROM index_nodes node JOIN ancestors ON node.id = ancestors.id
+          WHERE node.parent_id IS NOT NULL
+        ), descendants(id) AS (
+          SELECT id FROM index_nodes WHERE id = ?
+          UNION SELECT node.id FROM index_nodes node JOIN descendants ON node.parent_id = descendants.id
+          WHERE ?
+        ) SELECT id FROM ancestors UNION SELECT id FROM descendants
+      ''', [nodeId, nodeId, scope == IndexPreviewRebuildScope.subtree ? 1 : 0]);
+      final version = database.db.prepare('''
+        INSERT INTO node_preview_versions(node_id, revision) VALUES (?, 1)
+        ON CONFLICT(node_id) DO UPDATE SET revision = revision + 1
+      ''');
+      final dirty = database.db.prepare('''
+        INSERT INTO node_preview_dirty(node_id, revision, reason, updated_at)
+        SELECT node_id, revision, ?, ? FROM node_preview_versions WHERE node_id = ?
+        ON CONFLICT(node_id) DO UPDATE SET revision = excluded.revision,
+          reason = excluded.reason, updated_at = excluded.updated_at
+      ''');
+      try {
+        for (final row in rows) {
+          version.execute([row['id']]);
+          dirty.execute([reason, nowMillis(), row['id']]);
+        }
+      } finally {
+        version.dispose();
+        dirty.dispose();
+      }
+    });
+  }
 
   // --- Thumbnail file cleanup (called from IndexBuildMixin) ----------------
 
@@ -482,20 +570,24 @@ LEFT JOIN child_counts ON child_counts.id = node.id
   }
 
   void _deleteUnreferencedThumbnailFiles(Iterable<String> keys) {
-    final removed = <String>[];
     for (final key in keys.toSet()) {
       final referenced = database.db.select(
         'SELECT thumbnail_format FROM entities WHERE thumbnail_key = ? LIMIT 1',
         [key],
       );
       if (referenced.isNotEmpty) continue;
-      for (final format in const ['webp', 'png', 'jpg', 'jpeg']) {
-        final file = thumbnailStore.fileFor(key, format);
-        if (file.existsSync()) file.deleteSync();
-      }
-      removed.add(key);
+      final assets = database.db.select(
+        'SELECT format FROM thumbnail_assets WHERE asset_key = ? LIMIT 1',
+        [key],
+      );
+      final format = assets.isNotEmpty
+          ? assets.first['format'] as String
+          : const ['webp', 'png', 'jpg', 'jpeg'].firstWhere(
+              (format) => thumbnailStore.fileFor(key, format).existsSync(),
+              orElse: () => 'webp',
+            );
+      _retirePreviewAsset('entity', key, format);
     }
-    removeThumbnailAssets(removed);
   }
 
   Set<String> _thumbnailKeysUnderNodes(Set<String> nodeIds) {

@@ -39,3 +39,22 @@ CREATE TABLE database_command_receipts (
 CREATE INDEX idx_scan_directories_pending ON scan_directories(job_id, state);
 CREATE INDEX idx_manifest_work ON library_build_manifest(job_id, write_state, sequence);
 ''';
+
+const schemaV6PreviewAssets = '''
+CREATE TABLE IF NOT EXISTS document_preview_versions (
+  entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
+  source_revision INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS node_preview_versions (
+  node_id TEXT PRIMARY KEY REFERENCES index_nodes(id) ON DELETE CASCADE,
+  revision INTEGER NOT NULL DEFAULT 0,
+  publication INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS retired_preview_assets (
+  kind TEXT NOT NULL, asset_key TEXT NOT NULL, format TEXT NOT NULL,
+  not_before INTEGER NOT NULL,
+  PRIMARY KEY(kind, asset_key)
+);
+CREATE INDEX IF NOT EXISTS idx_retired_previews_due
+ON retired_preview_assets(not_before);
+''';

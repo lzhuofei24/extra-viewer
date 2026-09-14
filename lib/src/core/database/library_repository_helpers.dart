@@ -48,13 +48,14 @@ Entity _entityFromRow(Row row, [ThumbnailStore? thumbnailStore]) {
     updatedAtMs: row['updated_at'] as int,
     contentExcerpt: row['metadata_preview'] as String?,
     thumbnailStatus: thumbnailStatus,
+    sourceRevision: row['source_revision'] as int? ?? 1,
+    previewRevision: row['preview_revision'] as int? ?? 1,
     thumbnailKey: thumbnailKey,
     thumbnailFormat: thumbnailFormat,
     thumbnailWidth: row['thumbnail_width'] as int?,
     thumbnailHeight: row['thumbnail_height'] as int?,
     thumbnailError: row['thumbnail_error'] as String?,
-    thumbnailPath: thumbnailStatus == ThumbnailStatus.success &&
-            thumbnailKey != null &&
+    thumbnailPath: thumbnailKey != null &&
             thumbnailFormat != null &&
             thumbnailKey.isNotEmpty &&
             thumbnailFormat.isNotEmpty

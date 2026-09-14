@@ -112,6 +112,7 @@ class AppDatabase {
     final version = db.userVersion;
     if (version == currentSchemaVersion) {
       db.execute(_schema);
+      db.execute(schemaV6PreviewAssets);
       db.execute('PRAGMA optimize;');
       return;
     }
@@ -126,6 +127,7 @@ class AppDatabase {
       db.execute('BEGIN IMMEDIATE');
       try {
         db.execute(schemaV6Upgrade);
+        db.execute(schemaV6PreviewAssets);
         db.userVersion = currentSchemaVersion;
         db.execute('COMMIT');
       } catch (_) {
@@ -142,6 +144,7 @@ class AppDatabase {
     try {
       db.execute(_schema);
       db.execute(schemaV6Upgrade);
+      db.execute(schemaV6PreviewAssets);
       db.userVersion = currentSchemaVersion;
       db.execute('COMMIT;');
       db.execute('PRAGMA optimize;');

@@ -162,165 +162,98 @@ mixin NodePreviewRepositoryMixin on LibraryRepositoryBase {
   String nodePreviewAssetPath(String assetKey, String format) =>
       _nodePreviewAssetPath(assetKey, format);
 
-  void recordNodePreviewAsset({
-    required String nodeId,
-    required String signature,
-    required String assetKey,
-    required String format,
-    required int width,
-    required int height,
-  }) {
-    final previousRows = database.db.select(
-      'SELECT asset_key, format FROM node_preview_assets WHERE node_id = ?',
-      [nodeId],
-    );
-    // Commit the new database pointer before touching the old file. If the
-    // process stops after this point, SQLite still points to a complete asset.
-    writeTransaction(() {
-      database.db.execute('''
-        INSERT INTO node_preview_assets(
-          node_id, signature, asset_key, format, width, height, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(node_id) DO UPDATE SET
-          signature = excluded.signature,
-          asset_key = excluded.asset_key,
-          format = excluded.format,
-          width = excluded.width,
-          height = excluded.height,
-          updated_at = excluded.updated_at
-      ''', [nodeId, signature, assetKey, format, width, height, nowMillis()]);
-    });
-    for (final row in previousRows) {
-      final previousKey = row['asset_key'] as String;
-      final previousFormat = row['format'] as String;
-      if (previousKey == assetKey && previousFormat == format) continue;
-      _deleteNodePreviewAssetFile(previousKey, previousFormat);
-    }
-  }
-
-  void removeNodePreviewAsset(String nodeId) {
-    final rows = database.db.select(
-      'SELECT asset_key, format FROM node_preview_assets WHERE node_id = ?',
-      [nodeId],
-    );
-    // Remove the pointer first. A process interruption can leave an orphaned
-    // file, but never leaves SQLite pointing at a deleted asset.
-    writeTransaction(() {
-      database.db.execute(
-          'DELETE FROM node_preview_assets WHERE node_id = ?', [nodeId]);
-    });
-    for (final row in rows) {
-      _deleteNodePreviewAssetFile(
-        row['asset_key'] as String,
-        row['format'] as String,
-      );
-    }
-  }
-
-  void _deleteNodePreviewAssetFile(String assetKey, String format) {
-    try {
-      final file = File(_nodePreviewAssetPath(assetKey, format));
-      if (file.existsSync()) file.deleteSync();
-    } catch (error, stackTrace) {
-      AppDiagnosticLog.instance.warning(
-        'node_preview_asset_cleanup_failed',
-        fields: {
-          'assetKey': assetKey,
-          'format': format,
-          'error': '$error',
-          'stack': '$stackTrace',
-        },
-      );
-    }
-  }
-
-  String _nodePreviewAssetPath(String assetKey, String format) => p.join(
-        database.storageDirectoryPath,
-        'node_previews',
-        '$assetKey.$format',
-      );
-
-  /// Rebuilds one lightweight representative per node, bottom-up. The cache
-  /// contains only metadata and thumbnail cache keys, never image bytes.
-  void rebuildIndexNodePreviewCache(String rootId) {
-    final nodeRows = database.db.select(
-      '''
-      WITH RECURSIVE subtree(id, depth) AS (
-        SELECT ?, 0
-        UNION ALL
-        SELECT child.id, subtree.depth + 1
-        FROM index_nodes child JOIN subtree ON child.parent_id = subtree.id
-      )
-      SELECT node.*, subtree.depth
-      FROM index_nodes node JOIN subtree ON subtree.id = node.id
-      ORDER BY subtree.depth DESC, node.name COLLATE NOCASE ASC
-      ''',
-      [rootId],
-    );
-    if (nodeRows.isEmpty) return;
-    final nodes = nodeRows.map(_nodeFromRow).toList(growable: false);
-    final nodeIds = nodes.map((node) => node.id).toList(growable: false);
-    final placeholders = List.filled(nodeIds.length, '?').join(', ');
-    final entityRows = database.db.select(
-      '''
-      SELECT link.index_node_id AS preview_node_id, entity.*
-      FROM index_node_entities link
-      JOIN entities entity ON entity.id = link.entity_id
-      WHERE link.index_node_id IN ($placeholders) AND entity.archived = 0
-      ORDER BY link.index_node_id, entity.name COLLATE NOCASE, entity.id
-      ''',
-      nodeIds,
-    );
-    final entitiesByNode = <String, List<EntityListItem>>{};
-    for (final row in entityRows) {
-      final nodeId = row['preview_node_id'] as String;
-      entitiesByNode.putIfAbsent(nodeId, () => []).add(
-            _listItemFromRow(row, thumbnailStore),
-          );
-    }
-    final childrenByParent = <String, List<IndexNode>>{};
-    for (final node in nodes) {
-      final parentId = node.parentId;
-      if (parentId != null) {
-        childrenByParent.putIfAbsent(parentId, () => []).add(node);
-      }
-    }
-    final representatives = <String, IndexNodePreviewTile?>{};
-    final updates = <({String id, String? json})>[];
-    for (final node in nodes) {
-      final overrideRepresentative = _overrideRepresentativeTile(node);
-      if (overrideRepresentative != null) {
-        representatives[node.id] = overrideRepresentative;
-        updates.add(
-            (id: node.id, json: _previewTileToJson(overrideRepresentative)));
-        continue;
-      }
-      final childRepresentatives = (childrenByParent[node.id] ?? const [])
-          .map((child) => representatives[child.id])
-          .whereType<IndexNodePreviewTile>()
-          .toList(growable: false);
-      final representative = _selectRepresentativePreviewTile(
-        node,
-        entitiesByNode[node.id] ?? const <EntityListItem>[],
-        childRepresentatives,
-      );
-      representatives[node.id] = representative;
-      updates.add((id: node.id, json: _previewTileToJson(representative)));
-    }
-    final statement = database.db.prepare(
-      'UPDATE index_nodes SET preview_json = ?, updated_at = ? WHERE id = ?',
-    );
-    final now = nowMillis();
-    writeTransaction(() {
-      try {
-        for (final update in updates) {
-          statement.execute([update.json, now, update.id]);
+  List<NodePreviewBuildInput> prepareNodePreviewBuilds(
+          Iterable<String> nodeIds) =>
+      writeTransaction(() {
+        final ids = nodeIds.toList(growable: false);
+        for (final id in ids) {
+          rebuildIndexNodePreviewCacheForNode(id);
         }
-      } finally {
-        statement.dispose();
-      }
-    });
-  }
+        final previews = listIndexNodePreviews(ids);
+        final inputs = <NodePreviewBuildInput>[];
+        for (final preview in previews.values) {
+          if (_nodeById(preview.nodeId) == null) continue;
+          database.db.execute('''
+        INSERT INTO node_preview_versions(node_id, publication) VALUES (?, 1)
+        ON CONFLICT(node_id) DO UPDATE SET publication = publication + 1
+      ''', [preview.nodeId]);
+          final row = database.db.select(
+              'SELECT revision, publication FROM node_preview_versions WHERE node_id = ?',
+              [preview.nodeId]).single;
+          final revision = row['revision'] as int;
+          final publication = row['publication'] as int;
+          final key =
+              'node_v7_${sha256.convert(utf8.encode('${preview.nodeId}|$revision|$publication|webp80'))}';
+          _retirePreviewAsset('node', key, 'webp');
+          inputs.add(NodePreviewBuildInput(
+              NodePreviewTicket(
+                  nodeId: preview.nodeId,
+                  revision: revision,
+                  publication: publication,
+                  assetKey: key),
+              preview));
+        }
+        return List.unmodifiable(inputs);
+      });
+
+  bool publishNodePreview(
+    NodePreviewTicket ticket, {
+    String? signature,
+    int? width,
+    int? height,
+  }) =>
+      writeTransaction(() {
+        final current = database.db.select('''
+      SELECT 1 FROM node_preview_versions WHERE node_id = ? AND revision = ? AND publication = ?
+    ''', [ticket.nodeId, ticket.revision, ticket.publication]);
+        if (current.isEmpty) return false;
+        final previous = database.db.select(
+            'SELECT asset_key, format FROM node_preview_assets WHERE node_id = ?',
+            [ticket.nodeId]);
+        if (signature == null) {
+          database.db.execute(
+              'DELETE FROM node_preview_assets WHERE node_id = ?',
+              [ticket.nodeId]);
+        } else {
+          if ((width ?? 0) <= 0 ||
+              (height ?? 0) <= 0 ||
+              File(_nodePreviewAssetPath(ticket.assetKey, 'webp'))
+                      .lengthSync() <=
+                  0) {
+            throw StateError('Node preview file is not ready to publish');
+          }
+          database.db.execute('''
+        INSERT INTO node_preview_assets(node_id, signature, asset_key, format, width, height, updated_at)
+        VALUES (?, ?, ?, 'webp', ?, ?, ?)
+        ON CONFLICT(node_id) DO UPDATE SET signature = excluded.signature,
+          asset_key = excluded.asset_key, format = excluded.format, width = excluded.width,
+          height = excluded.height, updated_at = excluded.updated_at
+      ''', [
+            ticket.nodeId,
+            signature,
+            ticket.assetKey,
+            width,
+            height,
+            nowMillis()
+          ]);
+          database.db.execute(
+              "DELETE FROM retired_preview_assets WHERE kind = 'node' AND asset_key = ?",
+              [ticket.assetKey]);
+        }
+        database.db.execute(
+            'DELETE FROM node_preview_dirty WHERE node_id = ? AND revision = ?',
+            [ticket.nodeId, ticket.revision]);
+        for (final row in previous) {
+          if (row['asset_key'] != ticket.assetKey) {
+            _retirePreviewAsset(
+                'node', row['asset_key'] as String, row['format'] as String);
+          }
+        }
+        return true;
+      });
+
+  String _nodePreviewAssetPath(String assetKey, String format) =>
+      nodePreviewAssetPathFor(storageDirectoryPath, assetKey, format);
 
   /// Rebuilds only one representative tile from its direct content and the
   /// already-cached representatives of its children. Used to propagate a
@@ -367,11 +300,6 @@ mixin NodePreviewRepositoryMixin on LibraryRepositoryBase {
   /// Rebuilds only a node and its ancestors. This is the cheap path for a
   /// custom preview override or a single entity thumbnail change; descendants
   /// already have valid representative caches and do not need to be scanned.
-  void rebuildIndexNodePreviewCacheChain(String nodeId) {
-    for (final node in listIndexNodeAncestors(nodeId)) {
-      rebuildIndexNodePreviewCacheForNode(node.id);
-    }
-  }
 
   IndexNode? owningIndexRootForNode(String nodeId) {
     final node = _nodeById(nodeId);

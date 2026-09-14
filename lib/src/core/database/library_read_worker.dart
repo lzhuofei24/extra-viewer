@@ -2,10 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:isolate';
 
-import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
 
 import '../domain/models.dart';
+import '../thumbnails/thumbnail_store.dart';
 
 /// A dedicated read-only SQLite isolate for non-interactive page warming.
 /// It keeps lookahead queries from blocking scroll and navigation frames.
@@ -616,7 +616,7 @@ _RawReadPage _loadNodePreviews(
     final assetKey = row['asset_key'] as String;
     final format = row['format'] as String;
     assets[row['node_id'] as String] = (
-      path: p.join(storageDirectoryPath, 'node_previews', '$assetKey.$format'),
+      path: nodePreviewAssetPathFor(storageDirectoryPath, assetKey, format),
       aspectRatio: width / height,
     );
   }
@@ -1077,10 +1077,9 @@ Map<String, Object?> _entityToMap(Row row, String storageDirectoryPath) {
   final status = row['thumbnail_status'] as String? ?? 'none';
   final key = row['thumbnail_key'] as String?;
   final format = row['thumbnail_format'] as String?;
-  final thumbnailPath =
-      status == ThumbnailStatus.success.value && key != null && format != null
-          ? _thumbnailPath(storageDirectoryPath, key, format)
-          : null;
+  final thumbnailPath = key != null && format != null
+      ? _thumbnailPath(storageDirectoryPath, key, format)
+      : null;
   return <String, Object?>{
     'id': row['id'],
     'hash': row['hash'],
@@ -1093,6 +1092,8 @@ Map<String, Object?> _entityToMap(Row row, String storageDirectoryPath) {
     'modifiedAtMs': row['source_modified_at_ms'],
     'contentExcerpt': row['metadata_preview'],
     'thumbnailStatus': status,
+    'sourceRevision': row['source_revision'],
+    'previewRevision': row['preview_revision'],
     'thumbnailPath': thumbnailPath,
     'thumbnailKey': key,
     'thumbnailFormat': format,
@@ -1127,8 +1128,7 @@ Map<String, Object?> _fullEntityToMap(
 }
 
 String _thumbnailPath(String storageDirectoryPath, String key, String format) {
-  final prefix = key.length >= 2 ? key.substring(0, 2) : '00';
-  return p.join(storageDirectoryPath, 'thumbnails', prefix, '$key.$format');
+  return ThumbnailStore(storageDirectoryPath).pathFor(key, format);
 }
 
 IndexNode _nodeFromMap(Map<Object?, Object?> map) => IndexNode(
@@ -1172,6 +1172,8 @@ EntityListItem _entityFromMap(Map<Object?, Object?> map) => EntityListItem(
 
 Entity _fullEntityFromMap(Map<Object?, Object?> map) => Entity(
       id: map['id']! as String,
+      sourceRevision: map['sourceRevision'] as int? ?? 1,
+      previewRevision: map['previewRevision'] as int? ?? 1,
       path: map['path']! as String,
       localPath: map['localPath'] as String?,
       name: (map['name'] ?? map['title'])! as String,

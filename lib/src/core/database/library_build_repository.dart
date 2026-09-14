@@ -128,7 +128,7 @@ class LibraryBuildRepository implements BuildAccess {
   List<LibraryBuildJob> listRecoverable() => library.database.db.select('''
         $_jobSelect
         WHERE status IN ('pending', 'running', 'pauseRequested', 'paused', 'blocked', 'failed', 'completedWithErrors')
-          AND stage != 'completed'
+          AND (stage != 'completed' OR status = 'completedWithErrors')
         ORDER BY updated_at DESC
       ''').map(_jobFromRow).toList(growable: false);
 
@@ -136,7 +136,7 @@ class LibraryBuildRepository implements BuildAccess {
   List<LibraryBuildJob> listHistory({int limit = 100}) => library.database.db
       .select('''
         $_jobSelect
-        WHERE status IN ('completed', 'abandoned')
+        WHERE status IN ('completed', 'completedWithErrors', 'abandoned')
         ORDER BY updated_at DESC LIMIT ?
       ''', [limit.clamp(1, 100).toInt()])
       .map(_jobFromRow)
@@ -146,6 +146,8 @@ class LibraryBuildRepository implements BuildAccess {
   void markInterruptedRecoverable() {
     library.writeTransaction(() {
       final now = nowMillis();
+      library.database.db.execute(
+          "UPDATE entities SET thumbnail_status = 'failed', thumbnail_error = '上次预览生成已中断' WHERE thumbnail_status = 'pending'");
       library.database.db.execute('''
         UPDATE library_build_jobs
         SET status = 'paused', updated_at = ?
@@ -226,7 +228,10 @@ class LibraryBuildRepository implements BuildAccess {
 
   @override
   void abandon(String jobId) {
-    _update(jobId, status: LibraryBuildStatus.abandoned);
+    library.writeTransaction(() {
+      _update(jobId, status: LibraryBuildStatus.abandoned);
+      _discardFinishedDetails(jobId, abandoned: true);
+    });
     library.database.checkpointWriteAheadLog();
   }
 
@@ -236,11 +241,7 @@ class LibraryBuildRepository implements BuildAccess {
     required String indexRootId,
     String? stagingRootId,
   }) =>
-      _update(
-        jobId,
-        indexRootId: indexRootId,
-        stagingRootId: stagingRootId,
-      );
+      _update(jobId, indexRootId: indexRootId, stagingRootId: stagingRootId);
 
   @override
   LibraryBuildJob checkpointStage({
@@ -251,19 +252,68 @@ class LibraryBuildRepository implements BuildAccess {
     int? documentPreviewTotal,
     int? entityPreviewTotal,
     int? nodePreviewTotal,
-  }) =>
-      _update(
-        jobId,
+  }) {
+    if (stage == LibraryBuildStage.completed) {
+      return library.writeTransaction(() {
+        final job = get(jobId)!;
+        for (final table in const [
+          'library_document_preview_work',
+          'library_entity_preview_work',
+          'library_node_preview_work',
+        ]) {
+          final unfinished = library.database.db.select(
+            "SELECT 1 FROM $table WHERE job_id = ? AND state IN ('pending', 'processing') LIMIT 1",
+            [jobId],
+          );
+          if (unfinished.isNotEmpty) {
+            throw StateError(
+                'Cannot complete a task with unfinished preview work');
+          }
+        }
+        final hasFailures = job.documentPreviewFailed +
+                job.entityPreviewFailed +
+                job.nodePreviewFailed >
+            0;
+        final completed = _update(jobId,
+            stage: stage,
+            status: hasFailures
+                ? LibraryBuildStatus.completedWithErrors
+                : LibraryBuildStatus.completed,
+            error: hasFailures ? '资料已入库，有待修复的预览项' : null,
+            clearError: !hasFailures);
+        _discardFinishedDetails(jobId);
+        return completed;
+      });
+    }
+    return _update(jobId,
         stage: stage,
-        status: stage == LibraryBuildStage.completed
-            ? LibraryBuildStatus.completed
-            : LibraryBuildStatus.running,
+        status: LibraryBuildStatus.running,
         manifestTotal: manifestTotal,
         indexedTotal: indexedTotal,
         documentPreviewTotal: documentPreviewTotal,
         entityPreviewTotal: entityPreviewTotal,
-        nodePreviewTotal: nodePreviewTotal,
-      );
+        nodePreviewTotal: nodePreviewTotal);
+  }
+
+  void _discardFinishedDetails(String jobId, {bool abandoned = false}) {
+    final db = library.database.db;
+    db.execute('DELETE FROM library_build_manifest WHERE job_id = ?', [jobId]);
+    db.execute('DELETE FROM scan_directories WHERE job_id = ?', [jobId]);
+    for (final table in [
+      'library_document_preview_work',
+      'library_entity_preview_work',
+      'library_node_preview_work'
+    ]) {
+      db.execute(
+          "DELETE FROM $table WHERE job_id = ? ${abandoned ? '' : "AND state IN ('completed', 'skipped')"}",
+          [jobId]);
+    }
+    // Unresolved failures keep their parent task until repaired or abandoned.
+    db.execute('''DELETE FROM library_build_jobs WHERE id IN (
+      SELECT id FROM library_build_jobs WHERE status IN ('completed', 'abandoned')
+      ORDER BY updated_at DESC, id DESC LIMIT -1 OFFSET 100
+    )''');
+  }
 
   @override
   void resetManifest(String jobId) {
@@ -459,10 +509,11 @@ class LibraryBuildRepository implements BuildAccess {
         AND (
           entity.thumbnail_status != 'success' OR
           entity.thumbnail_key IS NULL OR
-          entity.thumbnail_key NOT LIKE 'v6_%'
+          (entity.thumbnail_key NOT LIKE 'v6_%' AND entity.thumbnail_key NOT LIKE 'v7_%')
         )
     ''', [scopeNodeId, jobId, now]);
-    final count = _count('library_entity_preview_work', jobId);
+    final count = _remainingWorkCount('library_entity_preview_work', jobId) +
+        get(jobId)!.entityPreviewDone;
     _update(jobId, entityPreviewTotal: count);
   }
 
@@ -482,13 +533,12 @@ class LibraryBuildRepository implements BuildAccess {
       FROM index_node_entities link
       JOIN entities entity ON entity.id = link.entity_id
       WHERE link.index_node_id IN (SELECT id FROM subtree)
-        AND entity.media_type IN ('text', 'external')
-        AND (
-          entity.format = 'epub' OR
-          entity.metadata_preview IS NULL OR entity.metadata_preview = ''
-        )
+        AND entity.media_type IN ('text', 'external_link')
+        AND NOT EXISTS (SELECT 1 FROM document_preview_versions preview
+          WHERE preview.entity_id = entity.id AND preview.source_revision = entity.source_revision)
     ''', [scopeNodeId, jobId, now]);
-    final count = _count('library_document_preview_work', jobId);
+    final count = _remainingWorkCount('library_document_preview_work', jobId) +
+        get(jobId)!.documentPreviewDone;
     _update(jobId, documentPreviewTotal: count);
   }
 
@@ -498,7 +548,12 @@ class LibraryBuildRepository implements BuildAccess {
     required String scopeNodeId,
     required String rootNodeId,
     IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.subtree,
+    bool force = false,
   }) {
+    if (force) {
+      library.markIndexNodePreviewDirty(scopeNodeId,
+          scope: scope, reason: 'explicit_preview_rebuild');
+    }
     final now = nowMillis();
     final selectedNodes = scope == IndexPreviewRebuildScope.subtree
         ? 'SELECT id FROM subtree UNION SELECT id FROM ancestors'
@@ -520,33 +575,16 @@ class LibraryBuildRepository implements BuildAccess {
       )
       SELECT ?, id, 'pending', 0, ?
       FROM ($selectedNodes)
+      WHERE id IN (SELECT node_id FROM node_preview_dirty)
     ''', [scopeNodeId, scopeNodeId, jobId, now]);
-    final count = _count('library_node_preview_work', jobId);
+    final count = _remainingWorkCount('library_node_preview_work', jobId) +
+        get(jobId)!.nodePreviewDone;
     _update(jobId, nodePreviewTotal: count);
   }
 
   @override
-  bool nodePreviewWorkIncludesDescendants(
-    String jobId,
-    String scopeNodeId,
-  ) {
-    return library.database.db.select('''
-      WITH RECURSIVE descendants(id) AS (
-        SELECT id FROM index_nodes WHERE parent_id = ?
-        UNION ALL
-        SELECT child.id
-        FROM index_nodes child JOIN descendants ON child.parent_id = descendants.id
-      )
-      SELECT 1
-      FROM library_node_preview_work work
-      JOIN descendants ON descendants.id = work.node_id
-      WHERE work.job_id = ?
-      LIMIT 1
-    ''', [scopeNodeId, jobId]).isNotEmpty;
-  }
-
-  @override
-  List<String> claimEntityPreviewWork(String jobId, {int limit = 100}) =>
+  Map<String, BuildWorkAttempt> claimEntityPreviewWork(String jobId,
+          {int limit = 100}) =>
       _claimWork(
         table: 'library_entity_preview_work',
         idColumn: 'entity_id',
@@ -555,7 +593,8 @@ class LibraryBuildRepository implements BuildAccess {
       );
 
   @override
-  List<String> claimDocumentPreviewWork(String jobId, {int limit = 100}) =>
+  Map<String, BuildWorkAttempt> claimDocumentPreviewWork(String jobId,
+          {int limit = 100}) =>
       _claimWork(
         table: 'library_document_preview_work',
         idColumn: 'entity_id',
@@ -564,7 +603,8 @@ class LibraryBuildRepository implements BuildAccess {
       );
 
   @override
-  List<String> claimNodePreviewWork(String jobId, {int limit = 8}) =>
+  Map<String, BuildWorkAttempt> claimNodePreviewWork(String jobId,
+          {int limit = 8}) =>
       _claimWork(
         table: 'library_node_preview_work',
         idColumn: 'node_id',
@@ -575,40 +615,93 @@ class LibraryBuildRepository implements BuildAccess {
   @override
   void completeEntityPreviewWork(
     String jobId,
-    Map<String, ({LibraryBuildWorkState state, String? error})> results,
-  ) =>
+    Map<String, ({LibraryBuildWorkState state, String? error})> results, {
+    required Map<String, BuildWorkAttempt> attempts,
+  }) =>
       _completeWork(
         table: 'library_entity_preview_work',
         idColumn: 'entity_id',
         jobId: jobId,
         results: results,
         counter: _WorkCounter.entity,
+        attempts: attempts,
       );
 
   @override
   void completeDocumentPreviewWork(
     String jobId,
-    Map<String, ({LibraryBuildWorkState state, String? error})> results,
-  ) =>
-      _completeWork(
-        table: 'library_document_preview_work',
-        idColumn: 'entity_id',
-        jobId: jobId,
-        results: results,
-        counter: _WorkCounter.document,
-      );
+    Map<String, ({LibraryBuildWorkState state, String? error})> results, {
+    required Map<String, BuildWorkAttempt> attempts,
+    Map<String, DocumentPreviewMetadata> metadata = const {},
+  }) =>
+      library.writeTransaction(() {
+        final resolved =
+            Map<String, ({LibraryBuildWorkState state, String? error})>.of(
+                results);
+        for (final entry in metadata.entries) {
+          final attempt = attempts[entry.key];
+          final active = library.database.db.select('''
+          SELECT 1 FROM library_document_preview_work work JOIN library_build_jobs job ON job.id = work.job_id
+          WHERE work.job_id = ? AND work.entity_id = ? AND work.state = 'processing'
+            AND work.attempts = ? AND job.scan_generation = ?
+        ''', [
+            jobId,
+            entry.key,
+            attempt?.number ?? -1,
+            attempt?.generation ?? -1
+          ]);
+          if (active.isEmpty) continue;
+          final value = entry.value;
+          library.database.db.execute(
+              '''UPDATE entities SET metadata_preview = ?,
+          duration_ms = COALESCE(?, duration_ms), updated_at = ?
+          WHERE id = ? AND source_revision = ?''',
+              [
+                value.excerpt,
+                value.durationMs,
+                nowMillis(),
+                entry.key,
+                value.sourceRevision
+              ]);
+          if (library.database.db.updatedRows == 0) {
+            resolved[entry.key] =
+                (state: LibraryBuildWorkState.failed, error: '文档已改变，请重试');
+            continue;
+          }
+          library.database.db.execute(
+              '''INSERT INTO document_preview_versions(entity_id, source_revision)
+          VALUES (?, ?) ON CONFLICT(entity_id) DO UPDATE SET source_revision = excluded.source_revision''',
+              [entry.key, value.sourceRevision]);
+          for (final row in library.database.db.select(
+              'SELECT index_node_id FROM index_node_entities WHERE entity_id = ?',
+              [entry.key])) {
+            library.markIndexNodePreviewDirty(row['index_node_id'] as String,
+                reason: 'document_preview_published');
+          }
+        }
+        _completeWork(
+          table: 'library_document_preview_work',
+          idColumn: 'entity_id',
+          jobId: jobId,
+          results: resolved,
+          counter: _WorkCounter.document,
+          attempts: attempts,
+        );
+      });
 
   @override
   void completeNodePreviewWork(
     String jobId,
-    Map<String, ({LibraryBuildWorkState state, String? error})> results,
-  ) =>
+    Map<String, ({LibraryBuildWorkState state, String? error})> results, {
+    required Map<String, BuildWorkAttempt> attempts,
+  }) =>
       _completeWork(
         table: 'library_node_preview_work',
         idColumn: 'node_id',
         jobId: jobId,
         results: results,
         counter: _WorkCounter.node,
+        attempts: attempts,
       );
 
   @override
@@ -765,25 +858,33 @@ class LibraryBuildRepository implements BuildAccess {
     return get(jobId)!;
   }
 
-  List<String> _claimWork({
+  Map<String, BuildWorkAttempt> _claimWork({
     required String table,
     required String idColumn,
     required String jobId,
     required int limit,
   }) {
     final rows = library.database.db.select('''
-      SELECT $idColumn FROM $table
+      SELECT $idColumn, attempts FROM $table AS work
       WHERE job_id = ? AND state = 'pending'
+      ${table == 'library_node_preview_work' ? "AND NOT EXISTS (SELECT 1 FROM index_nodes child JOIN library_node_preview_work child_work ON child.id = child_work.node_id WHERE child.parent_id = work.node_id AND child_work.job_id = work.job_id AND child_work.state IN ('pending', 'processing'))" : ''}
       ORDER BY $idColumn ASC LIMIT ?
     ''', [jobId, limit.clamp(1, 100).toInt()]);
     final ids = rows.map((row) => row[idColumn] as String).toList();
-    if (ids.isEmpty) return ids;
+    if (ids.isEmpty) return const {};
     final placeholders = List.filled(ids.length, '?').join(',');
     library.database.db.execute('''
       UPDATE $table SET state = 'processing', attempts = attempts + 1, updated_at = ?
       WHERE job_id = ? AND $idColumn IN ($placeholders)
     ''', [nowMillis(), jobId, ...ids]);
-    return ids;
+    final generation = library.database.db.select(
+        'SELECT scan_generation FROM library_build_jobs WHERE id = ?',
+        [jobId]).single['scan_generation'] as int;
+    return Map.unmodifiable({
+      for (final row in rows)
+        row[idColumn] as String: BuildWorkAttempt(
+            generation: generation, number: (row['attempts'] as int) + 1)
+    });
   }
 
   void _completeWork({
@@ -793,6 +894,7 @@ class LibraryBuildRepository implements BuildAccess {
     required Map<String, ({LibraryBuildWorkState state, String? error})>
         results,
     required _WorkCounter counter,
+    required Map<String, BuildWorkAttempt> attempts,
   }) {
     if (results.isEmpty) return;
     library.writeTransaction(() {
@@ -800,7 +902,8 @@ class LibraryBuildRepository implements BuildAccess {
       var failedDelta = 0;
       final statement = library.database.db.prepare('''
         UPDATE $table SET state = ?, error = ?, updated_at = ?
-        WHERE job_id = ? AND $idColumn = ? AND state = 'processing'
+        WHERE job_id = ? AND $idColumn = ? AND state = 'processing' AND attempts = ?
+          AND EXISTS (SELECT 1 FROM library_build_jobs job WHERE job.id = job_id AND job.scan_generation = ?)
       ''');
       try {
         for (final entry in results.entries) {
@@ -810,6 +913,8 @@ class LibraryBuildRepository implements BuildAccess {
             nowMillis(),
             jobId,
             entry.key,
+            attempts[entry.key]?.number ?? -1,
+            attempts[entry.key]?.generation ?? -1,
           ]);
           if (library.database.db.updatedRows == 0) continue;
           if (entry.value.state == LibraryBuildWorkState.completed ||
@@ -839,6 +944,10 @@ class LibraryBuildRepository implements BuildAccess {
 
   int _count(String table, String jobId) => library.database.db.select(
       'SELECT COUNT(*) AS value FROM $table WHERE job_id = ?',
+      [jobId]).single['value'] as int;
+
+  int _remainingWorkCount(String table, String jobId) => library.database.db.select(
+      "SELECT COUNT(*) AS value FROM $table WHERE job_id = ? AND state NOT IN ('completed', 'skipped')",
       [jobId]).single['value'] as int;
 
   bool _hasPending(String table, String jobId) => library.database.db.select('''

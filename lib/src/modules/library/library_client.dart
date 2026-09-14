@@ -677,6 +677,12 @@ class LibraryClient implements LibraryAccess {
   }
 
   @override
+  Future<int> collectRetiredPreviewAssets({int limit = 100}) async {
+    return (await host.call(
+        'library', 'collectRetiredPreviewAssets', {'limit': limit})) as int;
+  }
+
+  @override
   Future<Entity?> getEntity(String id) async {
     return (await host.call('library', 'getEntity', {'id': id})) as Entity?;
   }
@@ -728,44 +734,28 @@ class LibraryClient implements LibraryAccess {
   }
 
   @override
-  Future<void> recordNodePreviewAsset(
-      {required String nodeId,
-      required String signature,
-      required String assetKey,
-      required String format,
-      required int width,
-      required int height}) async {
-    await host.call('library', 'recordNodePreviewAsset', {
-      'nodeId': nodeId,
+  Future<List<NodePreviewBuildInput>> prepareNodePreviewBuilds(
+      Iterable<String> nodeIds) async {
+    return (await host.call('library', 'prepareNodePreviewBuilds', {
+      'nodeIds': nodeIds.toList(growable: false)
+    })) as List<NodePreviewBuildInput>;
+  }
+
+  @override
+  Future<bool> publishNodePreview(NodePreviewTicket ticket,
+      {String? signature, int? width, int? height}) async {
+    return (await host.call('library', 'publishNodePreview', {
+      'ticket': ticket,
       'signature': signature,
-      'assetKey': assetKey,
-      'format': format,
       'width': width,
       'height': height
-    });
-  }
-
-  @override
-  Future<void> removeNodePreviewAsset(String nodeId) async {
-    await host.call('library', 'removeNodePreviewAsset', {'nodeId': nodeId});
-  }
-
-  @override
-  Future<void> rebuildIndexNodePreviewCache(String rootId) async {
-    await host
-        .call('library', 'rebuildIndexNodePreviewCache', {'rootId': rootId});
+    })) as bool;
   }
 
   @override
   Future<void> rebuildIndexNodePreviewCacheForNode(String nodeId) async {
     await host.call(
         'library', 'rebuildIndexNodePreviewCacheForNode', {'nodeId': nodeId});
-  }
-
-  @override
-  Future<void> rebuildIndexNodePreviewCacheChain(String nodeId) async {
-    await host.call(
-        'library', 'rebuildIndexNodePreviewCacheChain', {'nodeId': nodeId});
   }
 
   @override
@@ -817,54 +807,18 @@ class LibraryClient implements LibraryAccess {
   }
 
   @override
-  Future<void> updateEntityThumbnailPending(String entityId) async {
-    await host.call(
-        'library', 'updateEntityThumbnailPending', {'entityId': entityId});
+  Future<EntityPreviewTicket> beginEntityPreview(Entity entity) async {
+    return (await host
+            .call('library', 'beginEntityPreview', {'entity': entity}))
+        as EntityPreviewTicket;
   }
 
   @override
-  Future<void> applyThumbnailUpdates(
-      Iterable<ThumbnailDatabaseUpdate> updates) async {
-    await host.call('library', 'applyThumbnailUpdates',
-        {'updates': updates.toList(growable: false)});
-  }
-
-  @override
-  Future<void> updateEntityThumbnailSuccess(
-      {required String entityId,
-      required String key,
-      required String format,
-      required int width,
-      required int height}) async {
-    await host.call('library', 'updateEntityThumbnailSuccess', {
-      'entityId': entityId,
-      'key': key,
-      'format': format,
-      'width': width,
-      'height': height
-    });
-  }
-
-  @override
-  Future<void> updateEntityThumbnailFailed(
-      String entityId, String error) async {
-    await host.call('library', 'updateEntityThumbnailFailed',
-        {'entityId': entityId, 'error': error});
-  }
-
-  @override
-  Future<void> updateEntityThumbnailNone(String entityId) async {
-    await host
-        .call('library', 'updateEntityThumbnailNone', {'entityId': entityId});
-  }
-
-  @override
-  Future<void> recordThumbnailAsset(
-      {required String key,
-      required String format,
-      required int byteSize}) async {
-    await host.call('library', 'recordThumbnailAsset',
-        {'key': key, 'format': format, 'byteSize': byteSize});
+  Future<bool> commitEntityPreview(
+      EntityPreviewTicket ticket, ThumbnailDatabaseUpdate update,
+      {int byteSize = 0}) async {
+    return (await host.call('library', 'commitEntityPreview',
+        {'ticket': ticket, 'update': update, 'byteSize': byteSize})) as bool;
   }
 
   @override

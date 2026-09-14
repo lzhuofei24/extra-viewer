@@ -4,9 +4,9 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
+import 'package:crypto/crypto.dart';
 
 import '../domain/models.dart';
-import '../diagnostics/app_diagnostic_log.dart';
 import '../thumbnails/thumbnail_store.dart';
 import '../utils/ids.dart';
 import '../../modules/library/library_access.dart';

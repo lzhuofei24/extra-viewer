@@ -230,70 +230,66 @@ class BuildClient implements BuildAccess {
   Future<void> prepareNodePreviewWork(String jobId,
       {required String scopeNodeId,
       required String rootNodeId,
-      IndexPreviewRebuildScope scope =
-          IndexPreviewRebuildScope.subtree}) async {
+      IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.subtree,
+      bool force = false}) async {
     await host.call('build', 'prepareNodePreviewWork', {
       'jobId': jobId,
       'scopeNodeId': scopeNodeId,
       'rootNodeId': rootNodeId,
-      'scope': scope
+      'scope': scope,
+      'force': force
     });
   }
 
   @override
-  Future<bool> nodePreviewWorkIncludesDescendants(
-      String jobId, String scopeNodeId) async {
-    return (await host.call('build', 'nodePreviewWorkIncludesDescendants',
-        {'jobId': jobId, 'scopeNodeId': scopeNodeId})) as bool;
-  }
-
-  @override
-  Future<List<String>> claimEntityPreviewWork(String jobId,
+  Future<Map<String, BuildWorkAttempt>> claimEntityPreviewWork(String jobId,
       {int limit = 100}) async {
     return (await host.call('build', 'claimEntityPreviewWork',
-        {'jobId': jobId, 'limit': limit})) as List<String>;
+        {'jobId': jobId, 'limit': limit})) as Map<String, BuildWorkAttempt>;
   }
 
   @override
-  Future<List<String>> claimDocumentPreviewWork(String jobId,
+  Future<Map<String, BuildWorkAttempt>> claimDocumentPreviewWork(String jobId,
       {int limit = 100}) async {
     return (await host.call('build', 'claimDocumentPreviewWork',
-        {'jobId': jobId, 'limit': limit})) as List<String>;
+        {'jobId': jobId, 'limit': limit})) as Map<String, BuildWorkAttempt>;
   }
 
   @override
-  Future<List<String>> claimNodePreviewWork(String jobId,
+  Future<Map<String, BuildWorkAttempt>> claimNodePreviewWork(String jobId,
       {int limit = 8}) async {
     return (await host.call(
             'build', 'claimNodePreviewWork', {'jobId': jobId, 'limit': limit}))
-        as List<String>;
+        as Map<String, BuildWorkAttempt>;
   }
 
   @override
-  Future<void> completeEntityPreviewWork(
-      String jobId,
-      Map<String, ({LibraryBuildWorkState state, String? error})>
-          results) async {
+  Future<void> completeEntityPreviewWork(String jobId,
+      Map<String, ({LibraryBuildWorkState state, String? error})> results,
+      {required Map<String, BuildWorkAttempt> attempts}) async {
     await host.call('build', 'completeEntityPreviewWork',
-        {'jobId': jobId, 'results': results});
+        {'jobId': jobId, 'results': results, 'attempts': attempts});
   }
 
   @override
-  Future<void> completeDocumentPreviewWork(
-      String jobId,
-      Map<String, ({LibraryBuildWorkState state, String? error})>
-          results) async {
-    await host.call('build', 'completeDocumentPreviewWork',
-        {'jobId': jobId, 'results': results});
+  Future<void> completeDocumentPreviewWork(String jobId,
+      Map<String, ({LibraryBuildWorkState state, String? error})> results,
+      {required Map<String, BuildWorkAttempt> attempts,
+      Map<String, DocumentPreviewMetadata> metadata = const {}}) async {
+    await host.call('build', 'completeDocumentPreviewWork', {
+      'jobId': jobId,
+      'results': results,
+      'attempts': attempts,
+      'metadata': metadata
+    });
   }
 
   @override
-  Future<void> completeNodePreviewWork(
-      String jobId,
-      Map<String, ({LibraryBuildWorkState state, String? error})>
-          results) async {
+  Future<void> completeNodePreviewWork(String jobId,
+      Map<String, ({LibraryBuildWorkState state, String? error})> results,
+      {required Map<String, BuildWorkAttempt> attempts}) async {
     await host.call('build', 'completeNodePreviewWork',
-        {'jobId': jobId, 'results': results});
+        {'jobId': jobId, 'results': results, 'attempts': attempts});
   }
 
   @override

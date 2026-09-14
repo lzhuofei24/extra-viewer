@@ -54,6 +54,29 @@ Local commits only; no push or tablet installation. Keep release signing compati
   newer attempt still needs a token), complete domain command receipts, bounded
   derived-result commits, retention, atomic asset publication and full runtime.
 
+### Versioned preview publication and recovery (2026-09-15)
+
+- Added source/preview revisions and immutable sharded asset keys; old asset
+  paths remain readable. Failed rebuilds retain the previous published image.
+- Entity and node results publish conditionally against revision tickets.
+  Work completion also checks task generation and claim attempt; late callbacks
+  cannot advance a newer attempt or replace a newer image.
+- Node dirty markers now persist revision changes for affected ancestors.
+  Build work processes dirty children before parents instead of rebuilding the
+  whole root descriptor cache. Global cross-collection scheduling is still pending.
+- Derived files retire through a delayed ledger with reference checks. The old
+  index-deletion path now schedules retirement instead of deleting immediately.
+- Document metadata and work status commit together after source/attempt checks;
+  corrected the stored document type predicate and removed startup EPUB repair.
+- Successful work details are pruned; failed details remain repairable. Completed
+  summaries are bounded to 100, while unfinished tasks remain. Completion rejects
+  pending/processing preview work and reports partial failures separately.
+- Validation: full suite 69 passed; subsequent completion/deletion-boundary
+  changes passed 17 targeted tests. No Android install or source-file modification.
+- Still outstanding: complete domain command receipts, cross-collection dirty
+  scheduling, cancellation through native decode, 100-item/2-second batching,
+  one-pass document cover/excerpt, cache budgets, runtime/navigation and releases.
+
 ### Implemented safety/frontier foundation
 
 - Schema 6 additive migration, schema-5 snapshot before file-backed migration.

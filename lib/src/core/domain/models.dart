@@ -153,9 +153,13 @@ class Entity {
     this.extraStateJson,
     this.directoryRootId,
     this.localPath,
+    this.sourceRevision = 1,
+    this.previewRevision = 1,
   });
 
   final String id;
+  final int sourceRevision;
+  final int previewRevision;
   final String path;
   final String name;
   final String format;
@@ -195,6 +199,36 @@ class Entity {
 
   String get title => name;
   String get mimeType => entityType.value;
+}
+
+class EntityPreviewTicket {
+  const EntityPreviewTicket(
+      {required this.entityId,
+      required this.sourceRevision,
+      required this.previewRevision,
+      required this.assetKey});
+  final String entityId;
+  final int sourceRevision;
+  final int previewRevision;
+  final String assetKey;
+}
+
+class NodePreviewTicket {
+  const NodePreviewTicket(
+      {required this.nodeId,
+      required this.revision,
+      required this.publication,
+      required this.assetKey});
+  final String nodeId;
+  final int revision;
+  final int publication;
+  final String assetKey;
+}
+
+class NodePreviewBuildInput {
+  const NodePreviewBuildInput(this.ticket, this.preview);
+  final NodePreviewTicket ticket;
+  final IndexNodePreview preview;
 }
 
 class IndexNode {
@@ -631,7 +665,24 @@ enum LibraryBuildKind { scanScope, rebuildPreviews }
 
 enum LibraryBuildWorkState { pending, processing, completed, failed, skipped }
 
+class BuildWorkAttempt {
+  const BuildWorkAttempt({required this.generation, required this.number});
+  final int generation;
+  final int number;
+}
+
+class DocumentPreviewMetadata {
+  const DocumentPreviewMetadata(
+      {required this.sourceRevision, this.excerpt, this.durationMs});
+  final int sourceRevision;
+  final String? excerpt;
+  final int? durationMs;
+}
+
 class LibraryBuildJob {
+  bool get isCompleted =>
+      status == LibraryBuildStatus.completed ||
+      status == LibraryBuildStatus.completedWithErrors;
   const LibraryBuildJob({
     required this.id,
     required this.sourcePath,

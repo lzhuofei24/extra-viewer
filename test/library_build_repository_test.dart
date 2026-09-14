@@ -6,6 +6,179 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
+      'document metadata uses the stored type and commits only the matching source revision',
+      () {
+    final database = AppDatabase.openInMemory();
+    addTearDown(database.close);
+    final library = LibraryRepository(database);
+    final builds = LibraryBuildRepository(library);
+    final root = library.ensureDirectoryIndexRoot('/books');
+    Entity book(String hash) => library
+        .upsertEntity(
+            path: '/books/a.epub',
+            name: 'a.epub',
+            format: 'epub',
+            entityType: EntityType.document,
+            hash: hash,
+            size: 1,
+            sourceCreatedAtMs: 0,
+            sourceModifiedAtMs: 0)
+        .entity;
+    final original = book('original');
+    library.linkEntityToIndexNode(entityId: original.id, indexNodeId: root.id);
+    final job = builds.create(
+        sourcePath: '/books', operation: LibraryBuildOperation.rootScan);
+    builds.prepareDocumentPreviewWork(job.id, root.id);
+    final first = builds.claimDocumentPreviewWork(job.id);
+    expect(first.keys, [original.id]);
+    final updated = book('updated');
+    builds.completeDocumentPreviewWork(job.id,
+        {original.id: (state: LibraryBuildWorkState.completed, error: null)},
+        attempts: first,
+        metadata: {
+          original.id: DocumentPreviewMetadata(
+              sourceRevision: original.sourceRevision, excerpt: 'stale')
+        });
+    expect(library.getEntity(original.id)!.contentExcerpt, isNull);
+    expect(builds.get(job.id)!.documentPreviewFailed, 1);
+    builds.retryFailedAssets(job.id);
+    final retry = builds.claimDocumentPreviewWork(job.id);
+    builds.completeDocumentPreviewWork(job.id,
+        {original.id: (state: LibraryBuildWorkState.completed, error: null)},
+        attempts: retry,
+        metadata: {
+          original.id: DocumentPreviewMetadata(
+              sourceRevision: updated.sourceRevision, excerpt: 'current')
+        });
+    expect(library.getEntity(original.id)!.contentExcerpt, 'current');
+    final next = builds.create(
+        sourcePath: '/books', operation: LibraryBuildOperation.rootScan);
+    builds.prepareDocumentPreviewWork(next.id, root.id);
+    expect(builds.claimDocumentPreviewWork(next.id), isEmpty);
+  });
+
+  test(
+      'history retention keeps unfinished tasks while bounding completed summaries',
+      () {
+    final database = AppDatabase.openInMemory();
+    addTearDown(database.close);
+    final builds = LibraryBuildRepository(LibraryRepository(database));
+    final pending = builds.create(
+        sourcePath: '/pending', operation: LibraryBuildOperation.rootScan);
+    for (var index = 0; index < 103; index++) {
+      final job = builds.create(
+          sourcePath: '/$index', operation: LibraryBuildOperation.rootScan);
+      builds.checkpointStage(jobId: job.id, stage: LibraryBuildStage.completed);
+    }
+    expect(builds.listHistory().length, 100);
+    expect(
+        database.db
+            .select(
+                "SELECT id FROM library_build_jobs WHERE status = 'completed'")
+            .length,
+        100);
+    expect(builds.get(pending.id), isNotNull);
+  });
+
+  test('completed tasks retain only failed work and retry preserves counters',
+      () {
+    final database = AppDatabase.openInMemory();
+    addTearDown(database.close);
+    final library = LibraryRepository(database);
+    final builds = LibraryBuildRepository(library);
+    final root = library.ensureDirectoryIndexRoot('/work');
+    final job = builds.create(
+        sourcePath: '/work', operation: LibraryBuildOperation.rootScan);
+    for (var index = 0; index < 2; index++) {
+      final entity = library
+          .upsertEntity(
+              path: '/work/$index.jpg',
+              name: '$index.jpg',
+              format: 'jpg',
+              entityType: EntityType.image,
+              hash: '$index',
+              size: 1,
+              sourceCreatedAtMs: 0,
+              sourceModifiedAtMs: 0)
+          .entity;
+      library.linkEntityToIndexNode(entityId: entity.id, indexNodeId: root.id);
+    }
+    builds.setRoots(jobId: job.id, indexRootId: root.id);
+    builds.prepareEntityPreviewWork(job.id, root.id);
+    expect(
+      () => builds.checkpointStage(
+          jobId: job.id, stage: LibraryBuildStage.completed),
+      throwsStateError,
+    );
+    final attempts = builds.claimEntityPreviewWork(job.id);
+    expect(
+      () => builds.checkpointStage(
+          jobId: job.id, stage: LibraryBuildStage.completed),
+      throwsStateError,
+    );
+    final ids = attempts.keys.toList();
+    builds.completeEntityPreviewWork(
+        job.id,
+        {
+          ids[0]: (state: LibraryBuildWorkState.completed, error: null),
+          ids[1]: (state: LibraryBuildWorkState.failed, error: 'decode failed'),
+        },
+        attempts: attempts);
+    final finished = builds.checkpointStage(
+        jobId: job.id, stage: LibraryBuildStage.completed);
+    expect(finished.status, LibraryBuildStatus.completedWithErrors);
+    expect(
+        database.db.select(
+            'SELECT * FROM library_entity_preview_work WHERE job_id = ?',
+            [job.id]).length,
+        1);
+    expect(builds.listRecoverable().map((job) => job.id), contains(job.id));
+    builds.retryFailedAssets(job.id);
+    final retry = builds.claimEntityPreviewWork(job.id);
+    expect(retry.keys, [ids[1]]);
+    builds.completeEntityPreviewWork(
+        job.id, {ids[1]: (state: LibraryBuildWorkState.completed, error: null)},
+        attempts: retry);
+    final completed = builds.checkpointStage(
+        jobId: job.id, stage: LibraryBuildStage.completed);
+    expect(completed.entityPreviewDone, 2);
+    expect(completed.entityPreviewFailed, 0);
+    expect(completed.status, LibraryBuildStatus.completed);
+    expect(
+        database.db.select(
+            'SELECT * FROM library_entity_preview_work WHERE job_id = ?',
+            [job.id]),
+        isEmpty);
+  });
+
+  test('node work claims dirty children before their ancestors', () {
+    final database = AppDatabase.openInMemory();
+    addTearDown(database.close);
+    final library = LibraryRepository(database);
+    final builds = LibraryBuildRepository(library);
+    final root = library.ensureCollectionIndexRoot('root');
+    final child = library.createCustomNode(parentId: root.id, name: 'child');
+    final sibling =
+        library.createCustomNode(parentId: root.id, name: 'sibling');
+    database.db.execute('DELETE FROM node_preview_dirty');
+    library.markIndexNodePreviewDirty(child.id);
+    final job = builds.create(
+        sourcePath: 'index://${root.id}',
+        operation: LibraryBuildOperation.subtreeRefresh,
+        kind: LibraryBuildKind.rebuildPreviews,
+        targetNodeId: root.id);
+    builds.prepareNodePreviewWork(job.id,
+        scopeNodeId: root.id, rootNodeId: root.id);
+    final first = builds.claimNodePreviewWork(job.id);
+    expect(first.keys, [child.id]);
+    expect(first.keys, isNot(contains(sibling.id)));
+    builds.completeNodePreviewWork(job.id,
+        {child.id: (state: LibraryBuildWorkState.completed, error: null)},
+        attempts: first);
+    expect(builds.claimNodePreviewWork(job.id).keys, [root.id]);
+  });
+
+  test(
       'partial page commits successes, blocks reconciliation and retries only failures',
       () {
     final database = AppDatabase.openInMemory();
@@ -170,22 +343,31 @@ void main() {
     builds.setRoots(jobId: job.id, indexRootId: root.id);
     builds.prepareEntityPreviewWork(job.id, root.id);
     final claimed = builds.claimEntityPreviewWork(job.id, limit: 100);
-    expect(claimed, [entity.id]);
+    expect(claimed.keys, [entity.id]);
 
     builds.markInterruptedRecoverable();
 
     expect(library.getEntity(entity.id), isNotNull);
-    expect(builds.claimEntityPreviewWork(job.id), [entity.id]);
+    expect(builds.claimEntityPreviewWork(job.id).keys, [entity.id]);
     builds.releaseProcessingWork(job.id,
         stage: LibraryBuildStage.entityPreviews);
     final success = {
       entity.id: (state: LibraryBuildWorkState.completed, error: null)
     };
-    builds.completeEntityPreviewWork(job.id, success);
+    builds.completeEntityPreviewWork(job.id, success, attempts: claimed);
     expect(builds.get(job.id)!.entityPreviewDone, 0);
-    builds.claimEntityPreviewWork(job.id);
-    builds.completeEntityPreviewWork(job.id, success);
-    builds.completeEntityPreviewWork(job.id, success);
+    final newer = builds.claimEntityPreviewWork(job.id);
+    builds.completeEntityPreviewWork(job.id, success, attempts: claimed);
+    expect(builds.get(job.id)!.entityPreviewDone, 0);
+    builds.completeEntityPreviewWork(job.id, success, attempts: newer);
+    builds.completeEntityPreviewWork(job.id, success, attempts: newer);
+    expect(builds.get(job.id)!.entityPreviewDone, 1);
+    builds.restartFromManifest(job.id);
+    builds.prepareEntityPreviewWork(job.id, root.id);
+    final nextGeneration = builds.claimEntityPreviewWork(job.id);
+    builds.completeEntityPreviewWork(job.id, success, attempts: claimed);
+    expect(builds.get(job.id)!.entityPreviewDone, 0);
+    builds.completeEntityPreviewWork(job.id, success, attempts: nextGeneration);
     expect(builds.get(job.id)!.entityPreviewDone, 1);
   });
 }

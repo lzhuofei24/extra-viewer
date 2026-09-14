@@ -1,9 +1,7 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 
-import 'package:crypto/crypto.dart';
 import 'package:image/image.dart' as img;
 
 import '../../modules/library/library_access.dart';
@@ -23,7 +21,12 @@ class NodePreviewCompositeService {
   ) async {
     final outcomes = <String, NodePreviewCompositeOutcome>{};
     final requests = <Map<String, Object?>>[];
-    for (final preview in (await repository.listIndexNodePreviews(nodeIds)).values) {
+    final inputs = await repository.prepareNodePreviewBuilds(nodeIds);
+    final tickets = {
+      for (final input in inputs) input.ticket.nodeId: input.ticket
+    };
+    for (final input in inputs) {
+      final preview = input.preview;
       if (preview.kind != IndexNodePreviewKind.singleVisual &&
           preview.kind != IndexNodePreviewKind.visualGrid) {
         outcomes[preview.nodeId] = const NodePreviewCompositeOutcome.remove();
@@ -69,8 +72,7 @@ class NodePreviewCompositeService {
       // Each build gets a new final path. This makes the commit safe on both
       // Android and Windows: a process interruption can never remove the
       // asset currently referenced by SQLite.
-      final assetKey =
-          'node_${preview.nodeId}_${_assetDigest(signature)}_${DateTime.now().microsecondsSinceEpoch}';
+      final assetKey = input.ticket.assetKey;
       requests.add(<String, Object?>{
         'nodeId': preview.nodeId,
         'signature': signature,
@@ -126,16 +128,22 @@ class NodePreviewCompositeService {
     for (final entry in outcomes.entries) {
       final outcome = entry.value;
       if (outcome.removeAsset) {
-        (await repository.removeNodePreviewAsset(entry.key));
+        final accepted =
+            await repository.publishNodePreview(tickets[entry.key]!);
+        if (!accepted) {
+          outcomes[entry.key] =
+              NodePreviewCompositeOutcome.failed('节点已改变，旧预览结果已丢弃');
+        }
       } else if (outcome.succeeded) {
-        (await repository.recordNodePreviewAsset(
-          nodeId: entry.key,
-          signature: outcome.signature!,
-          assetKey: outcome.assetKey!,
-          format: 'webp',
-          width: outcome.width!,
-          height: outcome.height!,
-        ));
+        final accepted = await repository.publishNodePreview(
+            tickets[entry.key]!,
+            signature: outcome.signature!,
+            width: outcome.width!,
+            height: outcome.height!);
+        if (!accepted) {
+          outcomes[entry.key] =
+              NodePreviewCompositeOutcome.failed('节点已改变，旧预览结果已丢弃');
+        }
       }
     }
     return outcomes;
@@ -145,9 +153,6 @@ class NodePreviewCompositeService {
       .map((tile) =>
           '${tile.kind.name}:${tile.entityId ?? tile.nodeId ?? tile.title}:${tile.thumbnailKey ?? ''}:${tile.aspectRatio}')
       .join('|');
-
-  static String _assetDigest(String signature) =>
-      sha256.convert(utf8.encode(signature)).toString().substring(0, 16);
 }
 
 class NodePreviewCompositeOutcome {

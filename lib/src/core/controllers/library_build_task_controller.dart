@@ -80,6 +80,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
 
   Future<void> initialize() async {
     await builds.markInterruptedRecoverable();
+    await library.collectRetiredPreviewAssets();
     await refresh();
   }
 
@@ -163,7 +164,11 @@ class LibraryBuildTaskController extends ChangeNotifier {
       });
 
   Future<LibraryBuildJob?> resume(LibraryBuildJob job) =>
-      _schedule(() => _run(job));
+      job.status == LibraryBuildStatus.completedWithErrors
+          ? retryFailed(job)
+          : job.isCompleted
+              ? Future.value(job)
+              : _schedule(() => _run(job));
 
   Future<LibraryBuildJob?> retryFailed(LibraryBuildJob job) =>
       _schedule(() async {
@@ -206,6 +211,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
           scopeNodeId: nodeId,
           rootNodeId: root.id,
           scope: scope,
+          force: true,
         ));
         final prepared = (await builds.get(job.id))!;
         (await builds.checkpointStage(
@@ -215,50 +221,6 @@ class LibraryBuildTaskController extends ChangeNotifier {
         ));
         return _run((await builds.get(job.id))!);
       });
-
-  /// Repairs EPUB excerpts created by older builds that completed before the
-  /// document-preview phase existed. It never rescans folders or regenerates
-  /// media thumbnails, and is deliberately skipped while a durable build job
-  /// owns the repository.
-  Future<int> repairMissingEpubMetadataPreviews({int limit = 200}) async {
-    if (isRunning) return 0;
-    final entities =
-        (await library.listEpubsMissingMetadataPreview(limit: limit));
-    if (entities.isEmpty) return 0;
-    var repaired = 0;
-    await _forEachConcurrent(entities, 2, (entity) async {
-      try {
-        final metadata = await _metadataForEntity(
-          entity,
-          const EpubFileHandler(),
-        );
-        if (metadata.$1 == null || metadata.$1!.trim().isEmpty) {
-          throw StateError('EPUB 中没有可用于预览的正文');
-        }
-        (await library.updateEntityMetadataPreview(
-            entity.id, metadata.$1, null));
-        repaired++;
-      } catch (error, stackTrace) {
-        AppDiagnosticLog.instance.error(
-          'epub_preview_repair_failed',
-          error,
-          stackTrace,
-          fields: {
-            'entityId': entity.id,
-            'name': entity.name,
-            'path': entity.path,
-          },
-        );
-      }
-    });
-    if (repaired > 0) {
-      AppDiagnosticLog.instance.info(
-        'epub_preview_repair_completed',
-        fields: {'repaired': repaired, 'requested': entities.length},
-      );
-    }
-    return repaired;
-  }
 
   Future<LibraryBuildJob?> _run(
     LibraryBuildJob initial, {
@@ -527,7 +489,9 @@ class LibraryBuildTaskController extends ChangeNotifier {
   Future<void> _buildDocumentPreviews(LibraryBuildJob job) async {
     while (true) {
       _control!.check();
-      final entityIds = (await builds.claimDocumentPreviewWork(job.id));
+      final attempts = await builds.claimDocumentPreviewWork(job.id);
+      final entityIds = attempts.keys.toList(growable: false);
+      final metadataResults = <String, DocumentPreviewMetadata>{};
       if (entityIds.isEmpty) break;
       final entities = (await library.getEntitiesByIds(entityIds));
       final results =
@@ -539,14 +503,16 @@ class LibraryBuildTaskController extends ChangeNotifier {
           return;
         }
         try {
-          final handler = FileFormatRegistry.resolvePath(entity.path);
+          final handler = FileFormatRegistry.resolveFormat(entity.format);
           if (handler == null) {
             results[id] = (state: LibraryBuildWorkState.skipped, error: null);
             return;
           }
           final metadata = await _metadataForEntity(entity, handler);
-          (await library.updateEntityMetadataPreview(
-              id, metadata.$1, metadata.$2));
+          metadataResults[id] = DocumentPreviewMetadata(
+              sourceRevision: entity.sourceRevision,
+              excerpt: metadata.$1,
+              durationMs: metadata.$2);
           results[id] = (state: LibraryBuildWorkState.completed, error: null);
         } on LibraryBuildPausedException {
           rethrow;
@@ -556,7 +522,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
           results[id] = (state: LibraryBuildWorkState.failed, error: '$error');
         }
       });
-      (await builds.completeDocumentPreviewWork(job.id, results));
+      (await builds.completeDocumentPreviewWork(job.id, results,
+          attempts: attempts, metadata: metadataResults));
       final current = (await builds.get(job.id))!;
       _report(
         current,
@@ -580,7 +547,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
   Future<void> _buildEntityPreviews(LibraryBuildJob job) async {
     while (true) {
       _control!.check();
-      final entityIds = (await builds.claimEntityPreviewWork(job.id));
+      final attempts = await builds.claimEntityPreviewWork(job.id);
+      final entityIds = attempts.keys.toList(growable: false);
       if (entityIds.isEmpty) break;
       final entities = (await library.getEntitiesByIds(entityIds));
       final results =
@@ -616,7 +584,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
           () => (state: LibraryBuildWorkState.failed, error: '实体不存在或类型不支持'),
         );
       }
-      (await builds.completeEntityPreviewWork(job.id, results));
+      (await builds.completeEntityPreviewWork(job.id, results,
+          attempts: attempts));
       final current = (await builds.get(job.id))!;
       _report(
         current,
@@ -720,22 +689,12 @@ class LibraryBuildTaskController extends ChangeNotifier {
   Future<void> _buildNodePreviews(LibraryBuildJob job) async {
     final rootId = job.indexRootId;
     if (rootId == null) throw StateError('索引根节点缺失');
-    // Preview descriptions are computed bottom-up once before the composite
-    // work. The asset writer then only reads existing entity WebPs.
-    _report(job, 0, job.nodePreviewTotal, '正在整理节点预览描述');
-    await Future<void>.delayed(const Duration(milliseconds: 16));
-    final scopeNodeId = job.targetNodeId ?? rootId;
-    final rebuildSubtree = job.targetNodeId == null ||
-        (await builds.nodePreviewWorkIncludesDescendants(job.id, scopeNodeId));
-    if (rebuildSubtree) {
-      (await library.rebuildIndexNodePreviewCache(scopeNodeId));
-    } else {
-      (await library.rebuildIndexNodePreviewCacheChain(scopeNodeId));
-    }
+    _report(job, job.nodePreviewDone, job.nodePreviewTotal, '正在自底向上更新节点预览');
     final compositor = NodePreviewCompositeService(library);
     while (true) {
       _control!.check();
-      final nodeIds = (await builds.claimNodePreviewWork(job.id));
+      final attempts = await builds.claimNodePreviewWork(job.id);
+      final nodeIds = attempts.keys.toList(growable: false);
       if (nodeIds.isEmpty) break;
       final results =
           <String, ({LibraryBuildWorkState state, String? error})>{};
@@ -772,7 +731,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
               (state: LibraryBuildWorkState.completed, error: null);
         }
       }
-      (await builds.completeNodePreviewWork(job.id, results));
+      (await builds.completeNodePreviewWork(job.id, results,
+          attempts: attempts));
       final current = (await builds.get(job.id))!;
       _report(
         current,
@@ -785,22 +745,12 @@ class LibraryBuildTaskController extends ChangeNotifier {
       // database claim so taps and the progress card remain responsive.
       await Future<void>.delayed(const Duration(milliseconds: 1));
     }
-    final nodeComplete = (await builds.get(job.id))!;
-    final failed = nodeComplete.documentPreviewFailed +
-        nodeComplete.entityPreviewFailed +
-        nodeComplete.nodePreviewFailed;
-    if (failed > 0) {
-      (await builds.fail(
-        job.id,
-        '索引已写入；有 $failed 项预览失败，可使用“仅重试失败项”恢复。',
-      ));
-      return;
-    }
     (await builds.checkpointStage(
       jobId: job.id,
       stage: LibraryBuildStage.completed,
     ));
     await builds.checkpoint();
+    await library.collectRetiredPreviewAssets();
   }
 
   Future<IndexNode> _ensureDirectoryNode({

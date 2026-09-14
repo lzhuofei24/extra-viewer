@@ -417,12 +417,13 @@ class _AppShellState extends State<AppShell> {
       await browsingThumbnails.close();
       buildTasks.dispose();
       await writeWorker.close();
-      AppDiagnosticLog.instance.error('build_runtime_start_failed', error, stack);
+      AppDiagnosticLog.instance
+          .error('build_runtime_start_failed', error, stack);
       if (mounted) {
         setState(() {
-        _indexError = '无法启动资料库服务：$error';
-        _loading = false;
-      });
+          _indexError = '无法启动资料库服务：$error';
+          _loading = false;
+        });
       }
       return;
     }
@@ -517,21 +518,9 @@ class _AppShellState extends State<AppShell> {
       await audioController.restoreSession(activeSession);
     }
     _reload();
-    // Old completed builds may predate EPUB text excerpts. Repair those rows
-    // after the first frame without rescanning the selected directory.
-    unawaited(_repairMissingEpubPreviews(buildTasks));
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _petController.trigger(PetTrigger.appStarted),
     );
-  }
-
-  Future<void> _repairMissingEpubPreviews(
-    LibraryBuildTaskController tasks,
-  ) async {
-    await Future<void>.delayed(const Duration(milliseconds: 700));
-    final repaired = await tasks.repairMissingEpubMetadataPreviews();
-    if (!mounted || !identical(_buildTasks, tasks) || repaired == 0) return;
-    _reload(indexNodeId: _currentIndexNode?.id, invalidateBrowserCache: true);
   }
 
   void _handleBuildTaskChanged() {
@@ -1309,8 +1298,7 @@ class _AppShellState extends State<AppShell> {
     final createdIndex = result?.indexRootId == null
         ? null
         : (await _repository?.getIndexNode(result!.indexRootId!));
-    if (result?.status == LibraryBuildStatus.completed &&
-        createdIndex != null) {
+    if (result?.isCompleted == true && createdIndex != null) {
       if (!mounted) return;
       setState(() {
         _selectedIndexRoot = createdIndex;
@@ -1331,7 +1319,7 @@ class _AppShellState extends State<AppShell> {
     if (tasks == null || tasks.isRunning) return;
     setState(() => _indexError = null);
     final result = await tasks.updateNode(node);
-    if (!mounted || result?.status != LibraryBuildStatus.completed) return;
+    if (!mounted || result?.isCompleted != true) return;
     _reload(indexNodeId: node.id, invalidateBrowserCache: true);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1528,7 +1516,7 @@ class _AppShellState extends State<AppShell> {
             ? await tasks.retryFailed(job)
             : await tasks.resume(job);
     if (!mounted) return;
-    if (result?.status != LibraryBuildStatus.completed) return;
+    if (result?.isCompleted != true) return;
     final targetNode = result?.indexRootId == null
         ? null
         : (await _repository?.getIndexNode(result!.indexRootId!));

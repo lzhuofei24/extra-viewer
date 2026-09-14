@@ -56,20 +56,24 @@ abstract interface class BuildAccess {
   FutureOr<void> prepareNodePreviewWork(String jobId,
       {required String scopeNodeId,
       required String rootNodeId,
-      IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.subtree});
-  FutureOr<bool> nodePreviewWorkIncludesDescendants(
-      String jobId, String scopeNodeId);
-  FutureOr<List<String>> claimEntityPreviewWork(String jobId,
+      IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.subtree,
+      bool force = false});
+  FutureOr<Map<String, BuildWorkAttempt>> claimEntityPreviewWork(String jobId,
       {int limit = 100});
-  FutureOr<List<String>> claimDocumentPreviewWork(String jobId,
+  FutureOr<Map<String, BuildWorkAttempt>> claimDocumentPreviewWork(String jobId,
       {int limit = 100});
-  FutureOr<List<String>> claimNodePreviewWork(String jobId, {int limit = 8});
+  FutureOr<Map<String, BuildWorkAttempt>> claimNodePreviewWork(String jobId,
+      {int limit = 8});
   FutureOr<void> completeEntityPreviewWork(String jobId,
-      Map<String, ({LibraryBuildWorkState state, String? error})> results);
+      Map<String, ({LibraryBuildWorkState state, String? error})> results,
+      {required Map<String, BuildWorkAttempt> attempts});
   FutureOr<void> completeDocumentPreviewWork(String jobId,
-      Map<String, ({LibraryBuildWorkState state, String? error})> results);
+      Map<String, ({LibraryBuildWorkState state, String? error})> results,
+      {required Map<String, BuildWorkAttempt> attempts,
+      Map<String, DocumentPreviewMetadata> metadata = const {}});
   FutureOr<void> completeNodePreviewWork(String jobId,
-      Map<String, ({LibraryBuildWorkState state, String? error})> results);
+      Map<String, ({LibraryBuildWorkState state, String? error})> results,
+      {required Map<String, BuildWorkAttempt> attempts});
   FutureOr<bool> hasPendingEntityPreviewWork(String jobId);
   FutureOr<bool> hasPendingNodePreviewWork(String jobId);
   FutureOr<bool> hasPendingDocumentPreviewWork(String jobId);

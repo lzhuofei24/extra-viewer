@@ -179,6 +179,7 @@ abstract interface class LibraryAccess {
   FutureOr<int> countEntitiesUnderIndexNode(String indexNodeId);
   FutureOr<Map<String, int>> countEntitiesUnderIndexNodes(
       Iterable<String> nodeIds);
+  FutureOr<int> collectRetiredPreviewAssets({int limit = 100});
   FutureOr<Entity?> getEntity(String id);
   FutureOr<void> rebuildIndexNodeStats();
   FutureOr<void> rebuildIndexNodeStatsForNode(String nodeId);
@@ -190,17 +191,11 @@ abstract interface class LibraryAccess {
   FutureOr<Map<String, IndexNodePreview>> listIndexNodePreviews(
       Iterable<String> nodeIds);
   FutureOr<String> nodePreviewAssetPath(String assetKey, String format);
-  FutureOr<void> recordNodePreviewAsset(
-      {required String nodeId,
-      required String signature,
-      required String assetKey,
-      required String format,
-      required int width,
-      required int height});
-  FutureOr<void> removeNodePreviewAsset(String nodeId);
-  FutureOr<void> rebuildIndexNodePreviewCache(String rootId);
+  FutureOr<List<NodePreviewBuildInput>> prepareNodePreviewBuilds(
+      Iterable<String> nodeIds);
+  FutureOr<bool> publishNodePreview(NodePreviewTicket ticket,
+      {String? signature, int? width, int? height});
   FutureOr<void> rebuildIndexNodePreviewCacheForNode(String nodeId);
-  FutureOr<void> rebuildIndexNodePreviewCacheChain(String nodeId);
   FutureOr<IndexNode?> owningIndexRootForNode(String nodeId);
   FutureOr<List<IndexNode>> listIndexNodeAncestors(String nodeId);
   FutureOr<Set<String>> listIndexNodeDescendantIds(String nodeId);
@@ -209,19 +204,10 @@ abstract interface class LibraryAccess {
   FutureOr<String?> getNodePreviewOverride(String nodeId);
   FutureOr<void> setNodePreviewOverride(String nodeId, String itemsJson);
   FutureOr<void> clearNodePreviewOverride(String nodeId);
-  FutureOr<void> updateEntityThumbnailPending(String entityId);
-  FutureOr<void> applyThumbnailUpdates(
-      Iterable<ThumbnailDatabaseUpdate> updates);
-  FutureOr<void> updateEntityThumbnailSuccess(
-      {required String entityId,
-      required String key,
-      required String format,
-      required int width,
-      required int height});
-  FutureOr<void> updateEntityThumbnailFailed(String entityId, String error);
-  FutureOr<void> updateEntityThumbnailNone(String entityId);
-  FutureOr<void> recordThumbnailAsset(
-      {required String key, required String format, required int byteSize});
+  FutureOr<EntityPreviewTicket> beginEntityPreview(Entity entity);
+  FutureOr<bool> commitEntityPreview(
+      EntityPreviewTicket ticket, ThumbnailDatabaseUpdate update,
+      {int byteSize = 0});
   FutureOr<ThumbnailPreloadPage> listThumbnailPreloadPageUnderNode(
       String? indexNodeId,
       {String? afterEntityId,

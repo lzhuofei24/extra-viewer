@@ -549,16 +549,18 @@ class _IndexTaskCard extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              FilledButton(
-                onPressed: disabled ? null : onResume,
-                child: const Text('继续任务'),
-              ),
+              if (!value.isCompleted)
+                FilledButton(
+                  onPressed: disabled ? null : onResume,
+                  child: const Text('继续任务'),
+                ),
               if (value.kind == LibraryBuildKind.scanScope)
                 OutlinedButton(
                   onPressed: disabled ? null : onRecheck,
                   child: const Text('重新检查并更新'),
                 ),
-              if (value.indexFailed > 0 || value.documentPreviewFailed > 0 ||
+              if (value.indexFailed > 0 ||
+                  value.documentPreviewFailed > 0 ||
                   value.entityPreviewFailed > 0 ||
                   value.nodePreviewFailed > 0)
                 OutlinedButton(

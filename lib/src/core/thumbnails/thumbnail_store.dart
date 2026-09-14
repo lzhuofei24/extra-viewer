@@ -15,7 +15,11 @@ class ThumbnailStore {
   String pathFor(String key, String format) {
     final safeKey = key.trim().toLowerCase();
     final safeFormat = format.trim().toLowerCase();
-    final prefix = safeKey.length >= 2 ? safeKey.substring(0, 2) : '00';
+    final prefix = safeKey.startsWith('v7_') && safeKey.length >= 5
+        ? safeKey.substring(3, 5)
+        : safeKey.length >= 2
+            ? safeKey.substring(0, 2)
+            : '00';
     return p.join(rootPath, prefix, '$safeKey.$safeFormat');
   }
 
@@ -41,7 +45,7 @@ class ThumbnailStore {
     // thumbnail through a physical flush makes large imports unnecessarily IO-bound.
     await tempFile.writeAsBytes(bytes, flush: false);
     if (await file.exists()) {
-      await file.delete();
+      throw StateError('Refusing to replace an immutable preview asset');
     }
     await tempFile.rename(file.path);
     return file.path;
@@ -68,6 +72,12 @@ class ThumbnailStore {
     }
   }
 }
+
+String nodePreviewAssetPathFor(String directory, String key, String format) =>
+    key.startsWith('node_v7_') && key.length >= 10
+        ? p.join(
+            directory, 'node_previews', key.substring(8, 10), '$key.$format')
+        : p.join(directory, 'node_previews', '$key.$format');
 
 String thumbnailCacheKeyFor({
   required String fingerprint,

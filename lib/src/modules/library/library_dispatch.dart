@@ -312,6 +312,9 @@ Future<Object?> dispatchLibrary(LibraryRepository repository, String method,
     case 'countEntitiesUnderIndexNodes':
       return repository
           .countEntitiesUnderIndexNodes(args['nodeIds'] as Iterable<String>);
+    case 'collectRetiredPreviewAssets':
+      return repository.collectRetiredPreviewAssets(
+          limit: (args['limit'] as int?) ?? 100);
     case 'getEntity':
       return repository.getEntity(args['id'] as String);
     case 'rebuildIndexNodeStats':
@@ -337,26 +340,16 @@ Future<Object?> dispatchLibrary(LibraryRepository repository, String method,
     case 'nodePreviewAssetPath':
       return repository.nodePreviewAssetPath(
           args['assetKey'] as String, args['format'] as String);
-    case 'recordNodePreviewAsset':
-      repository.recordNodePreviewAsset(
-          nodeId: args['nodeId'] as String,
-          signature: args['signature'] as String,
-          assetKey: args['assetKey'] as String,
-          format: args['format'] as String,
-          width: args['width'] as int,
-          height: args['height'] as int);
-      return null;
-    case 'removeNodePreviewAsset':
-      repository.removeNodePreviewAsset(args['nodeId'] as String);
-      return null;
-    case 'rebuildIndexNodePreviewCache':
-      repository.rebuildIndexNodePreviewCache(args['rootId'] as String);
-      return null;
+    case 'prepareNodePreviewBuilds':
+      return repository
+          .prepareNodePreviewBuilds(args['nodeIds'] as Iterable<String>);
+    case 'publishNodePreview':
+      return repository.publishNodePreview(args['ticket'] as NodePreviewTicket,
+          signature: args['signature'] as String?,
+          width: args['width'] as int?,
+          height: args['height'] as int?);
     case 'rebuildIndexNodePreviewCacheForNode':
       repository.rebuildIndexNodePreviewCacheForNode(args['nodeId'] as String);
-      return null;
-    case 'rebuildIndexNodePreviewCacheChain':
-      repository.rebuildIndexNodePreviewCacheChain(args['nodeId'] as String);
       return null;
     case 'owningIndexRootForNode':
       return repository.owningIndexRootForNode(args['nodeId'] as String);
@@ -378,34 +371,13 @@ Future<Object?> dispatchLibrary(LibraryRepository repository, String method,
     case 'clearNodePreviewOverride':
       repository.clearNodePreviewOverride(args['nodeId'] as String);
       return null;
-    case 'updateEntityThumbnailPending':
-      repository.updateEntityThumbnailPending(args['entityId'] as String);
-      return null;
-    case 'applyThumbnailUpdates':
-      repository.applyThumbnailUpdates(
-          args['updates'] as Iterable<ThumbnailDatabaseUpdate>);
-      return null;
-    case 'updateEntityThumbnailSuccess':
-      repository.updateEntityThumbnailSuccess(
-          entityId: args['entityId'] as String,
-          key: args['key'] as String,
-          format: args['format'] as String,
-          width: args['width'] as int,
-          height: args['height'] as int);
-      return null;
-    case 'updateEntityThumbnailFailed':
-      repository.updateEntityThumbnailFailed(
-          args['entityId'] as String, args['error'] as String);
-      return null;
-    case 'updateEntityThumbnailNone':
-      repository.updateEntityThumbnailNone(args['entityId'] as String);
-      return null;
-    case 'recordThumbnailAsset':
-      repository.recordThumbnailAsset(
-          key: args['key'] as String,
-          format: args['format'] as String,
-          byteSize: args['byteSize'] as int);
-      return null;
+    case 'beginEntityPreview':
+      return repository.beginEntityPreview(args['entity'] as Entity);
+    case 'commitEntityPreview':
+      return repository.commitEntityPreview(
+          args['ticket'] as EntityPreviewTicket,
+          args['update'] as ThumbnailDatabaseUpdate,
+          byteSize: (args['byteSize'] as int?) ?? 0);
     case 'listThumbnailPreloadPageUnderNode':
       return repository.listThumbnailPreloadPageUnderNode(
           args['indexNodeId'] as String?,
