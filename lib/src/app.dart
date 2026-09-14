@@ -11,6 +11,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'core/database/app_database.dart';
 import 'modules/infrastructure/database_runtime.dart';
+import 'modules/infrastructure/app_runtime.dart';
 import 'core/database/library_write_worker.dart';
 import 'modules/library/library_client.dart';
 import 'modules/build/build_client.dart';
@@ -119,6 +120,11 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
+  final _runtime = AppRuntime(onFailure: (failure) {
+    AppDiagnosticLog.instance.error(
+        'runtime_service_close_failed', failure.error, failure.stackTrace,
+        fields: {'service': failure.name});
+  });
   static const _entityPageSize = 200;
   late final TextEditingController _indexPathController;
 
@@ -214,6 +220,7 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    _registerRuntimeResources();
     _indexPathController = TextEditingController();
     _selection = SelectionController();
     _petController = PetController()..addListener(_handlePetChanged);
@@ -239,27 +246,49 @@ class _AppShellState extends State<AppShell> {
       ..removeListener(_handlePetChanged)
       ..dispose();
     unawaited(_petVoicePlayer.dispose());
-    _taskScheduler.close();
     _thumbnailRefreshTimer?.cancel();
     _lifecycleListener.dispose();
     unawaited(_closeRuntimeResources());
     super.dispose();
   }
 
+  void _registerRuntimeResources() {
+    _runtime
+      ..register(
+          'scheduler', RuntimeClosePhase.stopWork, () => _taskScheduler.close())
+      ..register('build', RuntimeClosePhase.stopWork, () async {
+        await _buildTasks?.close();
+      })
+      ..register('audio', RuntimeClosePhase.media, () async {
+        _audioController?.removeListener(_handlePetAudioChanged);
+        await _audioController?.close();
+      })
+      ..register('thumbnails', RuntimeClosePhase.caches, () async {
+        await _browsingThumbnails?.close();
+      })
+      ..register('read-worker', RuntimeClosePhase.database, () async {
+        try {
+          await _readWorkerStart;
+        } catch (_) {/* Failed startup owns its cleanup. */}
+        await _readWorker?.close();
+      })
+      ..register('write-worker', RuntimeClosePhase.database, () async {
+        await _writeWorker?.close();
+      })
+      ..register('diagnostics', RuntimeClosePhase.diagnostics,
+          () => AppDiagnosticLog.instance.close());
+  }
+
   Future<void> _closeRuntimeResources() async {
-    await _buildTasks?.close();
-    final audioController = _audioController;
-    audioController?.removeListener(_handlePetAudioChanged);
-    if (audioController != null) await audioController.close();
-    await _browsingThumbnails?.close();
-    final readWorker = _readWorker;
-    if (readWorker != null) await readWorker.close();
-    final writeWorker = _writeWorker;
-    if (writeWorker != null) await writeWorker.close();
-    await AppDiagnosticLog.instance.close();
+    final failures = await _runtime.close();
+    for (final failure in failures) {
+      debugPrint(
+          'Runtime close failed (${failure.name}): ${failure.error}\n${failure.stackTrace}');
+    }
   }
 
   Future<LibraryReadWorker> _ensureReadWorker() async {
+    if (_runtime.isClosing) throw StateError('应用正在关闭，不能启动读取服务');
     final existing = _readWorker;
     if (existing != null) return existing;
     final database = _database;
@@ -365,6 +394,7 @@ class _AppShellState extends State<AppShell> {
   }
 
   Future<void> _bootstrap() async {
+    if (_runtime.isClosing) return;
     AppDiagnosticLog.instance.info('app_bootstrap_started');
     final DatabaseRuntime runtime;
     try {

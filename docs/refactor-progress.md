@@ -8,6 +8,20 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Baseline
 
+### Runtime shutdown coordinator foundation
+
+- Added AppRuntime with ordered shutdown phases, idempotent shared completion,
+  registration rejection after closing, and aggregated per-service failures.
+- AppShell registers scheduler/build, audio, thumbnail, reader, writer and log
+  shutdown. A failed service no longer prevents subsequent cleanup. Failures
+  are recorded before diagnostics closes; read startup is drained before writer
+  shutdown. New bootstrap/read-worker startup is rejected during closing.
+- Validation: analyze clean; both runtime tests and shell regression passed.
+- This is the shutdown coordinator foundation, not complete Runtime ownership:
+  service construction, overlay session registration, bootstrap cancellation and
+  native source-copy cancellation still require integration. No release build,
+  tablet installation or remote push performed in this step.
+
 ### Source-file ownership and temporary storage
 
 - Replaced path-only SAF session caching and synchronous filesystem eviction
