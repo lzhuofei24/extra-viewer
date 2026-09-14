@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../../modules/build/build_access.dart';
+import '../../modules/build/periodic_checkpoint.dart';
 import '../../modules/library/library_access.dart';
 import '../diagnostics/app_diagnostic_log.dart';
 import '../domain/models.dart';
@@ -20,6 +21,7 @@ import '../thumbnails/android_video_thumbnail_backend.dart';
 import '../thumbnails/native_image_thumbnail_backend.dart';
 import '../thumbnails/node_preview_composite_service.dart';
 import '../thumbnails/thumbnail_service.dart';
+import '../thumbnails/thumbnail_cancellation.dart';
 import '../thumbnails/windows_wic_webp_thumbnail_backend.dart';
 import '../utils/file_fingerprint.dart';
 
@@ -50,14 +52,22 @@ class LibraryBuildAbandonedException implements Exception {
 }
 
 class LibraryBuildControl {
+  final thumbnailCancellation = ThumbnailCancellationToken();
   bool _paused = false;
   bool _abandoned = false;
 
   bool get paused => _paused;
   bool get abandoned => _abandoned;
 
-  void pause() => _paused = true;
-  void abandon() => _abandoned = true;
+  void pause() {
+    _paused = true;
+    thumbnailCancellation.pause();
+  }
+
+  void abandon() {
+    _abandoned = true;
+    thumbnailCancellation.cancel();
+  }
 
   void check() {
     if (_abandoned) throw const LibraryBuildAbandonedException();
@@ -486,6 +496,35 @@ class LibraryBuildTaskController extends ChangeNotifier {
     await builds.finalizeIndex(job);
   }
 
+  Future<void> _reportPreviewProgress(String jobId) async {
+    final job = await builds.get(jobId);
+    if (job == null) return;
+    final (done, total, failed, label) = switch (job.stage) {
+      LibraryBuildStage.documentPreviews => (
+          job.documentPreviewDone,
+          job.documentPreviewTotal,
+          job.documentPreviewFailed,
+          '正在解析文档预览'
+        ),
+      LibraryBuildStage.entityPreviews => (
+          job.entityPreviewDone,
+          job.entityPreviewTotal,
+          job.entityPreviewFailed,
+          '正在构建实体预览'
+        ),
+      LibraryBuildStage.nodePreviews => (
+          job.nodePreviewDone,
+          job.nodePreviewTotal,
+          job.nodePreviewFailed,
+          '正在构建节点预览'
+        ),
+      _ => (0, 0, 0, ''),
+    };
+    if (label.isNotEmpty) {
+      _report(job, done + failed, total, '$label：$done/$total', failed: failed);
+    }
+  }
+
   Future<void> _buildDocumentPreviews(LibraryBuildJob job) async {
     while (true) {
       _control!.check();
@@ -496,34 +535,50 @@ class LibraryBuildTaskController extends ChangeNotifier {
       final entities = (await library.getEntitiesByIds(entityIds));
       final results =
           <String, ({LibraryBuildWorkState state, String? error})>{};
-      await _forEachConcurrent(entityIds, 4, (id) async {
-        final entity = entities[id];
-        if (entity == null) {
-          results[id] = (state: LibraryBuildWorkState.failed, error: '实体不存在');
-          return;
-        }
-        try {
-          final handler = FileFormatRegistry.resolveFormat(entity.format);
-          if (handler == null) {
-            results[id] = (state: LibraryBuildWorkState.skipped, error: null);
+      final checkpoint = PeriodicCheckpoint(() async {
+        if (results.isEmpty) return;
+        final pending = Map.of(results);
+        results.clear();
+        final metadata = <String, DocumentPreviewMetadata>{
+          for (final id in pending.keys)
+            if (metadataResults.containsKey(id))
+              id: metadataResults.remove(id)!,
+        };
+        await builds.completeDocumentPreviewWork(job.id, pending,
+            attempts: attempts, metadata: metadata);
+        await _reportPreviewProgress(job.id);
+      });
+      try {
+        await _forEachConcurrent(entityIds, 4, (id) async {
+          final entity = entities[id];
+          if (entity == null) {
+            results[id] = (state: LibraryBuildWorkState.failed, error: '实体不存在');
             return;
           }
-          final metadata = await _metadataForEntity(entity, handler);
-          metadataResults[id] = DocumentPreviewMetadata(
-              sourceRevision: entity.sourceRevision,
-              excerpt: metadata.$1,
-              durationMs: metadata.$2);
-          results[id] = (state: LibraryBuildWorkState.completed, error: null);
-        } on LibraryBuildPausedException {
-          rethrow;
-        } on LibraryBuildAbandonedException {
-          rethrow;
-        } catch (error) {
-          results[id] = (state: LibraryBuildWorkState.failed, error: '$error');
-        }
-      });
-      (await builds.completeDocumentPreviewWork(job.id, results,
-          attempts: attempts, metadata: metadataResults));
+          try {
+            final handler = FileFormatRegistry.resolveFormat(entity.format);
+            if (handler == null) {
+              results[id] = (state: LibraryBuildWorkState.skipped, error: null);
+              return;
+            }
+            final metadata = await _metadataForEntity(entity, handler);
+            metadataResults[id] = DocumentPreviewMetadata(
+                sourceRevision: entity.sourceRevision,
+                excerpt: metadata.$1,
+                durationMs: metadata.$2);
+            results[id] = (state: LibraryBuildWorkState.completed, error: null);
+          } on LibraryBuildPausedException {
+            rethrow;
+          } on LibraryBuildAbandonedException {
+            rethrow;
+          } catch (error) {
+            results[id] =
+                (state: LibraryBuildWorkState.failed, error: '$error');
+          }
+        });
+      } finally {
+        await checkpoint.close();
+      }
       final current = (await builds.get(job.id))!;
       _report(
         current,
@@ -555,37 +610,50 @@ class LibraryBuildTaskController extends ChangeNotifier {
           <String, ({LibraryBuildWorkState state, String? error})>{};
       final imageConcurrency = _thumbnails.recommendedImageConcurrency;
       final videoConcurrency = _thumbnails.recommendedVideoConcurrency;
-      await Future.wait([
-        _forEachConcurrent(entityIds, imageConcurrency, (id) async {
-          final entity = entities[id];
-          if (entity?.entityType != EntityType.image) return;
-          await _buildOneEntityPreview(job.id, id, entity!, results);
-        }),
-        _forEachConcurrent(entityIds, videoConcurrency, (id) async {
-          final entity = entities[id];
-          if (entity?.entityType != EntityType.video) return;
-          await _buildOneEntityPreview(job.id, id, entity!, results);
-        }),
-        // EPUB and DOCX are archive containers. Keep their image extraction
-        // bounded independently so large books do not compete with media
-        // decoding or exhaust Android archive memory.
-        _forEachConcurrent(entityIds, 2, (id) async {
-          final entity = entities[id];
-          if (entity == null ||
-              (entity.format != 'epub' && entity.format != 'docx')) {
-            return;
-          }
-          await _buildOneEntityPreview(job.id, id, entity, results);
-        }),
-      ]);
-      for (final id in entityIds) {
-        results.putIfAbsent(
-          id,
-          () => (state: LibraryBuildWorkState.failed, error: '实体不存在或类型不支持'),
-        );
+      final recorded = <String>{};
+      final checkpoint = PeriodicCheckpoint(() async {
+        if (results.isEmpty) return;
+        final pending = Map.of(results);
+        results.clear();
+        recorded.addAll(pending.keys);
+        await builds.completeEntityPreviewWork(job.id, pending,
+            attempts: attempts);
+        await _reportPreviewProgress(job.id);
+      });
+      try {
+        await Future.wait([
+          _forEachConcurrent(entityIds, imageConcurrency, (id) async {
+            final entity = entities[id];
+            if (entity?.entityType != EntityType.image) return;
+            await _buildOneEntityPreview(job.id, id, entity!, results);
+          }),
+          _forEachConcurrent(entityIds, videoConcurrency, (id) async {
+            final entity = entities[id];
+            if (entity?.entityType != EntityType.video) return;
+            await _buildOneEntityPreview(job.id, id, entity!, results);
+          }),
+          // EPUB and DOCX are archive containers. Keep their image extraction
+          // bounded independently so large books do not compete with media
+          // decoding or exhaust Android archive memory.
+          _forEachConcurrent(entityIds, 2, (id) async {
+            final entity = entities[id];
+            if (entity == null ||
+                (entity.format != 'epub' && entity.format != 'docx')) {
+              return;
+            }
+            await _buildOneEntityPreview(job.id, id, entity, results);
+          }),
+        ]);
+        for (final id in entityIds) {
+          if (recorded.contains(id)) continue;
+          results.putIfAbsent(
+            id,
+            () => (state: LibraryBuildWorkState.failed, error: '实体不存在或类型不支持'),
+          );
+        }
+      } finally {
+        await checkpoint.close();
       }
-      (await builds.completeEntityPreviewWork(job.id, results,
-          attempts: attempts));
       final current = (await builds.get(job.id))!;
       _report(
         current,
@@ -630,11 +698,12 @@ class LibraryBuildTaskController extends ChangeNotifier {
         transientDocument = File(path);
       }
       if (transientDocument == null) {
-        await _thumbnails.ensureThumbnail(entity);
+        await _thumbnails.ensureThumbnail(entity,
+            cancellationToken: _control!.thumbnailCancellation);
       } else {
-        await _thumbnails.ensureThumbnailFromFile(entity, transientDocument);
+        await _thumbnails.ensureThumbnailFromFile(entity, transientDocument,
+            cancellationToken: _control!.thumbnailCancellation);
       }
-      _control!.check();
       final refreshed = (await library.getEntity(id));
       if (refreshed?.thumbnailStatus == ThumbnailStatus.success) {
         results[id] = (state: LibraryBuildWorkState.completed, error: null);
@@ -654,6 +723,10 @@ class LibraryBuildTaskController extends ChangeNotifier {
       rethrow;
     } on LibraryBuildAbandonedException {
       rethrow;
+    } on ThumbnailTaskPausedException {
+      throw const LibraryBuildPausedException();
+    } on ThumbnailTaskCanceledException {
+      throw const LibraryBuildAbandonedException();
     } catch (error, stackTrace) {
       results[id] = (state: LibraryBuildWorkState.failed, error: '$error');
       _logThumbnailFailure(jobId, entity, '$error', stackTrace);
@@ -698,11 +771,9 @@ class LibraryBuildTaskController extends ChangeNotifier {
       if (nodeIds.isEmpty) break;
       final results =
           <String, ({LibraryBuildWorkState state, String? error})>{};
-      _control!.check();
-      final outcomes = await compositor.rebuildNodesAsync(nodeIds);
-      _control!.check();
-      for (final nodeId in nodeIds) {
-        final outcome = outcomes[nodeId];
+      final received = <String>{};
+      void record(String nodeId, NodePreviewCompositeOutcome? outcome) {
+        received.add(nodeId);
         if (outcome == null) {
           const message = '节点预览任务未返回结果';
           AppDiagnosticLog.instance.error(
@@ -731,8 +802,29 @@ class LibraryBuildTaskController extends ChangeNotifier {
               (state: LibraryBuildWorkState.completed, error: null);
         }
       }
-      (await builds.completeNodePreviewWork(job.id, results,
-          attempts: attempts));
+
+      final checkpoint = PeriodicCheckpoint(() async {
+        if (results.isEmpty) return;
+        final pending = Map.of(results);
+        results.clear();
+        await builds.completeNodePreviewWork(job.id, pending,
+            attempts: attempts);
+        await _reportPreviewProgress(job.id);
+      });
+      try {
+        await compositor.rebuildNodesAsync(nodeIds,
+            cancellationToken: _control!.thumbnailCancellation,
+            onCompleted: record);
+        for (final id in nodeIds) {
+          if (!received.contains(id)) record(id, null);
+        }
+      } on ThumbnailTaskPausedException {
+        throw const LibraryBuildPausedException();
+      } on ThumbnailTaskCanceledException {
+        throw const LibraryBuildAbandonedException();
+      } finally {
+        await checkpoint.close();
+      }
       final current = (await builds.get(job.id))!;
       _report(
         current,

@@ -20,6 +20,7 @@ import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -40,9 +41,32 @@ class MainActivity : FlutterActivity() {
     // allowing a large directory scan to flood the provider or disk cache.
     private val sourceExecutor = Executors.newFixedThreadPool(8)
     private val scanExecutor = Executors.newSingleThreadExecutor()
-    private val thumbnailJobs = ConcurrentHashMap<String, Future<*>>()
-    private val activeVideoRetrievers =
-        ConcurrentHashMap<String, MediaMetadataRetriever>()
+    private val thumbnailJobs = ConcurrentHashMap<String, ThumbnailJob>()
+
+    private inner class ThumbnailJob(private val reply: MethodChannel.Result) : MethodChannel.Result {
+        val cancelled = AtomicBoolean(false)
+        private val replied = AtomicBoolean(false)
+        var future: Future<*>? = null
+        fun checkActive() {
+            if (cancelled.get() || Thread.currentThread().isInterrupted) {
+                throw InterruptedException("Thumbnail cancelled")
+            }
+        }
+        fun cancel() {
+            cancelled.set(true)
+            future?.cancel(true)
+            error("cancelled", "Thumbnail cancelled", null)
+        }
+        override fun success(value: Any?) {
+            if (replied.compareAndSet(false, true)) runOnUiThread { reply.success(value) }
+        }
+        override fun error(code: String, message: String?, details: Any?) {
+            if (replied.compareAndSet(false, true)) runOnUiThread { reply.error(code, message, details) }
+        }
+        override fun notImplemented() {
+            if (replied.compareAndSet(false, true)) runOnUiThread { reply.notImplemented() }
+        }
+    }
     private var scanProgressSink: EventChannel.EventSink? = null
     private var directoryScanSession: DirectoryScanSession? = null
     private val directoryReaders = ConcurrentHashMap<String, SafDirectoryReader>()
@@ -284,8 +308,12 @@ class MainActivity : FlutterActivity() {
             result.error("argument", "source and outputPath are required", null)
             return
         }
-        val job = sourceExecutor.submit {
+        val job = ThumbnailJob(result)
+        if (requestId != null) thumbnailJobs[requestId] = job
+        job.future = sourceExecutor.submit {
+            var ownedBitmap: Bitmap? = null
             try {
+                job.checkActive()
                 val readStarted = SystemClock.elapsedRealtime()
                 var sourceWidth = 0
                 var sourceHeight = 0
@@ -315,6 +343,8 @@ class MainActivity : FlutterActivity() {
                 }
                 decoded = decodeBitmap(source, options)
                     ?: throw IllegalArgumentException("Image decode returned no bitmap")
+                ownedBitmap = decoded
+                job.checkActive()
                 val decodeMs = SystemClock.elapsedRealtime() - decodeStarted
                 val (targetWidth, targetHeight) = thumbnailDimensions(
                     decoded.width,
@@ -329,13 +359,15 @@ class MainActivity : FlutterActivity() {
                         if (it !== decoded) decoded.recycle()
                     }
                 }
+                ownedBitmap = scaled
+                job.checkActive()
                 val resizeMs = SystemClock.elapsedRealtime() - resizeStarted
                 val encodeStarted = SystemClock.elapsedRealtime()
-                val writeMs = writeWebpAtomically(scaled, quality, outputPath, requestId)
+                val writeMs = writeWebpAtomically(scaled, quality, outputPath, requestId, job)
                 val encodeMs = SystemClock.elapsedRealtime() - encodeStarted - writeMs
                 scaled.recycle()
                 runOnUiThread {
-                    result.success(mapOf(
+                    job.success(mapOf(
                         "outputPath" to outputPath,
                         "width" to targetWidth,
                         "height" to targetHeight,
@@ -349,13 +381,13 @@ class MainActivity : FlutterActivity() {
                 }
             } catch (error: Exception) {
                 runOnUiThread {
-                    result.error("thumbnail", "Cannot create image thumbnail.", error.message)
+                    job.error("thumbnail", "Cannot create image thumbnail.", error.message)
                 }
             } finally {
-                if (requestId != null) thumbnailJobs.remove(requestId)
+                ownedBitmap?.let { if (!it.isRecycled) it.recycle() }
+                if (requestId != null) thumbnailJobs.remove(requestId, job)
             }
         }
-        if (requestId != null) thumbnailJobs[requestId] = job
     }
 
     private fun createVideoThumbnail(
@@ -370,10 +402,13 @@ class MainActivity : FlutterActivity() {
             result.error("argument", "source and outputPath are required", null)
             return
         }
-        val job = sourceExecutor.submit {
+        val job = ThumbnailJob(result)
+        if (requestId != null) thumbnailJobs[requestId] = job
+        job.future = sourceExecutor.submit {
+            var ownedBitmap: Bitmap? = null
             val retriever = MediaMetadataRetriever()
-            if (requestId != null) activeVideoRetrievers[requestId] = retriever
             try {
+                job.checkActive()
                 val readStarted = SystemClock.elapsedRealtime()
                 if (source.startsWith("content://")) {
                     retriever.setDataSource(this, Uri.parse(source))
@@ -405,6 +440,8 @@ class MainActivity : FlutterActivity() {
                         MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
                     ) ?: retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                 } ?: throw IllegalArgumentException("Video contains no decodable frame")
+                ownedBitmap = frame
+                job.checkActive()
                 val decodeMs = SystemClock.elapsedRealtime() - decodeStarted
                 val resizeStarted = SystemClock.elapsedRealtime()
                 val scaled = if (frame.width == targetWidth && frame.height == targetHeight) {
@@ -414,16 +451,18 @@ class MainActivity : FlutterActivity() {
                         if (it !== frame) frame.recycle()
                     }
                 }
+                ownedBitmap = scaled
+                job.checkActive()
                 val resizeMs = SystemClock.elapsedRealtime() - resizeStarted
                 val encodeStarted = SystemClock.elapsedRealtime()
-                val writeMs = writeWebpAtomically(scaled, quality, outputPath, requestId)
+                val writeMs = writeWebpAtomically(scaled, quality, outputPath, requestId, job)
                 val encodeMs = SystemClock.elapsedRealtime() - encodeStarted - writeMs
                 scaled.recycle()
                 val durationMs = retriever.extractMetadata(
                     MediaMetadataRetriever.METADATA_KEY_DURATION,
                 )?.toLongOrNull()
                 runOnUiThread {
-                    result.success(mapOf(
+                    job.success(mapOf(
                         "outputPath" to outputPath,
                         "width" to targetWidth,
                         "height" to targetHeight,
@@ -437,17 +476,16 @@ class MainActivity : FlutterActivity() {
                 }
             } catch (error: Exception) {
                 runOnUiThread {
-                    result.error("videoThumbnail", "Cannot create video thumbnail.", error.message)
+                    job.error("videoThumbnail", "Cannot create video thumbnail.", error.message)
                 }
             } finally {
+                ownedBitmap?.let { if (!it.isRecycled) it.recycle() }
                 if (requestId != null) {
-                    activeVideoRetrievers.remove(requestId)
-                    thumbnailJobs.remove(requestId)
+                    thumbnailJobs.remove(requestId, job)
                 }
                 retriever.release()
             }
         }
-        if (requestId != null) thumbnailJobs[requestId] = job
     }
 
     private fun encodeNodePreview(
@@ -503,8 +541,7 @@ class MainActivity : FlutterActivity() {
         result: MethodChannel.Result,
     ) {
         if (!requestId.isNullOrBlank()) {
-            thumbnailJobs.remove(requestId)?.cancel(true)
-            activeVideoRetrievers.remove(requestId)?.release()
+            thumbnailJobs.remove(requestId)?.cancel()
         }
         result.success(null)
     }
@@ -514,12 +551,14 @@ class MainActivity : FlutterActivity() {
         quality: Int,
         outputPath: String,
         requestId: String?,
+        job: ThumbnailJob? = null,
     ): Long {
         val started = SystemClock.elapsedRealtime()
         val output = File(outputPath)
         output.parentFile?.mkdirs()
-        val suffix = requestId?.take(12) ?: Thread.currentThread().id.toString()
-        val temporary = File("${output.absolutePath}.${suffix}.tmp")
+        val temporary = File("${output.absolutePath}.tmp")
+        try {
+        job?.checkActive()
         temporary.outputStream().use { stream ->
             val compressed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
                 bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, quality.coerceIn(1, 100), stream)
@@ -528,14 +567,19 @@ class MainActivity : FlutterActivity() {
                 bitmap.compress(Bitmap.CompressFormat.WEBP, quality.coerceIn(1, 100), stream)
             }
             if (!compressed) throw IllegalStateException("WebP compression failed")
+            stream.fd.sync()
         }
-        if (output.exists() && !output.delete()) {
-            throw IllegalStateException("Cannot replace existing thumbnail")
+        job?.checkActive()
+        if (output.exists()) {
+            throw IllegalStateException("Cannot replace immutable thumbnail")
         }
         if (!temporary.renameTo(output)) {
             throw IllegalStateException("Cannot finalize thumbnail output")
         }
         return SystemClock.elapsedRealtime() - started
+        } finally {
+            temporary.delete()
+        }
     }
 
     private fun thumbnailDimensions(

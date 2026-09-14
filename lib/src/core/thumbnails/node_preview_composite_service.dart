@@ -7,6 +7,8 @@ import 'package:image/image.dart' as img;
 import '../../modules/library/library_access.dart';
 import '../domain/models.dart';
 import 'lossy_webp_encoder.dart';
+import 'thumbnail_cancellation.dart';
+import 'cancellable_thumbnail_task.dart';
 
 /// Builds visual node preview files without decoding or encoding on Flutter's
 /// isolate. Repository reads and the final asset-row mutation deliberately
@@ -17,15 +19,44 @@ class NodePreviewCompositeService {
   final LibraryAccess repository;
 
   Future<Map<String, NodePreviewCompositeOutcome>> rebuildNodesAsync(
-    Iterable<String> nodeIds,
-  ) async {
+    Iterable<String> nodeIds, {
+    ThumbnailCancellationToken? cancellationToken,
+    void Function(String, NodePreviewCompositeOutcome)? onCompleted,
+  }) async {
+    cancellationToken?.throwIfCancelled();
     final outcomes = <String, NodePreviewCompositeOutcome>{};
     final requests = <Map<String, Object?>>[];
     final inputs = await repository.prepareNodePreviewBuilds(nodeIds);
     final tickets = {
       for (final input in inputs) input.ticket.nodeId: input.ticket
     };
+    final published = <String>{};
+    Future<void> publish(String nodeId) async {
+      cancellationToken?.throwIfCancelled();
+      final outcome = outcomes[nodeId]!;
+      if (outcome.removeAsset) {
+        final accepted = await repository.publishNodePreview(tickets[nodeId]!);
+        if (!accepted) {
+          outcomes[nodeId] =
+              NodePreviewCompositeOutcome.failed('节点已改变，旧预览结果已丢弃');
+        }
+      } else if (outcome.succeeded) {
+        final accepted = await repository.publishNodePreview(tickets[nodeId]!,
+            signature: outcome.signature!,
+            width: outcome.width!,
+            height: outcome.height!);
+        if (!accepted) {
+          outcomes[nodeId] =
+              NodePreviewCompositeOutcome.failed('节点已改变，旧预览结果已丢弃');
+        }
+      }
+      onCompleted?.call(nodeId, outcomes[nodeId]!);
+
+      published.add(nodeId);
+    }
+
     for (final input in inputs) {
+      cancellationToken?.throwIfCancelled();
       final preview = input.preview;
       if (preview.kind != IndexNodePreviewKind.singleVisual &&
           preview.kind != IndexNodePreviewKind.visualGrid) {
@@ -89,10 +120,13 @@ class NodePreviewCompositeService {
       // One isolate handles the bounded work batch. This avoids eight isolate
       // startups for a page and prevents simultaneous image decoders from
       // exhausting Android memory.
-      final results = await Isolate.run<List<Map<String, Object?>>>(
-        () => _composeRequests(requests),
+      final results =
+          await runCancellableThumbnailTask<List<Map<String, Object?>>>(
+        _compositionAction(requests),
+        cancellationToken: cancellationToken,
       );
       for (final result in results) {
+        cancellationToken?.throwIfCancelled();
         final nodeId = result['nodeId']! as String;
         final error = result['error'] as String?;
         if (error != null) {
@@ -123,28 +157,11 @@ class NodePreviewCompositeService {
         } catch (error) {
           outcomes[nodeId] = NodePreviewCompositeOutcome.failed('$error');
         }
+        await publish(nodeId);
       }
     }
-    for (final entry in outcomes.entries) {
-      final outcome = entry.value;
-      if (outcome.removeAsset) {
-        final accepted =
-            await repository.publishNodePreview(tickets[entry.key]!);
-        if (!accepted) {
-          outcomes[entry.key] =
-              NodePreviewCompositeOutcome.failed('节点已改变，旧预览结果已丢弃');
-        }
-      } else if (outcome.succeeded) {
-        final accepted = await repository.publishNodePreview(
-            tickets[entry.key]!,
-            signature: outcome.signature!,
-            width: outcome.width!,
-            height: outcome.height!);
-        if (!accepted) {
-          outcomes[entry.key] =
-              NodePreviewCompositeOutcome.failed('节点已改变，旧预览结果已丢弃');
-        }
-      }
+    for (final nodeId in outcomes.keys.toList()) {
+      if (!published.contains(nodeId)) await publish(nodeId);
     }
     return outcomes;
   }
@@ -192,6 +209,10 @@ class NodePreviewCompositeOutcome {
 
   bool get succeeded => error == null && !removeAsset && width != null;
 }
+
+List<Map<String, Object?>> Function() _compositionAction(
+        List<Map<String, Object?>> requests) =>
+    () => _composeRequests(requests);
 
 List<Map<String, Object?>> _composeRequests(
   List<Map<String, Object?>> requests,

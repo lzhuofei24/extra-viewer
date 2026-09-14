@@ -31,7 +31,7 @@ class ThumbnailCancellationToken {
 
   void addListener(void Function() listener) {
     _listeners.add(listener);
-    if (_cancelled) listener();
+    if (isStopped) listener();
   }
 
   void removeListener(void Function() listener) => _listeners.remove(listener);

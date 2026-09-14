@@ -116,6 +116,35 @@ Local commits only; no push or tablet installation. Keep release signing compati
 - Remaining original-image gate: source leases and a separate measured original
   decode budget (the shared global byte cap is still the current limit).
 
+### Cancellation chain and timed tail commits (2026-09-15)
+
+- Build pause/abandon now reaches ThumbnailCancellationToken and native image/
+  video backends. Listeners added after pause also observe the stopped state.
+- Android queued cancellations reply exactly once instead of leaving Dart
+  awaiting a cancelled Future. Video retrievers are released only by their
+  owning worker, not concurrently by the UI cancellation handler.
+- Native writes check cancellation at stage boundaries, refuse replacing an
+  immutable final asset and clean partial files in finally. Bitmap cleanup also
+  runs on failure/cancellation. An in-progress native decode may still finish
+  internally before releasing its resources; its late result is ignored.
+- Pure Dart node composition can terminate its Isolate on pause. Entry points
+  avoid capturing ReceivePorts/repository state; regression tests caught and
+  fixed an unsendable closure during implementation.
+- Node previews publish individually with result callbacks. Document, entity
+  and node work flush pending results every two seconds and at page/pause exit;
+  page claims remain bounded to 100 (node batches to 8). Commits are serialized,
+  writer failures surface, and already-finished tails survive interruption.
+- Progress is refreshed after timed commits through the existing UI throttle.
+- Validation: all 82 Flutter tests passed, analyze clean, git diff --check clean.
+  Android :app:compileDebugKotlin passed (Flutter kernel build was excluded).
+  Real-device cancellation/TF-card resource timing remains unverified.
+- Build environment: Windows JDK AF_UNIX failed using the DOS-short temp path.
+  For this run, setting jdk.net.unixdomain.tmpdir to app/build/java-tmp resolved
+  it. Dependencies were fetched through the existing 127.0.0.1:7897 proxy, using
+  JDK 21, two Gradle workers and a 2 GB heap. No persistent system settings changed.
+- Remaining gates include single-pass document parsing, source leases, full
+  capability separation, global dirty scheduling, runtime/navigation and releases.
+
 ### Implemented safety/frontier foundation
 
 - Schema 6 additive migration, schema-5 snapshot before file-backed migration.

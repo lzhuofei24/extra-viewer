@@ -1,11 +1,15 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:image/image.dart' as img;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:best_viewer/src/core/database/app_database.dart';
 import 'package:best_viewer/src/core/database/library_repository.dart';
 import 'package:best_viewer/src/core/domain/models.dart';
 import 'package:best_viewer/src/core/thumbnails/thumbnail_store.dart';
+import 'package:best_viewer/src/core/thumbnails/node_preview_composite_service.dart';
+import 'package:best_viewer/src/core/thumbnails/thumbnail_cancellation.dart';
+import 'package:best_viewer/src/core/thumbnails/webp_encoder.dart';
 
 void main() {
   late AppDatabase database;
@@ -159,5 +163,47 @@ void main() {
     final store = ThumbnailStore('store');
     expect(store.pathFor('v7_abcd', 'webp'), contains('ab'));
     expect(store.pathFor('v6_abcd', 'webp'), contains('v6'));
+  });
+
+  test('pausing a node batch preserves the already published node', () async {
+    final root = library.ensureCollectionIndexRoot('root');
+    final first = library.createCustomNode(parentId: root.id, name: 'first');
+    final second = library.createCustomNode(parentId: root.id, name: 'second');
+    final source = entity('visual');
+    final ticket = library.beginEntityPreview(source);
+    final bytes = encodeThumbnailWebp(img.Image(width: 30, height: 40));
+    await library.thumbnailStore
+        .writeBytes(key: ticket.assetKey, format: 'webp', bytes: bytes);
+    library.commitEntityPreview(
+        ticket,
+        ThumbnailDatabaseUpdate.success(
+            entityId: source.id,
+            key: ticket.assetKey,
+            format: 'webp',
+            width: 30,
+            height: 40),
+        byteSize: bytes.length);
+    for (final node in [first, second]) {
+      library.linkEntityToIndexNode(entityId: source.id, indexNodeId: node.id);
+    }
+    final token = ThumbnailCancellationToken();
+    final published = <String>[];
+    await expectLater(
+        NodePreviewCompositeService(library).rebuildNodesAsync(
+          [first.id, second.id],
+          cancellationToken: token,
+          onCompleted: (id, outcome) {
+            expect(outcome.error, isNull);
+            published.add(id);
+            token.pause();
+          },
+        ),
+        throwsA(isA<ThumbnailTaskPausedException>()));
+    expect(published, [first.id]);
+    expect(
+        database.db
+            .select('SELECT node_id FROM node_preview_assets')
+            .map((row) => row['node_id']),
+        [first.id]);
   });
 }
