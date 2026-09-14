@@ -8,6 +8,20 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Baseline
 
+### Source session shutdown ownership
+
+- AppRuntime stops session source reads before draining work and closes the
+  source cache in the cache phase. Android materialization now receives the
+  session cancellation token, including requests waiting for initialization.
+- SourceFileCache close is idempotent: queued acquisitions are rejected, late
+  produced files are removed, idle files are deleted, and active leased files
+  survive until their final release. Original local files are never owned.
+- Document loading snapshots the entity before awaiting file acquisition so
+  diagnostic source paths stay associated with the requested document during
+  rapid navigation. Parser selection was already captured before the await.
+- Targeted cache/runtime/shell suite: 10 passed; analyze clean. Full viewer
+  session registration and native-device interruption acceptance remain pending.
+
 ### Book fragment anchors and restoration cancellation
 
 - Book pagination records original block and text-fragment position. Font,

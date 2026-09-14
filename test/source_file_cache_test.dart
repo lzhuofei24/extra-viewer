@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:best_viewer/src/modules/sources/source_file_cache.dart';
 
@@ -75,5 +76,44 @@ void main() {
     final source = await produce(3);
     await SourceFileLease(source).close();
     expect(await source.exists(), isTrue);
+  });
+
+  test('shutdown preserves active leases and deletes after final release',
+      () async {
+    final first = await cache.acquire('a', 3, (_) => produce(3));
+    final second = await cache.acquire('a', 3, (_) => produce(3));
+    final idle = await cache.acquire('b', 3, (_) => produce(3));
+    await idle.close();
+    final closing = cache.close();
+    expect(identical(closing, cache.close()), isTrue);
+    await closing;
+    expect(await idle.file.exists(), isFalse);
+    expect(await first.file.exists(), isTrue);
+    await first.close();
+    expect(await second.file.exists(), isTrue);
+    await second.close();
+    expect(await second.file.exists(), isFalse);
+    await expectLater(
+        cache.acquire('c', 1, (_) => produce(1)), throwsStateError);
+  });
+
+  test('late copy is deleted and queued requests do not start on shutdown',
+      () async {
+    final started = Completer<void>();
+    final result = Completer<File>();
+    final pending = cache.acquire('a', 3, (_) {
+      started.complete();
+      return result.future;
+    });
+    final assertion = expectLater(pending, throwsStateError);
+    await started.future;
+    final queued = cache.acquire('b', 3, (_) => produce(3));
+    final queuedAssertion = expectLater(queued, throwsStateError);
+    final closing = cache.close();
+    final file = await produce(3);
+    result.complete(file);
+    await Future.wait([assertion, queuedAssertion, closing]);
+    expect(await file.exists(), isFalse);
+    expect(copies, 1);
   });
 }

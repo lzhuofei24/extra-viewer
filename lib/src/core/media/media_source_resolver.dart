@@ -4,6 +4,7 @@ import 'dart:io';
 import '../domain/models.dart';
 import '../sources/platform_directory_picker.dart';
 import '../sources/source_handle.dart';
+import '../thumbnails/thumbnail_cancellation.dart';
 import '../../modules/sources/source_file_cache.dart';
 export '../../modules/sources/source_file_cache.dart' show SourceFileLease;
 
@@ -11,6 +12,8 @@ class MediaSourceResolver {
   const MediaSourceResolver();
 
   static final _sessionCache = _AndroidSourceSessionCache();
+  static void stopSessionReads() => _sessionCache.stop();
+  static Future<void> closeSessionCache() => _sessionCache.close();
 
   File localFile(EntityListItem entity) {
     final materializedPath = entity.localPath;
@@ -47,14 +50,27 @@ class MediaSourceResolver {
 class _AndroidSourceSessionCache {
   final _cache = SourceFileCache(budgetBytes: 2 * 1024 * 1024 * 1024);
   Future<void>? _initialized;
+  final _cancellation = ThumbnailCancellationToken();
+
+  void stop() {
+    _cache.stop();
+    _cancellation.cancel();
+  }
+
+  Future<void> close() {
+    stop();
+    return _cache.close();
+  }
 
   Future<SourceFileLease> acquire(EntityListItem entity) async {
+    _cancellation.throwIfCancelled();
     await (_initialized ??= PlatformDirectoryPicker.clearSessionDocuments());
     final key = '${entity.id}:${entity.sourceRevision}:${entity.path}';
     return _cache.acquire(key, entity.size, (maxBytes) async {
       final path = await PlatformDirectoryPicker.materializeDocument(
           entity.path,
           name: entity.title,
+          cancellationToken: _cancellation,
           maxBytes: maxBytes);
       return File(path);
     });

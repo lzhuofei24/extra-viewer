@@ -24,6 +24,7 @@ import 'core/domain/models.dart';
 import 'core/formats/file_format_handlers.dart';
 import 'core/media/audio_waveform_service.dart';
 import 'core/media/app_audio_controller.dart';
+import 'core/media/media_source_resolver.dart';
 import 'core/sources/platform_directory_picker.dart';
 import 'core/tasks/task_scheduler.dart';
 import 'core/thumbnails/thumbnail_service.dart';
@@ -246,6 +247,8 @@ class _AppShellState extends State<AppShell> {
 
   void _registerRuntimeResources() {
     _runtime
+      ..register('source-reads', RuntimeClosePhase.stopWork,
+          MediaSourceResolver.stopSessionReads)
       ..register('dirty-preview-stop', RuntimeClosePhase.stopWork,
           () => _dirtyPreviews?.stop())
       ..register('bootstrap', RuntimeClosePhase.stopWork, () async {
@@ -265,6 +268,8 @@ class _AppShellState extends State<AppShell> {
       ..register('thumbnails', RuntimeClosePhase.caches, () async {
         await _browsingThumbnails?.close();
       })
+      ..register('source-cache', RuntimeClosePhase.caches,
+          MediaSourceResolver.closeSessionCache)
       ..register('read-worker', RuntimeClosePhase.database, () async {
         try {
           await _readWorkerStart;

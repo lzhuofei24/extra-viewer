@@ -15,6 +15,22 @@ class SourceFileCache {
   final int budgetBytes;
   final _entries = <String, _Entry>{};
   Future<void> _tail = Future.value();
+  bool _stopped = false;
+  Future<void>? _closing;
+
+  void stop() => _stopped = true;
+
+  /// Active leases remain valid; their final release removes the owned file.
+  Future<void> close() {
+    stop();
+    return _closing ??= _serial(() async {
+      for (final item in _entries.entries.toList()) {
+        if (item.value.users != 0) continue;
+        if (await item.value.file.exists()) await item.value.file.delete();
+        _entries.remove(item.key);
+      }
+    });
+  }
 
   Future<T> _serial<T>(Future<T> Function() action) {
     final result = _tail.then((_) => action());
@@ -27,6 +43,7 @@ class SourceFileCache {
   Future<SourceFileLease> acquire(String key, int expectedBytes,
           Future<File> Function(int maxBytes) produce) =>
       _serial(() async {
+        if (_stopped) throw StateError('Source cache is closed');
         var entry = _entries.remove(key);
         if (entry != null && !await entry.file.exists()) entry = null;
         if (entry == null) {
@@ -49,6 +66,10 @@ class SourceFileCache {
             throw const FileSystemException('暂存空间正在使用，请关闭其它查看器后重试');
           }
           final file = await produce(capacity - used);
+          if (_stopped) {
+            if (await file.exists()) await file.delete();
+            throw StateError('Source cache closed during materialization');
+          }
           final bytes = await file.length();
           if (bytes > capacity - used) {
             await file.delete();
@@ -58,14 +79,16 @@ class SourceFileCache {
         }
         final leased = entry;
         _entries[key] = leased;
+        if (_stopped) throw StateError('Source cache is closed');
         leased.users++;
         return SourceFileLease(
             leased.file,
             () => _serial(() async {
                   leased.users--;
-                  if (leased.users == 0 && leased.bytes > budgetBytes) {
+                  if (leased.users == 0 &&
+                      (_stopped || leased.bytes > budgetBytes)) {
                     if (await leased.file.exists()) await leased.file.delete();
-                    _entries.remove(key);
+                    if (identical(_entries[key], leased)) _entries.remove(key);
                   }
                 }));
       });

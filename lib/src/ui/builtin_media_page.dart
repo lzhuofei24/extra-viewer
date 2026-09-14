@@ -277,19 +277,20 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
   }
 
   Future<ReflowDocument?> _loadDocument() async {
-    final viewerKind = FileFormatRegistry.viewerKindForFormat(_current.format);
+    final entity = _current;
+    final viewerKind = FileFormatRegistry.viewerKindForFormat(entity.format);
     if (viewerKind != ViewerKind.textReader &&
         viewerKind != ViewerKind.docxReader &&
         viewerKind != ViewerKind.epubReader) {
       return null;
     }
-    final lease = await _sourceResolver.acquireFile(_current);
+    final lease = await _sourceResolver.acquireFile(entity);
     final file = lease.file;
     try {
       if (!await file.exists()) {
         throw FileSystemException(
           '文件不存在',
-          _sourceResolver.displayLocation(_current),
+          _sourceResolver.displayLocation(entity),
         );
       }
       if (viewerKind == ViewerKind.docxReader) {
