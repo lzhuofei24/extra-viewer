@@ -103,6 +103,9 @@ Future<Object?> dispatchBuild(LibraryBuildRepository repository, String method,
       repository.prepareEntityPreviewWork(
           args['jobId'] as String, args['scopeNodeId'] as String);
       return null;
+    case 'handoffLegacyArchivePreviewWork':
+      return repository
+          .handoffLegacyArchivePreviewWork(args['jobId'] as String);
     case 'prepareDocumentPreviewWork':
       repository.prepareDocumentPreviewWork(
           args['jobId'] as String, args['scopeNodeId'] as String);

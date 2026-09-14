@@ -45,7 +45,7 @@ CREATE INDEX IF NOT EXISTS idx_command_receipts_committed
 ON database_command_receipts(committed_at);
 CREATE TABLE IF NOT EXISTS document_preview_versions (
   entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
-  source_revision INTEGER NOT NULL
+  source_revision INTEGER NOT NULL, cover_revision INTEGER
 );
 CREATE TABLE IF NOT EXISTS node_preview_versions (
   node_id TEXT PRIMARY KEY REFERENCES index_nodes(id) ON DELETE CASCADE,

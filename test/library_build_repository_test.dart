@@ -5,6 +5,45 @@ import 'package:best_viewer/src/core/domain/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('legacy archive handoff preserves media work and is idempotent', () {
+    final database = AppDatabase.openInMemory();
+    addTearDown(database.close);
+    final library = LibraryRepository(database);
+    final builds = LibraryBuildRepository(library);
+    final root = library.ensureDirectoryIndexRoot('/legacy');
+    final job = builds.create(
+        sourcePath: '/legacy', operation: LibraryBuildOperation.rootScan);
+    for (final format in ['epub', 'docx', 'jpg']) {
+      final entity = library
+          .upsertEntity(
+              path: '/legacy/a.$format',
+              name: 'a.$format',
+              format: format,
+              entityType:
+                  format == 'jpg' ? EntityType.image : EntityType.document,
+              hash: format,
+              size: 1,
+              sourceCreatedAtMs: 0,
+              sourceModifiedAtMs: 0)
+          .entity;
+      library.linkEntityToIndexNode(entityId: entity.id, indexNodeId: root.id);
+      database.db.execute('''INSERT INTO library_entity_preview_work
+        (job_id, entity_id, state, attempts, updated_at)
+        VALUES (?, ?, 'pending', 0, 0)''', [job.id, entity.id]);
+    }
+    database.db.execute(
+        'UPDATE library_build_jobs SET entity_preview_total = 3 WHERE id = ?',
+        [job.id]);
+    expect(builds.handoffLegacyArchivePreviewWork(job.id), isTrue);
+    expect(builds.handoffLegacyArchivePreviewWork(job.id), isFalse);
+    expect(builds.get(job.id)!.sourcePath, '/legacy');
+    expect(builds.get(job.id)!.stage, LibraryBuildStage.documentPreviews);
+    expect(builds.get(job.id)!.entityPreviewTotal, 1);
+    expect(builds.get(job.id)!.documentPreviewTotal, 2);
+    expect(builds.claimEntityPreviewWork(job.id).length, 1);
+    expect(builds.claimDocumentPreviewWork(job.id).length, 2);
+  });
+
   test(
       'document metadata uses the stored type and commits only the matching source revision',
       () {
@@ -48,7 +87,9 @@ void main() {
         attempts: retry,
         metadata: {
           original.id: DocumentPreviewMetadata(
-              sourceRevision: updated.sourceRevision, excerpt: 'current')
+              sourceRevision: updated.sourceRevision,
+              excerpt: 'current',
+              coverRevision: updated.previewRevision)
         });
     expect(library.getEntity(original.id)!.contentExcerpt, 'current');
     final next = builds.create(

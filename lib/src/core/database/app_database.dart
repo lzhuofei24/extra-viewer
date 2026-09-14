@@ -112,7 +112,7 @@ class AppDatabase {
     final version = db.userVersion;
     if (version == currentSchemaVersion) {
       db.execute(_schema);
-      db.execute(schemaV6PreviewAssets);
+      _ensurePreviewSchema();
       db.execute('PRAGMA optimize;');
       return;
     }
@@ -127,7 +127,7 @@ class AppDatabase {
       db.execute('BEGIN IMMEDIATE');
       try {
         db.execute(schemaV6Upgrade);
-        db.execute(schemaV6PreviewAssets);
+        _ensurePreviewSchema();
         db.userVersion = currentSchemaVersion;
         db.execute('COMMIT');
       } catch (_) {
@@ -144,13 +144,22 @@ class AppDatabase {
     try {
       db.execute(_schema);
       db.execute(schemaV6Upgrade);
-      db.execute(schemaV6PreviewAssets);
+      _ensurePreviewSchema();
       db.userVersion = currentSchemaVersion;
       db.execute('COMMIT;');
       db.execute('PRAGMA optimize;');
     } catch (_) {
       db.execute('ROLLBACK;');
       rethrow;
+    }
+  }
+
+  void _ensurePreviewSchema() {
+    db.execute(schemaV6PreviewAssets);
+    final columns = db.select('PRAGMA table_info(document_preview_versions)');
+    if (!columns.any((row) => row['name'] == 'cover_revision')) {
+      db.execute(
+          'ALTER TABLE document_preview_versions ADD COLUMN cover_revision INTEGER');
     }
   }
 

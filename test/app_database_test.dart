@@ -3,6 +3,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 void main() {
+  test('schema 6 adds cover revision without losing document versions', () {
+    final database = AppDatabase.openInMemory();
+    addTearDown(database.close);
+    final raw = database.db;
+    raw.execute('DROP TABLE document_preview_versions');
+    raw.execute(
+        'CREATE TABLE document_preview_versions(entity_id TEXT PRIMARY KEY, source_revision INTEGER NOT NULL)');
+    raw.execute(
+        "INSERT INTO document_preview_versions VALUES ('preserved', 7)");
+    database.migrate();
+    final row = raw.select('SELECT * FROM document_preview_versions').single;
+    expect(row['entity_id'], 'preserved');
+    expect(row['source_revision'], 7);
+    expect(row['cover_revision'], isNull);
+  });
+
   test('schema 5 migration preserves records and captures immutable task scope',
       () {
     final raw = sqlite3.openInMemory();

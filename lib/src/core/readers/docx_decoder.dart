@@ -10,6 +10,14 @@ Future<String> readDocxText(File file) async {
   return (await readDocxDocument(file)).plainText;
 }
 
+String readDocxPreviewText(ArchiveSession session) => _parseDocx(
+      File(session.filePath),
+      session,
+      keepSession: false,
+      includeImages: false,
+      textLimit: 501,
+    ).plainText;
+
 Future<ReflowDocument> readDocxDocument(File file) async {
   final session = await ArchiveSession.open(file);
   try {
@@ -35,14 +43,18 @@ ReflowDocument _parseDocx(
   File file,
   ArchiveSession session, {
   required bool keepSession,
+  bool includeImages = true,
+  int? textLimit,
 }) {
   final documentText = session.readText('word/document.xml');
   if (documentText == null) {
     throw const FormatException('DOCX 中缺少 word/document.xml。');
   }
   final document = XmlDocument.parse(documentText);
-  final relationships = _docxRelationships(session);
+  final relationships =
+      includeImages ? _docxRelationships(session) : const <String, String>{};
   final blocks = <ReflowBlock>[];
+  var textLength = 0;
   for (final element in _elements(document)) {
     if (element.name.local != 'p') continue;
     final text = _paragraphText(element);
@@ -59,7 +71,10 @@ ReflowDocument _parseDocx(
         level: heading == null ? 0 : int.parse(heading.group(1)!),
         text: text,
       ));
+      textLength += text.runes.length + (blocks.length > 1 ? 2 : 0);
+      if (textLimit != null && textLength >= textLimit) break;
     }
+    if (!includeImages) continue;
     for (final blip
         in _elements(element).where((node) => node.name.local == 'blip')) {
       String? relationshipId;
@@ -79,7 +94,7 @@ ReflowDocument _parseDocx(
       }
     }
   }
-  if (blocks.isEmpty) {
+  if (blocks.isEmpty && includeImages) {
     throw const FormatException('DOCX 中没有可读取的文本段落。');
   }
   return ReflowDocument(

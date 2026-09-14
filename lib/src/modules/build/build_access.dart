@@ -52,6 +52,7 @@ abstract interface class BuildAccess {
   FutureOr<List<LibraryBuildManifestItem>> listManifestPage(String jobId,
       {required int afterSequence, int limit = 200, bool pendingOnly = false});
   FutureOr<void> prepareEntityPreviewWork(String jobId, String scopeNodeId);
+  FutureOr<bool> handoffLegacyArchivePreviewWork(String jobId);
   FutureOr<void> prepareDocumentPreviewWork(String jobId, String scopeNodeId);
   FutureOr<void> prepareNodePreviewWork(String jobId,
       {required String scopeNodeId,

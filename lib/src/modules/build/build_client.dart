@@ -220,6 +220,12 @@ class BuildClient implements BuildAccess {
   }
 
   @override
+  Future<bool> handoffLegacyArchivePreviewWork(String jobId) async {
+    return (await host.call(
+        'build', 'handoffLegacyArchivePreviewWork', {'jobId': jobId})) as bool;
+  }
+
+  @override
   Future<void> prepareDocumentPreviewWork(
       String jobId, String scopeNodeId) async {
     await host.call('build', 'prepareDocumentPreviewWork',

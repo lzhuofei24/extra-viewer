@@ -8,6 +8,25 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Baseline
 
+### Archive preview consolidation
+
+- EPUB/DOCX excerpt and first illustration now share one archive session in a
+  cancellable worker. Excerpts are bounded to 500 codepoints plus ellipsis;
+  covers preserve aspect ratio at approximately 360000 pixels, WebP quality 80.
+- Prepared immutable covers, excerpts, document versions and work completion
+  publish in one writer transaction with source/preview/attempt checks. Existing
+  valid covers are retained; missing illustrations are a durable normal result.
+- Existing schema-6 databases receive the nullable cover revision column without
+  deleting document version records. Legacy pending archive thumbnail work moves
+  to document work without rescanning or altering the task source scope.
+- Removed duplicate archive handling from the entity preview stage. Fixed pause
+  propagation so an interrupted decoder is not recorded as a thumbnail failure.
+- Validation: full 89-test suite passed; subsequently added stale-result and
+  backend-pause regressions passed in targeted suites (6 and 4 tests).
+  No tablet installation or release build in this batch. TF-card timings remain
+  unverified. Runtime, source leases, navigation and remaining module boundaries
+  are still pending.
+
 - Existing work checkpoint: e9755b8.
 - Previous audit: analyze passed; 49 tests passed, sidebar and native DLL tests failed.
 - Batch 0: scrollable sidebar and standalone native test build implemented.

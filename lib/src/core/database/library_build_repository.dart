@@ -501,10 +501,7 @@ class LibraryBuildRepository implements BuildAccess {
       FROM index_node_entities link
       JOIN entities entity ON entity.id = link.entity_id
       WHERE link.index_node_id IN (SELECT id FROM subtree)
-        AND (
-          entity.media_type IN ('image', 'video') OR
-          entity.format IN ('epub', 'docx')
-        )
+        AND entity.media_type IN ('image', 'video')
         AND (
           entity.thumbnail_status != 'success' OR
           entity.thumbnail_key IS NULL OR
@@ -515,6 +512,50 @@ class LibraryBuildRepository implements BuildAccess {
         get(jobId)!.entityPreviewDone;
     _update(jobId, entityPreviewTotal: count);
   }
+
+  @override
+  bool handoffLegacyArchivePreviewWork(String jobId) =>
+      library.writeTransaction(() {
+        final db = library.database.db;
+        const selected =
+            '''SELECT work.entity_id FROM library_entity_preview_work work
+      JOIN entities entity ON entity.id = work.entity_id WHERE work.job_id = ?
+        AND entity.format IN ('epub', 'docx') AND work.state IN ('pending', 'processing')''';
+        final count = db.select('SELECT COUNT(*) AS count FROM ($selected)',
+            [jobId]).single['count'] as int;
+        if (count == 0) return false;
+        final prior = db.select(
+            '''SELECT state, COUNT(*) AS count FROM library_document_preview_work
+      WHERE job_id = ? AND entity_id IN ($selected) GROUP BY state''',
+            [jobId, jobId]);
+        var done = 0;
+        var failed = 0;
+        for (final row in prior) {
+          if (row['state'] == 'completed' || row['state'] == 'skipped') {
+            done += row['count'] as int;
+          }
+          if (row['state'] == 'failed') failed += row['count'] as int;
+        }
+        db.execute(
+            '''INSERT INTO library_document_preview_work(job_id, entity_id, state, attempts, updated_at)
+      SELECT ?, entity_id, 'pending', 0, ? FROM ($selected) WHERE 1
+      ON CONFLICT(job_id, entity_id) DO UPDATE SET state = 'pending', error = NULL, updated_at = excluded.updated_at''',
+            [jobId, nowMillis(), jobId]);
+        db.execute(
+            'DELETE FROM library_entity_preview_work WHERE job_id = ? AND entity_id IN ($selected)',
+            [jobId, jobId]);
+        db.execute(
+            '''UPDATE library_build_jobs SET entity_preview_total = MAX(0, entity_preview_total - ?),
+      document_preview_done = MAX(0, document_preview_done - ?), document_preview_failed = MAX(0, document_preview_failed - ?)
+      WHERE id = ?''', [count, done, failed, jobId]);
+        final total =
+            _remainingWorkCount('library_document_preview_work', jobId) +
+                get(jobId)!.documentPreviewDone;
+        _update(jobId,
+            stage: LibraryBuildStage.documentPreviews,
+            documentPreviewTotal: total);
+        return true;
+      });
 
   @override
   void prepareDocumentPreviewWork(String jobId, String scopeNodeId) {
@@ -534,7 +575,10 @@ class LibraryBuildRepository implements BuildAccess {
       WHERE link.index_node_id IN (SELECT id FROM subtree)
         AND entity.media_type IN ('text', 'external_link')
         AND NOT EXISTS (SELECT 1 FROM document_preview_versions preview
-          WHERE preview.entity_id = entity.id AND preview.source_revision = entity.source_revision)
+          WHERE preview.entity_id = entity.id AND preview.source_revision = entity.source_revision
+            AND (entity.format NOT IN ('epub', 'docx') OR (
+              preview.cover_revision = entity.preview_revision AND entity.thumbnail_status IN ('none', 'success')
+            )))
     ''', [scopeNodeId, jobId, now]);
     final count = _remainingWorkCount('library_document_preview_work', jobId) +
         get(jobId)!.documentPreviewDone;
@@ -651,6 +695,30 @@ class LibraryBuildRepository implements BuildAccess {
           ]);
           if (active.isEmpty) continue;
           final value = entry.value;
+          if (resolved[entry.key]?.state != LibraryBuildWorkState.completed) {
+            continue;
+          }
+          if (value.coverRevision != null) {
+            final current = library.database.db.select(
+                'SELECT 1 FROM entities WHERE id = ? AND source_revision = ? AND preview_revision = ?',
+                [entry.key, value.sourceRevision, value.coverRevision]);
+            if (current.isEmpty) {
+              resolved[entry.key] =
+                  (state: LibraryBuildWorkState.failed, error: '文档预览已改变，请重试');
+              continue;
+            }
+          }
+          final preview = value.preview;
+          if (preview != null &&
+              (preview.ticket.entityId != entry.key ||
+                  preview.ticket.sourceRevision != value.sourceRevision ||
+                  preview.ticket.previewRevision != value.coverRevision ||
+                  !library.commitEntityPreview(preview.ticket, preview.update,
+                      byteSize: preview.byteSize))) {
+            resolved[entry.key] =
+                (state: LibraryBuildWorkState.failed, error: '文档封面已改变，请重试');
+            continue;
+          }
           library.database.db.execute(
               '''UPDATE entities SET metadata_preview = ?,
           duration_ms = COALESCE(?, duration_ms), updated_at = ?
@@ -668,9 +736,11 @@ class LibraryBuildRepository implements BuildAccess {
             continue;
           }
           library.database.db.execute(
-              '''INSERT INTO document_preview_versions(entity_id, source_revision)
-          VALUES (?, ?) ON CONFLICT(entity_id) DO UPDATE SET source_revision = excluded.source_revision''',
-              [entry.key, value.sourceRevision]);
+              '''INSERT INTO document_preview_versions(entity_id, source_revision, cover_revision)
+          VALUES (?, ?, ?) ON CONFLICT(entity_id) DO UPDATE SET source_revision = excluded.source_revision,
+            cover_revision = excluded.cover_revision''',
+              [entry.key, value.sourceRevision, value.coverRevision]);
+          if (preview != null) continue;
           for (final row in library.database.db.select(
               'SELECT index_node_id FROM index_node_entities WHERE entity_id = ?',
               [entry.key])) {

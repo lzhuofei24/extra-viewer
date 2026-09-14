@@ -26,6 +26,13 @@ class EpubChapter {
 Future<ReflowDocument> readEpubDocumentAtPath(String path) =>
     readEpubDocument(File(path));
 
+String readEpubPreviewText(ArchiveSession session) => _parseEpub(
+      File(session.filePath),
+      session,
+      keepSession: false,
+      textLimit: 501,
+    ).plainText;
+
 Future<ReflowDocument> readEpubDocument(File file) async {
   final session = await ArchiveSession.open(file);
   try {
@@ -51,6 +58,7 @@ ReflowDocument _parseEpub(
   File file,
   ArchiveSession session, {
   required bool keepSession,
+  int? textLimit,
 }) {
   final containerXml = XmlDocument.parse(
     _decodeArchiveEntry(session, 'META-INF/container.xml'),
@@ -73,6 +81,7 @@ ReflowDocument _parseEpub(
   }
   final packageDir = p.posix.dirname(normalizedPackagePath);
   final chapters = <ReflowChapter>[];
+  var textLength = 0;
   for (final itemRef
       in _elements(packageXml).where((node) => node.name.local == 'itemref')) {
     final href = manifest[itemRef.getAttribute('idref')];
@@ -96,6 +105,13 @@ ReflowDocument _parseEpub(
       title: heading ?? _chapterTitle(chapterPath),
       blocks: blocks,
     ));
+    for (final block in blocks) {
+      final text = block.text;
+      if (text != null && text.isNotEmpty) {
+        textLength += text.runes.length + (textLength > 0 ? 2 : 0);
+      }
+    }
+    if (textLimit != null && textLength >= textLimit) break;
   }
   if (chapters.isEmpty) throw const FormatException('EPUB 中没有可读取的章节。');
   return ReflowDocument(
@@ -168,6 +184,12 @@ List<ReflowBlock> _xhtmlBlocks(
 
     for (final element in body.childElements) {
       visit(element);
+    }
+    if (result.isEmpty) {
+      final text = body.innerText.replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (text.isNotEmpty) {
+        result.add(ReflowBlock(kind: ReflowBlockKind.paragraph, text: text));
+      }
     }
     return result;
   } on XmlParserException {

@@ -6,13 +6,13 @@ import 'package:path/path.dart' as p;
 
 import '../../modules/build/build_access.dart';
 import '../../modules/build/periodic_checkpoint.dart';
+import '../../modules/previews/archive_preview_pipeline.dart';
+import '../../modules/previews/archive_document_preview.dart';
 import '../../modules/library/library_access.dart';
 import '../diagnostics/app_diagnostic_log.dart';
 import '../domain/models.dart';
 import '../formats/file_format_handlers.dart';
 import '../formats/text_decoder.dart';
-import '../readers/docx_decoder.dart';
-import '../readers/epub_decoder.dart';
 import '../../modules/sources/source_adapter.dart';
 import '../sources/platform_directory_picker.dart';
 import '../sources/source_handle.dart';
@@ -22,6 +22,7 @@ import '../thumbnails/native_image_thumbnail_backend.dart';
 import '../thumbnails/node_preview_composite_service.dart';
 import '../thumbnails/thumbnail_service.dart';
 import '../thumbnails/thumbnail_cancellation.dart';
+import '../thumbnails/cancellable_thumbnail_task.dart';
 import '../thumbnails/windows_wic_webp_thumbnail_backend.dart';
 import '../utils/file_fingerprint.dart';
 
@@ -549,7 +550,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
         await _reportPreviewProgress(job.id);
       });
       try {
-        await _forEachConcurrent(entityIds, 4, (id) async {
+        await _forEachConcurrent(entityIds, 2, (id) async {
           final entity = entities[id];
           if (entity == null) {
             results[id] = (state: LibraryBuildWorkState.failed, error: '实体不存在');
@@ -561,17 +562,23 @@ class LibraryBuildTaskController extends ChangeNotifier {
               results[id] = (state: LibraryBuildWorkState.skipped, error: null);
               return;
             }
-            final metadata = await _metadataForEntity(entity, handler);
-            metadataResults[id] = DocumentPreviewMetadata(
-                sourceRevision: entity.sourceRevision,
-                excerpt: metadata.$1,
-                durationMs: metadata.$2);
+            metadataResults[id] = await _metadataForEntity(entity, handler);
             results[id] = (state: LibraryBuildWorkState.completed, error: null);
           } on LibraryBuildPausedException {
             rethrow;
           } on LibraryBuildAbandonedException {
             rethrow;
-          } catch (error) {
+          } on ThumbnailTaskPausedException {
+            throw const LibraryBuildPausedException();
+          } on ThumbnailTaskCanceledException {
+            throw const LibraryBuildAbandonedException();
+          } catch (error, stack) {
+            AppDiagnosticLog.instance.error(
+                'document_preview_failed', error, stack, fields: {
+              'jobId': job.id,
+              'entityId': entity.id,
+              'path': entity.path
+            });
             results[id] =
                 (state: LibraryBuildWorkState.failed, error: '$error');
           }
@@ -600,6 +607,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
   }
 
   Future<void> _buildEntityPreviews(LibraryBuildJob job) async {
+    if (await builds.handoffLegacyArchivePreviewWork(job.id)) return;
     while (true) {
       _control!.check();
       final attempts = await builds.claimEntityPreviewWork(job.id);
@@ -631,17 +639,6 @@ class LibraryBuildTaskController extends ChangeNotifier {
             final entity = entities[id];
             if (entity?.entityType != EntityType.video) return;
             await _buildOneEntityPreview(job.id, id, entity!, results);
-          }),
-          // EPUB and DOCX are archive containers. Keep their image extraction
-          // bounded independently so large books do not compete with media
-          // decoding or exhaust Android archive memory.
-          _forEachConcurrent(entityIds, 2, (id) async {
-            final entity = entities[id];
-            if (entity == null ||
-                (entity.format != 'epub' && entity.format != 'docx')) {
-              return;
-            }
-            await _buildOneEntityPreview(job.id, id, entity, results);
           }),
         ]);
         for (final id in entityIds) {
@@ -685,34 +682,12 @@ class LibraryBuildTaskController extends ChangeNotifier {
     Entity entity,
     Map<String, ({LibraryBuildWorkState state, String? error})> results,
   ) async {
-    File? transientDocument;
     try {
       _control!.check();
-      if ((entity.format == 'epub' || entity.format == 'docx') &&
-          SourceHandle.parse(entity.path).isAndroidContentUri) {
-        final path = await PlatformDirectoryPicker.materializeDocument(
-          entity.path,
-          name: entity.name,
-          cacheScope: 'scan',
-        );
-        transientDocument = File(path);
-      }
-      if (transientDocument == null) {
-        await _thumbnails.ensureThumbnail(entity,
-            cancellationToken: _control!.thumbnailCancellation);
-      } else {
-        await _thumbnails.ensureThumbnailFromFile(entity, transientDocument,
-            cancellationToken: _control!.thumbnailCancellation);
-      }
+      await _thumbnails.ensureThumbnail(entity,
+          cancellationToken: _control!.thumbnailCancellation);
       final refreshed = (await library.getEntity(id));
       if (refreshed?.thumbnailStatus == ThumbnailStatus.success) {
-        results[id] = (state: LibraryBuildWorkState.completed, error: null);
-        return;
-      }
-      // A book without embedded images intentionally renders the persisted
-      // text excerpt rather than a generated image thumbnail.
-      if ((entity.format == 'epub' || entity.format == 'docx') &&
-          refreshed?.thumbnailStatus == ThumbnailStatus.none) {
         results[id] = (state: LibraryBuildWorkState.completed, error: null);
         return;
       }
@@ -730,11 +705,6 @@ class LibraryBuildTaskController extends ChangeNotifier {
     } catch (error, stackTrace) {
       results[id] = (state: LibraryBuildWorkState.failed, error: '$error');
       _logThumbnailFailure(jobId, entity, '$error', stackTrace);
-    } finally {
-      final transient = transientDocument;
-      if (transient != null && await transient.exists()) {
-        await transient.delete();
-      }
     }
   }
 
@@ -871,14 +841,17 @@ class LibraryBuildTaskController extends ChangeNotifier {
     File file,
     FileFormatHandler handler,
   ) async {
+    final format = handler.formatFor(file.path);
+    if (format == 'epub' || format == 'docx') {
+      final preview = await runCancellableThumbnailTask(
+          archiveDocumentPreviewAction(file.path, format, includeCover: false),
+          cancellationToken: _control?.thumbnailCancellation);
+      return (preview.excerpt, null);
+    }
     final preview = switch (handler.entityType) {
       EntityType.text =>
         _limitPreview(await readTextFile(file, maxBytes: 8192)),
       EntityType.audio => 'AUDIO ${handler.formatFor(file.path).toUpperCase()}',
-      EntityType.document when handler.formatFor(file.path) == 'docx' =>
-        _limitPreview(await readDocxText(file)),
-      EntityType.document when handler.formatFor(file.path) == 'epub' =>
-        await _epubPreviewText(file),
       EntityType.document when handler.formatFor(file.path) == 'pdf' => 'PDF',
       EntityType.document =>
         'DOCUMENT ${handler.formatFor(file.path).toUpperCase()}',
@@ -888,35 +861,6 @@ class LibraryBuildTaskController extends ChangeNotifier {
         ? await probeMediaDurationMs(file)
         : null;
     return (preview?.isEmpty == true ? null : preview, duration);
-  }
-
-  /// Use the same block parser as the reader instead of the older EPUB book
-  /// compatibility parser. This follows the spine and extracts paragraphs,
-  /// headings, lists, and fallback XHTML text consistently.
-  Future<String> _epubPreviewText(File file) async {
-    Object? primaryError;
-    try {
-      final text = (await readEpubDocument(file)).plainText.trim();
-      if (text.isNotEmpty) return _limitPreview(text);
-    } catch (error) {
-      primaryError = error;
-    }
-
-    // Some older EPUBs use XHTML that the reflow parser intentionally skips
-    // (for example a chapter made from legacy nested markup). The reader's
-    // compatibility parser still extracts body text from those chapters.
-    try {
-      final book = await readEpubBook(file);
-      final text =
-          book.chapters.map((chapter) => chapter.text).join('\n\n').trim();
-      if (text.isNotEmpty) return _limitPreview(text);
-    } catch (fallbackError) {
-      throw StateError(
-        'EPUB 正文解析失败：${primaryError ?? fallbackError}；兼容解析：$fallbackError',
-      );
-    }
-    throw StateError(
-        'EPUB 中没有可用于预览的正文${primaryError == null ? '' : '：$primaryError'}');
   }
 
   Future<(String, int, int, int, String?, int?)> _inspectForIndex(
@@ -969,13 +913,25 @@ class LibraryBuildTaskController extends ChangeNotifier {
     );
   }
 
-  Future<(String?, int?)> _metadataForEntity(
+  Future<DocumentPreviewMetadata> _metadataForEntity(
     Entity entity,
     FileFormatHandler handler,
   ) async {
+    Future<DocumentPreviewMetadata> parse(File file) async {
+      if (entity.format == 'epub' || entity.format == 'docx') {
+        return ArchivePreviewPipeline(library).prepare(entity, file,
+            cancellationToken: _control?.thumbnailCancellation);
+      }
+      final metadata = await _metadataForFile(file, handler);
+      return DocumentPreviewMetadata(
+          sourceRevision: entity.sourceRevision,
+          excerpt: metadata.$1,
+          durationMs: metadata.$2);
+    }
+
     final source = SourceHandle.parse(entity.path);
     if (!source.isAndroidContentUri) {
-      return _metadataForFile(File(entity.path), handler);
+      return parse(File(entity.path));
     }
     final path = await PlatformDirectoryPicker.materializeDocument(
       entity.path,
@@ -984,7 +940,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
     );
     final file = File(path);
     try {
-      return await _metadataForFile(file, handler);
+      return await parse(file);
     } finally {
       if (await file.exists()) await file.delete();
     }

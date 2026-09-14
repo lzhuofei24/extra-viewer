@@ -658,10 +658,23 @@ class BuildWorkAttempt {
 
 class DocumentPreviewMetadata {
   const DocumentPreviewMetadata(
-      {required this.sourceRevision, this.excerpt, this.durationMs});
+      {required this.sourceRevision,
+      this.excerpt,
+      this.durationMs,
+      this.coverRevision,
+      this.preview});
   final int sourceRevision;
   final String? excerpt;
   final int? durationMs;
+  final int? coverRevision;
+  final PreparedEntityPreview? preview;
+}
+
+class PreparedEntityPreview {
+  const PreparedEntityPreview(this.ticket, this.update, {this.byteSize = 0});
+  final EntityPreviewTicket ticket;
+  final ThumbnailDatabaseUpdate update;
+  final int byteSize;
 }
 
 class LibraryBuildJob {

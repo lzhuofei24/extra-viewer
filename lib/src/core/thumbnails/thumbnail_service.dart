@@ -206,6 +206,8 @@ class ThumbnailService {
               ? artifact.bytes.length
               : await File(artifact.persistedPath!).length());
       return true;
+    } on ThumbnailTaskPausedException {
+      rethrow;
     } on ThumbnailTaskCanceledException {
       rethrow;
     } catch (error) {
