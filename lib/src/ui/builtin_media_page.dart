@@ -18,6 +18,7 @@ import '../core/domain/models.dart';
 import '../modules/browser/original_image_budget.dart';
 import '../modules/viewer/reading_position.dart';
 import '../modules/viewer/viewer_sessions.dart';
+import '../modules/viewer/leased_document_session.dart';
 import '../core/formats/file_format_handlers.dart';
 import '../core/media/audio_waveform_service.dart';
 import '../core/media/app_audio_controller.dart';
@@ -620,6 +621,7 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                       enabled: libraryOverlay,
                       child: switch (viewerKind) {
                         ViewerKind.pdfReader => _PdfPreview(
+                            sessions: widget.sessions,
                             key: ValueKey(entity.id),
                             entity: entity,
                             sourceResolver: _sourceResolver,

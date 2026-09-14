@@ -8,6 +8,23 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Baseline
 
+### Explicit PDF document ownership
+
+- Replaced PdfViewer.file's implicit asynchronous document disposal with an
+  application-owned leased document session and autoDispose=false reference.
+  Shutdown finishes reference publication, detaches the viewer, awaits native
+  document disposal, then releases its source lease. Late source acquisition
+  never starts a document after close; late native opens are drained.
+- PDF joins ViewerSessions, saves state before detach and ignores callbacks
+  after close. Removed the unused legacy EPUB viewer and its synchronous source
+  path; current EPUB continues through the reflow reader and retained archive.
+- Preserved pdfrx Flutter initialization and progressive page loading. A native
+  disposal failure deliberately retains its lease instead of deleting a file
+  whose native handle may still be live; runtime reports that cleanup failure.
+- Validation: all 122 tests passed, including six leased-document tests;
+  static analysis passed. Native PDF rendering/closing on Android and Windows
+  remains a release/device acceptance item, not proven by these fake-handle tests.
+
 ### Runtime-owned viewer sessions
 
 - Added a Flutter-independent ViewerSessions registry. Normal widget disposal

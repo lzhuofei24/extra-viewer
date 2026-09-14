@@ -3,12 +3,14 @@ part of 'builtin_media_page.dart';
 class _PdfPreview extends StatefulWidget {
   const _PdfPreview({
     super.key,
+    required this.sessions,
     required this.entity,
     required this.sourceResolver,
     required this.onReaderStateChanged,
   });
 
   final EntityListItem entity;
+  final ViewerSessions sessions;
   final MediaSourceResolver sourceResolver;
   final ReaderStateChanged onReaderStateChanged;
 
@@ -16,177 +18,13 @@ class _PdfPreview extends StatefulWidget {
   State<_PdfPreview> createState() => _PdfPreviewState();
 }
 
-class _EpubPreview extends StatefulWidget {
-  const _EpubPreview({
-    required this.entity,
-    required this.sourceResolver,
-    required this.onReaderStateChanged,
-  });
-
-  final EntityListItem entity;
-  final MediaSourceResolver sourceResolver;
-  final void Function(int chapter, double scrollOffset) onReaderStateChanged;
-
-  @override
-  State<_EpubPreview> createState() => _EpubPreviewState();
-}
-
-class _EpubPreviewState extends State<_EpubPreview> {
-  late Future<EpubBook> _bookFuture;
-  late ScrollController _scrollController;
-  Timer? _saveDebounce;
-  late int _chapterIndex;
-
-  @override
-  void initState() {
-    super.initState();
-    _chapterIndex = _restoredEpubChapter(widget.entity);
-    _bookFuture = readEpubBook(widget.sourceResolver.localFile(widget.entity));
-    _scrollController = ScrollController(
-      initialScrollOffset: widget.entity.readerScrollOffset ?? 0,
-    )..addListener(_queueStateSave);
-  }
-
-  @override
-  void dispose() {
-    _saveDebounce?.cancel();
-    _persistState();
-    _scrollController
-      ..removeListener(_queueStateSave)
-      ..dispose();
-    super.dispose();
-  }
-
-  void _queueStateSave() {
-    _saveDebounce?.cancel();
-    _saveDebounce = Timer(const Duration(milliseconds: 400), _persistState);
-  }
-
-  void _persistState() {
-    final offset =
-        _scrollController.hasClients ? _scrollController.offset : 0.0;
-    widget.onReaderStateChanged(_chapterIndex, offset);
-  }
-
-  void _selectChapter(int chapter) {
-    if (chapter == _chapterIndex) return;
-    _persistState();
-    _scrollController
-      ..removeListener(_queueStateSave)
-      ..dispose();
-    _scrollController = ScrollController()..addListener(_queueStateSave);
-    setState(() => _chapterIndex = chapter);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final file = widget.sourceResolver.localFile(widget.entity);
-    if (!file.existsSync()) {
-      return _MissingSourceNotice(
-        path: widget.sourceResolver.displayLocation(widget.entity),
-      );
-    }
-    return FutureBuilder<EpubBook>(
-      future: _bookFuture,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError || !snapshot.hasData) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Text('无法读取 EPUB：${snapshot.error}'),
-            ),
-          );
-        }
-        final book = snapshot.data!;
-        final chapterIndex =
-            _chapterIndex.clamp(0, book.chapters.length - 1).toInt();
-        final chapter = book.chapters[chapterIndex];
-        return Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      book.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  DropdownButton<int>(
-                    value: chapterIndex,
-                    items: [
-                      for (var index = 0; index < book.chapters.length; index++)
-                        DropdownMenuItem(
-                          value: index,
-                          child: Text('章节 ${index + 1}'),
-                        ),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) _selectChapter(value);
-                    },
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            Expanded(
-              child: Scrollbar(
-                controller: _scrollController,
-                child: SingleChildScrollView(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 48),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(chapter.title,
-                          style: Theme.of(context).textTheme.titleLarge),
-                      const SizedBox(height: 20),
-                      SelectableText(
-                        chapter.text,
-                        style: Theme.of(context)
-                            .textTheme
-                            .bodyLarge
-                            ?.copyWith(height: 1.75),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-int _restoredEpubChapter(EntityListItem entity) {
-  final rawState = entity.extraStateJson;
-  if (rawState != null) {
-    try {
-      final decoded = jsonDecode(rawState);
-      if (decoded is Map<String, dynamic>) {
-        final stored = decoded['epubChapter'];
-        if (stored is num && stored >= 0) return stored.round();
-      }
-    } catch (_) {
-      // Ignore malformed legacy state and reopen at the first chapter.
-    }
-  }
-  return 0;
-}
-
 class _PdfPreviewState extends State<_PdfPreview> {
   PdfViewerController? _controller;
-  late final Future<File> _sourceFile;
-  late final Future<SourceFileLease> _sourceLease;
+  late final LeasedDocumentSession<PdfDocument> _documentSession;
+  late final ViewerSession _session;
+  PdfDocumentRefDirect? _documentRef;
+  PdfDocumentListenable? _documentListenable;
+  bool _closed = false;
   late int _currentPage;
   int? _pageCount;
   late final Set<int> _bookmarks;
@@ -196,19 +34,39 @@ class _PdfPreviewState extends State<_PdfPreview> {
     super.initState();
     _currentPage = _restoredPdfPage(widget.entity);
     _bookmarks = _restoredPdfBookmarks(widget.entity);
-    _sourceLease = widget.sourceResolver.acquireFile(widget.entity);
-    _sourceFile = _sourceLease.then((lease) => lease.file);
+    _documentSession = LeasedDocumentSession(
+      source: widget.sourceResolver.acquireFile(widget.entity),
+      open: (lease) async {
+        await pdfrxFlutterInitialize();
+        return PdfDocument.openFile(lease.file.path,
+            useProgressiveLoading: true);
+      },
+      disposeDocument: (document) => document.dispose(),
+    );
+    _session = widget.sessions.register(() async {
+      _persistReaderState();
+      _closed = true;
+      // Finish reference publication before detaching, including a late load.
+      final listenable = _documentListenable;
+      if (listenable != null) {
+        await listenable.load();
+        listenable.setError(StateError('Viewer closed'));
+      }
+      _controller = null;
+      await _documentSession.close();
+    });
   }
 
   @override
   void dispose() {
-    _persistReaderState();
-    unawaited(
-        _sourceLease.then<void>((lease) => lease.close(), onError: (_, __) {}));
+    unawaited(_session.close().catchError((Object error, StackTrace stack) {
+      debugPrint('PDF close failed: $error\n$stack');
+    }));
     super.dispose();
   }
 
   void _persistReaderState() {
+    if (_closed) return;
     widget.onReaderStateChanged(
       zoomScale: _controller?.isReady == true ? _controller!.currentZoom : null,
       extraStateJson: jsonEncode({
@@ -232,7 +90,7 @@ class _PdfPreviewState extends State<_PdfPreview> {
   }
 
   void _onPageChanged(int? pageNumber) {
-    if (pageNumber == null || pageNumber < 1) return;
+    if (_closed || !mounted || pageNumber == null || pageNumber < 1) return;
     setState(() => _currentPage = pageNumber);
     _persistReaderState();
   }
@@ -296,26 +154,30 @@ class _PdfPreviewState extends State<_PdfPreview> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<File>(
-      future: _sourceFile,
+    if (_closed) return const SizedBox.shrink();
+    return FutureBuilder<PdfDocument>(
+      future: _documentSession.document,
       builder: (context, snapshot) {
+        if (_closed) return const SizedBox.shrink();
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
         }
-        if (snapshot.hasError ||
-            !snapshot.hasData ||
-            !snapshot.data!.existsSync()) {
+        if (snapshot.hasError || !snapshot.hasData) {
           return _MissingSourceNotice(
             path:
                 '${snapshot.error ?? widget.sourceResolver.displayLocation(widget.entity)}',
           );
         }
-        return _buildLoaded(context, snapshot.data!);
+        _documentRef ??= PdfDocumentRefDirect(snapshot.data!,
+            autoDispose: false,
+            key: PdfDocumentRefKey(widget.entity.path, [Object()]));
+        _documentListenable ??= _documentRef!.resolveListenable();
+        return _buildLoaded(context);
       },
     );
   }
 
-  Widget _buildLoaded(BuildContext context, File file) {
+  Widget _buildLoaded(BuildContext context) {
     final pageLabel = _pageCount == null
         ? '第 $_currentPage 页'
         : '第 $_currentPage / $_pageCount 页';
@@ -323,14 +185,14 @@ class _PdfPreviewState extends State<_PdfPreview> {
         color: const Color(0xff102c28),
         child: Stack(
           children: [
-            PdfViewer.file(
-              file.path,
+            PdfViewer(
+              _documentRef!,
               initialPageNumber: _currentPage,
               params: PdfViewerParams(
                 onPageChanged: _onPageChanged,
                 onViewerReady: (document, controller) {
+                  if (!mounted || _closed) return;
                   _controller = controller;
-                  if (!mounted) return;
                   setState(() => _pageCount = document.pages.length);
                 },
               ),
