@@ -39,6 +39,7 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
   Future<void> _openChain = Future<void>.value();
   Future<void>? _closeFuture;
   int _activeGeneration = 0;
+  SourceFileLease? _sourceLease;
   StreamSubscription<bool>? _completedSubscription;
   StreamSubscription<bool>? _playingSubscription;
   Timer? _controlsTimer;
@@ -108,9 +109,16 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
   Future<void> _openSerial(int generation) async {
     if (mounted) setState(() => _loadError = null);
     try {
-      final source =
-          await widget.sourceResolver.playerSourceAsync(widget.entity);
-      if (!_lifecycle.isCurrent(generation)) return;
+      await _player.stop();
+      await _sourceLease?.close();
+      _sourceLease = null;
+      final lease = await widget.sourceResolver.acquireFile(widget.entity);
+      if (!_lifecycle.isCurrent(generation)) {
+        await lease.close();
+        return;
+      }
+      _sourceLease = lease;
+      final source = lease.file.path;
       await _player.open(
         Media(source),
       );
@@ -155,6 +163,9 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
       await _player.dispose();
     } catch (error, stackTrace) {
       debugPrint('Video player dispose failed: $error\n$stackTrace');
+    } finally {
+      await _sourceLease?.close();
+      _sourceLease = null;
     }
     try {
       await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -850,4 +861,3 @@ class _VideoProgressTouchZone extends StatelessWidget {
     )));
   }
 }
-

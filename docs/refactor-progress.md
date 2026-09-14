@@ -8,6 +8,30 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Baseline
 
+### Source-file ownership and temporary storage
+
+- Replaced path-only SAF session caching and synchronous filesystem eviction
+  with SourceFileCache. Keys include entity ID, source revision and locator;
+  browser DTOs and restored audio sessions carry the current source revision.
+- Every active image/PDF/document/media consumer now owns a SourceFileLease.
+  Image prefetch releases after decoding; archive documents release after their
+  retained archive session closes; media releases after player stop/disposal.
+  Late opens also release their lease. Repeated lease close is idempotent.
+- Serialized copy admission reserves capacity before native I/O, shares matching
+  versions and evicts only unleased temporary files using asynchronous I/O.
+  Normal budget remains 2 GB. Compatibility exception: one known oversized
+  source may reserve exclusively; it is removed when its last lease closes.
+- Android enforces the granted byte limit while copying and removes partial
+  files on failure. Source originals and offline preview assets are untouched.
+- Validation: all 96 Flutter tests passed; analyze and Android compileDebugKotlin
+  passed (Flutter kernel task excluded, dependencies offline). Regression coverage
+  includes concurrent leases, revision changes, failed reservation recovery,
+  oversized copies, exclusive large files and source-file preservation.
+- Real-device rapid viewer transitions/large SAF streams remain unverified.
+  Build-stage transient files retain their separate scan scope; cancellation
+  during a blocking native source read and full AppRuntime shutdown remain
+  future work. No APK installation or remote push performed.
+
 ### Archive preview consolidation
 
 - EPUB/DOCX excerpt and first illustration now share one archive session in a

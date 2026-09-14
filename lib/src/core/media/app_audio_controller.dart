@@ -54,6 +54,7 @@ class AppAudioController extends ChangeNotifier {
   final AudioSessionCreator _onSessionCreated;
   final AudioSessionUpdater _onSessionUpdated;
   final MediaSourceResolver _sourceResolver;
+  SourceFileLease? _sourceLease;
   final MediaPlayerLifecycle _lifecycle = MediaPlayerLifecycle();
   StreamSubscription<bool>? _completedSubscription;
   StreamSubscription<bool>? _playingSubscription;
@@ -236,8 +237,16 @@ class AppAudioController extends ChangeNotifier {
         duration: Duration(milliseconds: entity.durationMs ?? 0));
     _notifyListenersSafely();
     try {
-      final source = await _sourceResolver.playerSourceAsync(entity);
-      if (!_lifecycle.isCurrent(generation)) return;
+      await player.stop();
+      await _sourceLease?.close();
+      _sourceLease = null;
+      final lease = await _sourceResolver.acquireFile(entity);
+      if (!_lifecycle.isCurrent(generation)) {
+        await lease.close();
+        return;
+      }
+      _sourceLease = lease;
+      final source = lease.file.path;
       await player.open(Media(source), play: autoplay);
       if (!_lifecycle.isCurrent(generation)) {
         await player.stop();
@@ -507,6 +516,8 @@ class AppAudioController extends ChangeNotifier {
     if (player != null) {
       await _disposePlayer(player);
     }
+    await _sourceLease?.close();
+    _sourceLease = null;
     progress.dispose();
     _disposeNotifier();
   }

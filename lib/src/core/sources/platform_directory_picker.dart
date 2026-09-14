@@ -123,6 +123,7 @@ class PlatformDirectoryPicker {
     String source, {
     String? name,
     String cacheScope = 'session',
+    int? maxBytes,
   }) async {
     if (!isSupported) {
       throw UnsupportedError('Android SAF is only available on Android');
@@ -132,6 +133,7 @@ class PlatformDirectoryPicker {
       {
         'source': source,
         'cacheScope': cacheScope,
+        if (maxBytes != null) 'maxBytes': maxBytes,
         if (name != null) 'name': name,
       },
     );

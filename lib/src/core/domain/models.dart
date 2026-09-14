@@ -485,6 +485,7 @@ class IndexTreeSnapshot {
 
 class EntityListItem {
   const EntityListItem({
+    this.sourceRevision = 1,
     required this.id,
     required this.title,
     required this.entityType,
@@ -511,6 +512,7 @@ class EntityListItem {
     this.localPath,
   });
 
+  final int sourceRevision;
   final String id;
   final String title;
   final EntityType entityType;

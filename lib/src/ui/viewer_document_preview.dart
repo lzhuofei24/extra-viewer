@@ -59,7 +59,7 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
   void dispose() {
     _saveState();
     unawaited(widget.documentFuture.then<void>(
-      (document) => document?.archiveSession?.close(),
+      (document) => document?.close(),
       onError: (_, __) {},
     ));
     _controller.dispose();

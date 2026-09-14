@@ -186,6 +186,7 @@ int _restoredEpubChapter(EntityListItem entity) {
 class _PdfPreviewState extends State<_PdfPreview> {
   PdfViewerController? _controller;
   late final Future<File> _sourceFile;
+  late final Future<SourceFileLease> _sourceLease;
   late int _currentPage;
   int? _pageCount;
   late final Set<int> _bookmarks;
@@ -195,12 +196,15 @@ class _PdfPreviewState extends State<_PdfPreview> {
     super.initState();
     _currentPage = _restoredPdfPage(widget.entity);
     _bookmarks = _restoredPdfBookmarks(widget.entity);
-    _sourceFile = widget.sourceResolver.localFileAsync(widget.entity);
+    _sourceLease = widget.sourceResolver.acquireFile(widget.entity);
+    _sourceFile = _sourceLease.then((lease) => lease.file);
   }
 
   @override
   void dispose() {
     _persistReaderState();
+    unawaited(
+        _sourceLease.then<void>((lease) => lease.close(), onError: (_, __) {}));
     super.dispose();
   }
 
@@ -428,4 +432,3 @@ Set<int> _restoredPdfBookmarks(EntityListItem entity) {
     return <int>{};
   }
 }
-

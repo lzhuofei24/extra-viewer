@@ -1053,6 +1053,7 @@ IndexNode _nodeFromMap(Map<Object?, Object?> map) => IndexNode(
     );
 
 EntityListItem _entityFromMap(Map<Object?, Object?> map) => EntityListItem(
+      sourceRevision: map['sourceRevision'] as int? ?? 1,
       id: map['id']! as String,
       title: map['title']! as String,
       entityType: EntityType.fromValue(map['entityType']! as String),

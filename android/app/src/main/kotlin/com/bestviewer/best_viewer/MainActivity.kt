@@ -124,6 +124,7 @@ class MainActivity : FlutterActivity() {
                     call.argument<String>("source"),
                     call.argument<String>("name"),
                     call.argument<String>("cacheScope"),
+                    call.argument<Number>("maxBytes")?.toLong(),
                     result,
                 )
                 "readDocumentPrefix" -> readDocumentPrefix(
@@ -278,6 +279,7 @@ class MainActivity : FlutterActivity() {
         source: String?,
         name: String?,
         cacheScope: String?,
+        maxBytes: Long?,
         result: MethodChannel.Result,
     ) {
         if (source.isNullOrBlank()) {
@@ -286,7 +288,7 @@ class MainActivity : FlutterActivity() {
         }
         sourceExecutor.execute {
             try {
-                val path = materializeDocument(Uri.parse(source), name, cacheScope)
+                val path = materializeDocument(Uri.parse(source), name, cacheScope, maxBytes)
                 runOnUiThread { result.success(path) }
             } catch (error: Exception) {
                 runOnUiThread {
@@ -892,7 +894,7 @@ class MainActivity : FlutterActivity() {
     )
 
 
-    private fun materializeDocument(uri: Uri, name: String?, cacheScope: String?): String {
+    private fun materializeDocument(uri: Uri, name: String?, cacheScope: String?, maxBytes: Long?): String {
         val extension = name?.substringAfterLast('.', "")?.takeIf { it.isNotEmpty() }
         val directoryName = when (cacheScope) {
             "scan" -> "saf_scan_transient"
@@ -901,11 +903,26 @@ class MainActivity : FlutterActivity() {
         }
         val outputDirectory = File(cacheDir, directoryName).apply { mkdirs() }
         val output = File.createTempFile("source_", extension?.let { ".${it}" }, outputDirectory)
-        contentResolver.openInputStream(uri).use { input ->
+        try {
+          contentResolver.openInputStream(uri).use { input ->
             requireNotNull(input) { "Cannot open selected document" }
-            output.outputStream().use { outputStream -> input.copyTo(outputStream) }
+            output.outputStream().use { outputStream ->
+                val buffer = ByteArray(64 * 1024)
+                var copied = 0L
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    copied += count
+                    require(maxBytes == null || copied <= maxBytes) { "Source exceeds temporary storage budget" }
+                    outputStream.write(buffer, 0, count)
+                }
+            }
+          }
+          return output.absolutePath
+        } catch (error: Exception) {
+            output.delete()
+            throw error
         }
-        return output.absolutePath
     }
 
     private fun readDocumentPrefix(

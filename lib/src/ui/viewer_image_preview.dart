@@ -37,6 +37,7 @@ class _ImagePreview extends StatefulWidget {
 class _ImagePreviewState extends State<_ImagePreview> {
   late final TransformationController _controller;
   late final Future<File> _sourceFile;
+  late final Future<SourceFileLease> _sourceLease;
   int _backgroundIndex = 0;
   bool _isInspecting = false;
   bool _toolbarCollapsed = false;
@@ -51,11 +52,14 @@ class _ImagePreviewState extends State<_ImagePreview> {
   void initState() {
     super.initState();
     _controller = TransformationController();
-    _sourceFile = widget.sourceResolver.localFileAsync(widget.entity);
+    _sourceLease = widget.sourceResolver.acquireFile(widget.entity);
+    _sourceFile = _sourceLease.then((lease) => lease.file);
   }
 
   @override
   void dispose() {
+    unawaited(
+        _sourceLease.then<void>((lease) => lease.close(), onError: (_, __) {}));
     widget.onReaderStateChanged
         ?.call(zoomScale: _controller.value.getMaxScaleOnAxis());
     _controller.dispose();
@@ -296,4 +300,3 @@ class _ImageErrorMessage extends StatelessWidget {
     );
   }
 }
-

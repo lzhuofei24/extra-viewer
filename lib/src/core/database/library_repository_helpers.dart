@@ -517,6 +517,7 @@ IndexNodeEdge _edgeFromRow(Row row) {
 EntityListItem _listItemFromRow(Row row, ThumbnailStore thumbnailStore) {
   final entity = _entityFromRow(row, thumbnailStore);
   return EntityListItem(
+    sourceRevision: entity.sourceRevision,
     id: entity.id,
     title: entity.name,
     entityType: entity.entityType,

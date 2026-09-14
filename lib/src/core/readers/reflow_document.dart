@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:async';
 
 import 'archive_session.dart';
 
@@ -38,11 +39,18 @@ class ReflowDocument {
     required this.title,
     required this.chapters,
     this.archiveSession,
+    this.releaseSource,
   });
 
   final String title;
   final List<ReflowChapter> chapters;
   final ArchiveSession? archiveSession;
+  final Future<void> Function()? releaseSource;
+
+  Future<void> close() async {
+    archiveSession?.close();
+    await releaseSource?.call();
+  }
 
   String get plainText => chapters
       .expand((chapter) => chapter.blocks)

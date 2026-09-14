@@ -177,6 +177,8 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
   @override
   void dispose() {
     _imagePrefetchQueue.clear();
+    unawaited(_documentFuture.then<void>((document) => document?.close(),
+        onError: (_, __) {}));
     _activePrefetchWindow.clear();
     _persistCurrentReaderState();
     super.dispose();
@@ -198,24 +200,44 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
         viewerKind != ViewerKind.epubReader) {
       return null;
     }
-    final file = await _sourceResolver.localFileAsync(_current);
-    if (!await file.exists()) {
-      throw FileSystemException(
-        '文件不存在',
-        _sourceResolver.displayLocation(_current),
-      );
+    final lease = await _sourceResolver.acquireFile(_current);
+    final file = lease.file;
+    try {
+      if (!await file.exists()) {
+        throw FileSystemException(
+          '文件不存在',
+          _sourceResolver.displayLocation(_current),
+        );
+      }
+      if (viewerKind == ViewerKind.docxReader) {
+        final document = await openDocxDocumentSession(file);
+        return ReflowDocument(
+            title: document.title,
+            chapters: document.chapters,
+            archiveSession: document.archiveSession,
+            releaseSource: lease.close);
+      }
+      if (viewerKind == ViewerKind.epubReader) {
+        final document = await openEpubDocumentSession(file);
+        return ReflowDocument(
+            title: document.title,
+            chapters: document.chapters,
+            archiveSession: document.archiveSession,
+            releaseSource: lease.close);
+      }
+      final document = await readReflowTextDocument(file);
+      await lease.close();
+      return document;
+    } catch (_) {
+      await lease.close();
+      rethrow;
     }
-    if (viewerKind == ViewerKind.docxReader) {
-      return openDocxDocumentSession(file);
-    }
-    if (viewerKind == ViewerKind.epubReader) {
-      return openEpubDocumentSession(file);
-    }
-    return readReflowTextDocument(file);
   }
 
   void _goTo(int index) {
     if (index < 0 || index >= _navigationQueue.length) return;
+    unawaited(_documentFuture.then<void>((document) => document?.close(),
+        onError: (_, __) {}));
     _persistCurrentReaderState();
     setState(() {
       _currentIndex = index;
@@ -289,8 +311,10 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
         final entity = _imagePrefetchQueue.removeFirst();
         if (!_activePrefetchWindow.containsKey(entity.id)) continue;
         _inFlightPrefetchIds.add(entity.id);
+        SourceFileLease? lease;
         try {
-          final file = await _sourceResolver.localFileAsync(entity);
+          lease = await _sourceResolver.acquireFile(entity);
+          final file = lease.file;
           if (!mounted) return;
           if (!_activePrefetchWindow.containsKey(entity.id)) continue;
           if (await file.exists()) {
@@ -311,6 +335,7 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
         } catch (_) {
           _failedImagePrefetchIds.add(entity.id);
         } finally {
+          await lease?.close();
           _inFlightPrefetchIds.remove(entity.id);
         }
         if (_activePrefetchWindow.containsKey(entity.id) &&
