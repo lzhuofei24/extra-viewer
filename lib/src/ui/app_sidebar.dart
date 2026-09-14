@@ -92,9 +92,9 @@ class AppSidebar extends StatelessWidget {
           EdgeInsets.fromLTRB(collapsed ? 2 : 6, 14, collapsed ? 2 : 6, 12),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          if (constraints.maxHeight < 520) {
-            return ListView(
-              padding: EdgeInsets.zero,
+          return SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 _SidebarCollapseButton(
                   collapsed: collapsed,
@@ -117,36 +117,7 @@ class AppSidebar extends StatelessWidget {
                     onTap: () => _select(item),
                   ),
               ],
-            );
-          }
-          return Column(
-            children: [
-              Align(
-                alignment: collapsed ? Alignment.center : Alignment.centerRight,
-                child: _SidebarCollapseButton(
-                  collapsed: collapsed,
-                  onTap: onToggleCollapsed,
-                ),
-              ),
-              const SizedBox(height: 10),
-              for (final item in _primaryItems)
-                _SidebarButton(
-                  item: item,
-                  selected: _isSelected(item),
-                  collapsed: collapsed,
-                  onTap: () => _select(item),
-                ),
-              const Spacer(),
-              Divider(color: theme.colorScheme.outlineVariant),
-              const SizedBox(height: 8),
-              for (final item in _utilityItems)
-                _SidebarButton(
-                  item: item,
-                  selected: _isSelected(item),
-                  collapsed: collapsed,
-                  onTap: () => _select(item),
-                ),
-            ],
+            ),
           );
         },
       ),

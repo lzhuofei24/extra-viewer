@@ -14,9 +14,10 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
 
     expect(find.text('首页'), findsWidgets);
-    expect(find.byIcon(Icons.collections_bookmark_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.folder_copy_outlined), findsOneWidget);
     expect(find.byIcon(Icons.star_outline_rounded), findsNothing);
     expect(find.byIcon(Icons.search_outlined), findsNothing);
     expect(find.byIcon(Icons.tune_outlined), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

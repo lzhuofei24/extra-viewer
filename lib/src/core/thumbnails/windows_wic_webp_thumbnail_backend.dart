@@ -237,8 +237,11 @@ final class _WicBindings {
   static String _libraryPath() {
     const name = 'best_viewer_thumbnail_native.dll';
     final candidates = <String>[
+      if (Platform.environment['BEST_VIEWER_NATIVE_DLL'] case final String path)
+        path,
       '${File(Platform.resolvedExecutable).parent.path}${Platform.pathSeparator}$name',
       '${Directory.current.path}${Platform.pathSeparator}build${Platform.pathSeparator}windows${Platform.pathSeparator}x64${Platform.pathSeparator}runner${Platform.pathSeparator}Debug${Platform.pathSeparator}$name',
+      '${Directory.current.path}${Platform.pathSeparator}build${Platform.pathSeparator}native-tests${Platform.pathSeparator}Release${Platform.pathSeparator}$name',
     ];
     return candidates.firstWhere(
       (path) => File(path).existsSync(),
