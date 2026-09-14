@@ -12,6 +12,7 @@ import 'package:window_manager/window_manager.dart';
 import 'core/database/app_database.dart';
 import 'modules/infrastructure/database_runtime.dart';
 import 'modules/infrastructure/app_runtime.dart';
+import 'modules/viewer/viewer_sessions.dart';
 import 'modules/previews/dirty_preview_scheduler.dart';
 import 'core/database/library_write_worker.dart';
 import 'modules/library/library_client.dart';
@@ -117,6 +118,7 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
+  final _viewerSessions = ViewerSessions();
   DirtyPreviewScheduler? _dirtyPreviews;
   Future<void>? _bootstrapFuture;
   final _runtime = AppRuntime(onFailure: (failure) {
@@ -247,6 +249,8 @@ class _AppShellState extends State<AppShell> {
 
   void _registerRuntimeResources() {
     _runtime
+      ..register(
+          'viewer-stop', RuntimeClosePhase.stopWork, _viewerSessions.stop)
       ..register('source-reads', RuntimeClosePhase.stopWork,
           MediaSourceResolver.stopSessionReads)
       ..register('dirty-preview-stop', RuntimeClosePhase.stopWork,
@@ -262,6 +266,7 @@ class _AppShellState extends State<AppShell> {
       ..register('audio', RuntimeClosePhase.media, () async {
         await _audioController?.close();
       })
+      ..register('viewers', RuntimeClosePhase.media, _viewerSessions.close)
       ..register('dirty-previews', RuntimeClosePhase.caches, () async {
         await _dirtyPreviews?.close();
       })
@@ -1567,11 +1572,13 @@ class _AppShellState extends State<AppShell> {
   }
 
   Future<void> _openEntity(EntityListItem entity) async {
+    if (!mounted || _viewerSessions.isStopped) return;
     final repository = _repository;
     final audioController = _audioController;
     if (repository == null || audioController == null) return;
     (await repository.markOpened(entity.id));
     final detail = (await repository.getEntity(entity.id));
+    if (!mounted || _viewerSessions.isStopped) return;
     setState(() => _detail = detail);
     final sourceNode = _currentIndexNode;
     final playbackQueue =
@@ -1583,7 +1590,9 @@ class _AppShellState extends State<AppShell> {
             : _entities;
     final libraryOverlay = entity.entityType == EntityType.image ||
         entity.entityType == EntityType.video;
+    if (!mounted || _viewerSessions.isStopped) return;
     EntityViewerPage buildViewer() => EntityViewerPage(
+          sessions: _viewerSessions,
           entity: entity,
           queue: playbackQueue,
           sourceNode: sourceNode,

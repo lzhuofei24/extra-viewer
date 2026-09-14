@@ -27,6 +27,7 @@ class _DocumentInfoPreview extends StatelessWidget {
 class _ReflowDocumentPreview extends StatefulWidget {
   const _ReflowDocumentPreview({
     super.key,
+    required this.sessions,
     required this.documentFuture,
     required this.initialScrollOffset,
     this.initialPosition,
@@ -36,6 +37,7 @@ class _ReflowDocumentPreview extends StatefulWidget {
   });
 
   final Future<ReflowDocument?> documentFuture;
+  final ViewerSessions sessions;
   final double? initialScrollOffset;
   final ReadingPosition? initialPosition;
   final int sourceRevision;
@@ -47,6 +49,8 @@ class _ReflowDocumentPreview extends StatefulWidget {
 }
 
 class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
+  late final ViewerSession _session;
+  bool _sessionClosed = false;
   late final ScrollController _controller;
   double? _lastPersistedOffset;
   int _chapterIndex = 0;
@@ -95,6 +99,7 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
   }
 
   Future<void> _restoreAnchor(int target, double fraction) async {
+    if (_sessionClosed) return;
     final generation = ++_restoreGeneration;
     _anchorRestoring = true;
     try {
@@ -148,16 +153,20 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
     _page = widget.initialPosition?.sourceRevision == widget.sourceRevision
         ? widget.initialPosition!.page
         : 0;
+    _session = widget.sessions.register(() async {
+      _saveState();
+      _sessionClosed = true;
+      _cancelAnchorRestore();
+      await widget.documentFuture
+          .then<void>((document) => document?.close(), onError: (_, __) {});
+    });
   }
 
   @override
   void dispose() {
-    _saveState();
-    _cancelAnchorRestore();
-    unawaited(widget.documentFuture.then<void>(
-      (document) => document?.close(),
-      onError: (_, __) {},
-    ));
+    unawaited(_session.close().catchError((Object error, StackTrace stack) {
+      debugPrint('Reader close failed: $error\n$stack');
+    }));
     _controller.dispose();
     super.dispose();
   }
@@ -175,6 +184,7 @@ class _ReflowDocumentPreviewState extends State<_ReflowDocumentPreview> {
   }
 
   void _saveState() {
+    if (_sessionClosed) return;
     if (!_restored || _anchorRestoring) return;
     if (!_bookMode) _captureAnchor();
     final offset =

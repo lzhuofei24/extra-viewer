@@ -17,6 +17,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/domain/models.dart';
 import '../modules/browser/original_image_budget.dart';
 import '../modules/viewer/reading_position.dart';
+import '../modules/viewer/viewer_sessions.dart';
 import '../core/formats/file_format_handlers.dart';
 import '../core/media/audio_waveform_service.dart';
 import '../core/media/app_audio_controller.dart';
@@ -72,6 +73,7 @@ enum _PlaybackQueueMode {
 class EntityViewerPage extends StatefulWidget {
   const EntityViewerPage({
     super.key,
+    required this.sessions,
     required this.entity,
     this.queue = const [],
     this.sourceNode,
@@ -87,6 +89,7 @@ class EntityViewerPage extends StatefulWidget {
   });
 
   final EntityListItem entity;
+  final ViewerSessions sessions;
   final List<EntityListItem> queue;
   final IndexNode? sourceNode;
   final ValueChanged<EntityListItem>? onEntityOpened;
@@ -104,6 +107,20 @@ class EntityViewerPage extends StatefulWidget {
 }
 
 class _EntityViewerPageState extends State<EntityViewerPage> {
+  late final ViewerSession _session;
+  bool _closing = false;
+  Future<void>? _prefetchDrain;
+  final _retiredDocuments = <Future<void>>{};
+
+  Future<void> _retireDocument(Future<ReflowDocument?> document) {
+    late final Future<void> closing;
+    closing = document
+        .then<void>((value) => value?.close(), onError: (_, __) {})
+        .whenComplete(() => _retiredDocuments.remove(closing));
+    _retiredDocuments.add(closing);
+    return closing;
+  }
+
   // Keep the current original plus two predecessors and three successors.
   static const _imageWindowOffsets = <int>[0, 1, 2, 3, -1, -2];
 
@@ -251,6 +268,7 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
     _currentIndex = index < 0 ? 0 : index;
     _textSettings = _TextReaderSettings.fromJson(_current.extraStateJson);
     _documentFuture = _loadDocument();
+    _session = widget.sessions.register(_closeResources);
     _scheduleImageWindowPrefetch();
     if (_current.entityType == EntityType.video) {
       widget.audioController.pause();
@@ -259,12 +277,23 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
 
   @override
   void dispose() {
+    unawaited(_session.close().catchError((Object error, StackTrace stack) {
+      debugPrint('Viewer close failed: $error\n$stack');
+    }));
+    super.dispose();
+  }
+
+  Future<void> _closeResources() async {
+    _closing = true;
     _imagePrefetchQueue.clear();
-    unawaited(_documentFuture.then<void>((document) => document?.close(),
-        onError: (_, __) {}));
     _activePrefetchWindow.clear();
     _persistCurrentReaderState();
-    super.dispose();
+    await Future.wait([
+      _documentFuture.then<void>((document) => document?.close(),
+          onError: (_, __) {}),
+      ..._retiredDocuments,
+      if (_prefetchDrain != null) _prefetchDrain!,
+    ]);
   }
 
   void _persistCurrentReaderState() {
@@ -319,9 +348,12 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
   }
 
   void _goTo(int index) {
+    if (_closing || widget.sessions.isStopped) return;
     if (index < 0 || index >= _navigationQueue.length) return;
-    unawaited(_documentFuture.then<void>((document) => document?.close(),
-        onError: (_, __) {}));
+    unawaited(_retireDocument(_documentFuture)
+        .catchError((Object error, StackTrace stack) {
+      debugPrint('Retired document close failed: $error\n$stack');
+    }));
     _persistCurrentReaderState();
     setState(() {
       _currentIndex = index;
@@ -337,6 +369,7 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
   }
 
   void _scheduleImageWindowPrefetch() {
+    if (_closing || widget.sessions.isStopped) return;
     if (_current.entityType != EntityType.image) {
       _replaceImagePrefetchWindow(const <EntityListItem>[]);
       return;
@@ -384,14 +417,17 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
             !_failedImagePrefetchIds.contains(entity.id),
       ),
     );
-    unawaited(_drainImagePrefetchQueue());
+    if (!_imagePrefetchRunning) {
+      _prefetchDrain = _drainImagePrefetchQueue();
+      unawaited(_prefetchDrain);
+    }
   }
 
   Future<void> _drainImagePrefetchQueue() async {
     if (_imagePrefetchRunning) return;
     _imagePrefetchRunning = true;
     try {
-      while (mounted && _imagePrefetchQueue.isNotEmpty) {
+      while (mounted && !_closing && _imagePrefetchQueue.isNotEmpty) {
         final entity = _imagePrefetchQueue.removeFirst();
         if (!_activePrefetchWindow.containsKey(entity.id)) continue;
         _inFlightPrefetchIds.add(entity.id);
@@ -399,12 +435,14 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
         try {
           lease = await _sourceResolver.acquireFile(entity);
           final file = lease.file;
-          if (!mounted) return;
+          if (!mounted || _closing) return;
           if (!_activePrefetchWindow.containsKey(entity.id)) continue;
           if (await file.exists()) {
-            if (!mounted) return;
+            if (!mounted || _closing) return;
             final expected = await _originalDecodeBytes(file);
-            if (!mounted || !_activePrefetchWindow.containsKey(entity.id)) {
+            if (!mounted ||
+                _closing ||
+                !_activePrefetchWindow.containsKey(entity.id)) {
               continue;
             }
             _originalBytes[entity.id] = expected;
@@ -601,6 +639,7 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                             },
                           ),
                         ViewerKind.epubReader => _ReflowDocumentPreview(
+                            sessions: widget.sessions,
                             key: ValueKey(entity.id),
                             documentFuture: _documentFuture,
                             initialScrollOffset: entity.readerScrollOffset,
@@ -622,6 +661,7 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                             },
                           ),
                         ViewerKind.docxReader => _ReflowDocumentPreview(
+                            sessions: widget.sessions,
                             key: ValueKey(entity.id),
                             documentFuture: _documentFuture,
                             initialScrollOffset: entity.readerScrollOffset,
@@ -642,6 +682,7 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                           ),
                         _ => switch (entity.entityType) {
                             EntityType.image => _ImagePreview(
+                                sessions: widget.sessions,
                                 key: ValueKey(entity.id),
                                 entity: entity,
                                 sourceResolver: _sourceResolver,
@@ -686,6 +727,7 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                                 },
                               ),
                             EntityType.text => _ReflowDocumentPreview(
+                                sessions: widget.sessions,
                                 key: ValueKey(entity.id),
                                 documentFuture: _documentFuture,
                                 initialScrollOffset: entity.readerScrollOffset,
@@ -714,6 +756,7 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                                 sourceNode: widget.sourceNode,
                               ),
                             EntityType.video => _VideoPlayerPreview(
+                                sessions: widget.sessions,
                                 key: ValueKey(entity.id),
                                 entity: entity,
                                 sourceResolver: _sourceResolver,

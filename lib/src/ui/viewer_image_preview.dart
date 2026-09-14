@@ -3,6 +3,7 @@ part of 'builtin_media_page.dart';
 class _ImagePreview extends StatefulWidget {
   const _ImagePreview({
     super.key,
+    required this.sessions,
     required this.entity,
     required this.sourceResolver,
     this.transparentStage = false,
@@ -18,6 +19,7 @@ class _ImagePreview extends StatefulWidget {
   });
 
   final EntityListItem entity;
+  final ViewerSessions sessions;
   final MediaSourceResolver sourceResolver;
   final bool transparentStage;
   final VoidCallback? onReturnToSource;
@@ -35,6 +37,7 @@ class _ImagePreview extends StatefulWidget {
 }
 
 class _ImagePreviewState extends State<_ImagePreview> {
+  late final ViewerSession _session;
   late final TransformationController _controller;
   late final Future<File> _sourceFile;
   late final Future<SourceFileLease> _sourceLease;
@@ -54,14 +57,19 @@ class _ImagePreviewState extends State<_ImagePreview> {
     _controller = TransformationController();
     _sourceLease = widget.sourceResolver.acquireFile(widget.entity);
     _sourceFile = _sourceLease.then((lease) => lease.file);
+    _session = widget.sessions.register(() async {
+      widget.onReaderStateChanged
+          ?.call(zoomScale: _controller.value.getMaxScaleOnAxis());
+      await _sourceLease.then<void>((lease) => lease.close(),
+          onError: (_, __) {});
+    });
   }
 
   @override
   void dispose() {
-    unawaited(
-        _sourceLease.then<void>((lease) => lease.close(), onError: (_, __) {}));
-    widget.onReaderStateChanged
-        ?.call(zoomScale: _controller.value.getMaxScaleOnAxis());
+    unawaited(_session.close().catchError((Object error, StackTrace stack) {
+      debugPrint('Image close failed: $error\n$stack');
+    }));
     _controller.dispose();
     super.dispose();
   }

@@ -8,6 +8,26 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Baseline
 
+### Runtime-owned viewer sessions
+
+- Added a Flutter-independent ViewerSessions registry. Normal widget disposal
+  and runtime shutdown share idempotent release futures. Already-closing
+  sessions stay registered until completion; one failure does not skip the
+  remaining sessions. Completed sessions are removed from the registry.
+- Runtime stops new viewer sessions before work draining and waits for viewer
+  cleanup before cache/database shutdown. Viewer entry checks shutdown again
+  after asynchronous queries to avoid mounting a late viewer.
+- Video players, image source leases, reflow reading-state saves, archive
+  sessions and original-image prefetch drains are registered. Pending closes
+  of documents from earlier navigation are also drained. Reflow disposal after
+  runtime close cannot save again into a closed database.
+- Validation: full 116-test suite and static analysis passed before the final
+  late-entry guards; final static analysis, four session/shell tests and
+  git diff --check passed after those guards.
+- PDF native widget teardown is not yet registered, and active native decode
+  cancellation still requires device verification. This is not full runtime
+  or refactor completion.
+
 ### Source session shutdown ownership
 
 - AppRuntime stops session source reads before draining work and closes the

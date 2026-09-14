@@ -3,6 +3,7 @@ part of 'builtin_media_page.dart';
 class _VideoPlayerPreview extends StatefulWidget {
   const _VideoPlayerPreview({
     super.key,
+    required this.sessions,
     required this.entity,
     required this.sourceResolver,
     this.transparentStage = false,
@@ -17,6 +18,7 @@ class _VideoPlayerPreview extends StatefulWidget {
   });
 
   final EntityListItem entity;
+  final ViewerSessions sessions;
   final MediaSourceResolver sourceResolver;
   final bool transparentStage;
   final VoidCallback? onClose;
@@ -33,6 +35,7 @@ class _VideoPlayerPreview extends StatefulWidget {
 }
 
 class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
+  late final ViewerSession _session;
   late final Player _player;
   late final VideoController _controller;
   final MediaPlayerLifecycle _lifecycle = MediaPlayerLifecycle();
@@ -87,6 +90,7 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
     _open();
     _progressSaveTimer =
         Timer.periodic(const Duration(seconds: 5), (_) => _savePlaybackState());
+    _session = widget.sessions.register(_close);
   }
 
   Future<void> _open() {
@@ -140,7 +144,9 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
 
   @override
   void dispose() {
-    unawaited(_close());
+    unawaited(_session.close().catchError((Object error, StackTrace stack) {
+      debugPrint('Video close failed: $error\n$stack');
+    }));
     super.dispose();
   }
 
