@@ -99,11 +99,36 @@ class ThumbnailService {
         'webp',
       );
       if (handler is ImageFileHandler) {
-        artifact = await _encodeAndroidImageWithFallback(
-          entity,
-          nativeOutputPath,
-          cancellationToken,
-        );
+        try {
+          artifact = await _encodeAndroidImageWithFallback(
+            entity,
+            nativeOutputPath,
+            cancellationToken,
+          );
+        } catch (_) {
+          // Android BitmapFactory cannot decode some animated GIFs. Use the
+          // Dart image decoder on a bounded temporary source as the final
+          // Android fallback instead of retrying the same native decoder.
+          if (!entity.path.startsWith('content://')) rethrow;
+          final fallbackPath = await PlatformDirectoryPicker.materializeDocument(
+            entity.path,
+            name: entity.name,
+            cacheScope: 'thumbnail_fallback',
+            maxBytes: 50 * 1024 * 1024,
+            cancellationToken: cancellationToken,
+          );
+          final bytes = await handler.buildThumbnailWebp(File(fallbackPath));
+          cancellationToken?.throwIfCancelled();
+          final decoded = img.decodeImage(bytes);
+          if (decoded == null) {
+            throw const FormatException('GIF fallback decode failed');
+          }
+          artifact = ThumbnailArtifact(
+            bytes: bytes,
+            width: decoded.width,
+            height: decoded.height,
+          );
+        }
         cancellationToken?.throwIfCancelled();
         artifact ??= await windowsWicBackend?.encode(
           sourceFile,
