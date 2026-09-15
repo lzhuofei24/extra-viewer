@@ -455,12 +455,19 @@ class MainActivity : FlutterActivity() {
         if (requestId != null) thumbnailJobs[requestId] = job
         job.future = sourceExecutor.submit {
             var ownedBitmap: Bitmap? = null
+            var sourceDescriptor: android.os.ParcelFileDescriptor? = null
             val retriever = MediaMetadataRetriever()
             try {
                 job.checkActive()
                 val readStarted = SystemClock.elapsedRealtime()
                 if (source.startsWith("content://")) {
-                    retriever.setDataSource(this, Uri.parse(source))
+                    val uri = Uri.parse(source)
+                    sourceDescriptor = contentResolver.openFileDescriptor(uri, "r")
+                    if (sourceDescriptor != null) {
+                        retriever.setDataSource(sourceDescriptor!!.fileDescriptor)
+                    } else {
+                        retriever.setDataSource(this, uri)
+                    }
                 } else {
                     retriever.setDataSource(source)
                 }
@@ -537,6 +544,8 @@ class MainActivity : FlutterActivity() {
                 }
             } finally {
                 ownedBitmap?.let { if (!it.isRecycled) it.recycle() }
+                sourceDescriptor?.close()
+                retriever.release()
                 if (requestId != null) {
                     thumbnailJobs.remove(requestId, job)
                 }
@@ -656,7 +665,13 @@ class MainActivity : FlutterActivity() {
 
     private fun decodeBitmap(source: String, options: BitmapFactory.Options): Bitmap? {
         return if (source.startsWith("content://")) {
-            contentResolver.openInputStream(Uri.parse(source))?.use { stream ->
+            val uri = Uri.parse(source)
+            // A few document providers expose a valid file descriptor while
+            // their InputStream wrapper returns an incomplete stream. Prefer
+            // the descriptor, then retain the stream path as a provider fallback.
+            contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+                BitmapFactory.decodeFileDescriptor(descriptor.fileDescriptor, null, options)
+            } ?: contentResolver.openInputStream(uri)?.use { stream ->
                 BitmapFactory.decodeStream(stream, null, options)
             }
         } else {
