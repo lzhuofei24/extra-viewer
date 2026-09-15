@@ -168,7 +168,8 @@ class ImageFileHandler extends FileFormatHandler {
   Future<Uint8List> buildThumbnailWebp(File file) async {
     try {
       final bytes = await file.readAsBytes();
-      return Isolate.run(() => _encodeAdaptiveWebpThumbnail(bytes));
+      final isGif = p.extension(file.path).toLowerCase() == '.gif';
+      return Isolate.run(() => _encodeAdaptiveWebpThumbnail(bytes, isGif: isGif));
     } on FileSystemException {
       rethrow;
     } catch (_) {
@@ -250,8 +251,11 @@ List<int> _encodeAdaptivePngThumbnail(img.Image source) {
   return img.encodePng(resized, level: 6);
 }
 
-Uint8List _encodeAdaptiveWebpThumbnail(Uint8List sourceBytes) {
-  final source = img.decodeImage(sourceBytes);
+Uint8List _encodeAdaptiveWebpThumbnail(
+  Uint8List sourceBytes, {
+  bool isGif = false,
+}) {
+  final source = isGif ? img.decodeGif(sourceBytes) : img.decodeImage(sourceBytes);
   if (source == null) {
     throw const FormatException('Image thumbnail decode failed');
   }
