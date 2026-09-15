@@ -244,6 +244,34 @@ void main() {
         isEmpty);
   });
 
+  test('retrying node failures keeps the task in node stage until successful',
+      () {
+    final database = AppDatabase.openInMemory();
+    addTearDown(database.close);
+    final library = LibraryRepository(database);
+    final builds = LibraryBuildRepository(library);
+    final root = library.ensureDirectoryIndexRoot('/nodes');
+    final job = builds.create(
+        sourcePath: '/nodes', operation: LibraryBuildOperation.rootScan);
+    builds.setRoots(jobId: job.id, indexRootId: root.id);
+    builds.prepareNodePreviewWork(job.id,
+        scopeNodeId: root.id, rootNodeId: root.id, force: true);
+    final attempts = builds.claimNodePreviewWork(job.id);
+    expect(attempts, isNotEmpty);
+    final id = attempts.keys.single;
+    builds.completeNodePreviewWork(job.id,
+        {id: (state: LibraryBuildWorkState.failed, error: 'missing thumbnail')},
+        attempts: attempts);
+    database.db.execute(
+        "UPDATE library_build_jobs SET stage = 'completed', status = 'completedWithErrors', node_preview_failed = 1 WHERE id = ?",
+        [job.id]);
+    builds.retryFailedAssets(job.id);
+    final pending = builds.get(job.id)!;
+    expect(pending.stage, LibraryBuildStage.nodePreviews);
+    expect(pending.status, LibraryBuildStatus.pending);
+    expect(builds.claimNodePreviewWork(job.id), contains(id));
+  });
+
   test('node work claims dirty children before their ancestors', () {
     final database = AppDatabase.openInMemory();
     addTearDown(database.close);

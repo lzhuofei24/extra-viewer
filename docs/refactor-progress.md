@@ -8,6 +8,15 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Baseline
 
+### Failed-preview retry navigation
+
+- Recovery now navigates only for a true `completed` result. A retry that still
+  has failed entity or node work stays on the task page and reports the counts;
+  failed rows remain retryable instead of appearing to do nothing.
+- Added repository coverage proving node failures reset to the node stage and
+  become pending again. Static analysis and 13 controller/repository/shell
+  tests passed.
+
 ### Tablet source-cache pressure and preview failures (2026-09-16)
 
 - Tablet diagnostic UI showed 70 node-preview missing-dependency events and

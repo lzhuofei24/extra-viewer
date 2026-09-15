@@ -1517,7 +1517,17 @@ class _AppShellState extends State<AppShell> {
             ? await tasks.retryFailed(job)
             : await tasks.resume(job);
     if (!mounted) return;
-    if (result?.isCompleted != true) return;
+    if (result?.status == LibraryBuildStatus.completedWithErrors) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '重试已执行，但仍有失败项：实体 ${result!.entityPreviewFailed}，节点 ${result.nodePreviewFailed}。',
+          ),
+        ),
+      );
+      return;
+    }
+    if (result?.status != LibraryBuildStatus.completed) return;
     final targetNode = result?.indexRootId == null
         ? null
         : (await _repository?.getIndexNode(result!.indexRootId!));
@@ -1525,8 +1535,8 @@ class _AppShellState extends State<AppShell> {
     if (targetNode != null) _openIndexNode(targetNode);
     _reload(indexNodeId: targetNode?.id, invalidateBrowserCache: true);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('索引任务完成。'),
+      SnackBar(
+        content: Text(retryFailed ? '失败项重试完成。' : '索引任务完成。'),
       ),
     );
   }
