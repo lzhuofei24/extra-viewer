@@ -15,6 +15,7 @@ import 'thumbnail_artifact.dart';
 import 'thumbnail_cancellation.dart';
 import 'thumbnail_store.dart';
 import 'windows_wic_webp_thumbnail_backend.dart';
+import '../sources/platform_directory_picker.dart';
 
 class ThumbnailService {
   ThumbnailService(
@@ -98,10 +99,10 @@ class ThumbnailService {
         'webp',
       );
       if (handler is ImageFileHandler) {
-        artifact = await androidImageBackend?.encode(
-          entity.path,
-          outputPath: nativeOutputPath,
-          cancellationToken: cancellationToken,
+        artifact = await _encodeAndroidImageWithFallback(
+          entity,
+          nativeOutputPath,
+          cancellationToken,
         );
         cancellationToken?.throwIfCancelled();
         artifact ??= await windowsWicBackend?.encode(
@@ -139,10 +140,10 @@ class ThumbnailService {
           );
         }
       } else if (handler is VideoFileHandler) {
-        artifact = await androidVideoBackend?.encode(
-          entity.path,
-          outputPath: nativeOutputPath,
-          cancellationToken: cancellationToken,
+        artifact = await _encodeAndroidVideoWithFallback(
+          entity,
+          nativeOutputPath,
+          cancellationToken,
         );
         cancellationToken?.throwIfCancelled();
         if (artifact == null) {
@@ -218,6 +219,66 @@ class ThumbnailService {
       stopwatch.stop();
       timings.record(entity.entityType, stopwatch.elapsed, artifact);
       concurrencyAdvisor.record(entity.entityType, stopwatch.elapsed, artifact);
+    }
+  }
+
+  Future<ThumbnailArtifact?> _encodeAndroidImageWithFallback(
+    Entity entity,
+    String outputPath,
+    ThumbnailCancellationToken? cancellationToken,
+  ) async {
+    final backend = androidImageBackend;
+    if (backend == null) return null;
+    try {
+      return await backend.encode(entity.path,
+          outputPath: outputPath, cancellationToken: cancellationToken);
+    } catch (firstError) {
+      cancellationToken?.throwIfCancelled();
+      if (!entity.path.startsWith('content://')) rethrow;
+      // Some SAF providers fail opening a URI intermittently. Materialize one
+      // readable copy and retry the native decoder before marking the entity.
+      final path = await PlatformDirectoryPicker.materializeDocument(
+        entity.path,
+        name: entity.name,
+        cacheScope: 'thumbnail_fallback',
+        maxBytes: 50 * 1024 * 1024,
+        cancellationToken: cancellationToken,
+      );
+      try {
+        return await backend.encode(path,
+            outputPath: outputPath, cancellationToken: cancellationToken);
+      } catch (_) {
+        Error.throwWithStackTrace(firstError, StackTrace.current);
+      }
+    }
+  }
+
+  Future<ThumbnailArtifact?> _encodeAndroidVideoWithFallback(
+    Entity entity,
+    String outputPath,
+    ThumbnailCancellationToken? cancellationToken,
+  ) async {
+    final backend = androidVideoBackend;
+    if (backend == null) return null;
+    try {
+      return await backend.encode(entity.path,
+          outputPath: outputPath, cancellationToken: cancellationToken);
+    } catch (firstError) {
+      cancellationToken?.throwIfCancelled();
+      if (!entity.path.startsWith('content://')) rethrow;
+      final path = await PlatformDirectoryPicker.materializeDocument(
+        entity.path,
+        name: entity.name,
+        cacheScope: 'thumbnail_fallback',
+        maxBytes: 50 * 1024 * 1024,
+        cancellationToken: cancellationToken,
+      );
+      try {
+        return await backend.encode(path,
+            outputPath: outputPath, cancellationToken: cancellationToken);
+      } catch (_) {
+        Error.throwWithStackTrace(firstError, StackTrace.current);
+      }
     }
   }
 
