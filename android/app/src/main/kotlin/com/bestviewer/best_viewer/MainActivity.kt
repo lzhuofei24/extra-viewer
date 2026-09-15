@@ -43,6 +43,7 @@ class MainActivity : FlutterActivity() {
     private val scanExecutor = Executors.newSingleThreadExecutor()
     private val thumbnailJobs = ConcurrentHashMap<String, ThumbnailJob>()
     private val sourceJobs = ConcurrentHashMap<String, ThumbnailJob>()
+    private val sourceDescriptors = ConcurrentHashMap<String, android.os.ParcelFileDescriptor>()
 
     private inner class ThumbnailJob(private val reply: MethodChannel.Result) : MethodChannel.Result {
         val cancelled = AtomicBoolean(false)
@@ -95,6 +96,33 @@ class MainActivity : FlutterActivity() {
             "best_viewer/directory_picker",
         ).setMethodCallHandler { call, result ->
             when (call.method) {
+                "openSourceDescriptor" -> sourceExecutor.execute {
+                    try {
+                        val descriptor = contentResolver.openFileDescriptor(
+                            Uri.parse(call.argument<String>("source")!!), "r"
+                        ) ?: throw IllegalArgumentException("Source cannot be opened")
+                        val token = java.util.UUID.randomUUID().toString()
+                        runOnUiThread {
+                            if (isDestroyed) {
+                                descriptor.close()
+                                result.error("source_closed", "Activity closed", null)
+                            } else {
+                                sourceDescriptors[token] = descriptor
+                                result.success(mapOf("token" to token, "path" to "/proc/self/fd/${descriptor.fd}"))
+                            }
+                        }
+                    } catch (error: Exception) {
+                        runOnUiThread { result.error("source_open", error.message, null) }
+                    }
+                }
+                "closeSourceDescriptor" -> {
+                    try {
+                        sourceDescriptors.remove(call.argument<String>("token"))?.close()
+                        result.success(null)
+                    } catch (error: Exception) {
+                        result.error("source_close", error.message, null)
+                    }
+                }
                 "pickDirectory" -> openDirectoryPicker(result)
                 "resolveSourceDirectory", "openSourceDirectory", "readSourceDirectory", "closeSourceDirectory" -> {
                     scanExecutor.execute {
@@ -447,28 +475,36 @@ class MainActivity : FlutterActivity() {
                 )
                 val readMs = SystemClock.elapsedRealtime() - readStarted
                 val decodeStarted = SystemClock.elapsedRealtime()
-                val frame = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1 &&
-                    sourceWidth > 0 && sourceHeight > 0) {
-                    retriever.getScaledFrameAtTime(
-                        2_000_000,
-                        MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
-                        targetWidth,
-                        targetHeight,
-                    )
-                } else {
-                    retriever.getFrameAtTime(
-                        2_000_000,
-                        MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
-                    ) ?: retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                } ?: throw IllegalArgumentException("Video contains no decodable frame")
+                val durationUs = (retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    ?.toLongOrNull() ?: 0L) * 1000L
+                val times = listOf(if (durationUs > 0) minOf(2_000_000L, durationUs / 2) else 2_000_000L, 0L, -1L).distinct()
+                var decoded: Bitmap? = null
+                for (time in times) {
+                    job.checkActive()
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1 && sourceWidth > 0 && sourceHeight > 0) {
+                        decoded = try {
+                            retriever.getScaledFrameAtTime(time, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, targetWidth, targetHeight)
+                        } catch (_: RuntimeException) { null }
+                    }
+                    if (decoded != null) break
+                }
+                // Some vendor decoders reject scaled extraction while ordinary extraction works.
+                if (decoded == null) for (time in times) {
+                    job.checkActive()
+                    decoded = try { retriever.getFrameAtTime(time, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) }
+                        catch (_: RuntimeException) { null }
+                    if (decoded != null) break
+                }
+                val frame = decoded ?: throw IllegalArgumentException("Video contains no decodable frame after scaled and compatibility retries")
                 ownedBitmap = frame
                 job.checkActive()
                 val decodeMs = SystemClock.elapsedRealtime() - decodeStarted
                 val resizeStarted = SystemClock.elapsedRealtime()
-                val scaled = if (frame.width == targetWidth && frame.height == targetHeight) {
+                val (frameWidth, frameHeight) = thumbnailDimensions(frame.width, frame.height, targetPixelCount)
+                val scaled = if (frame.width == frameWidth && frame.height == frameHeight) {
                     frame
                 } else {
-                    Bitmap.createScaledBitmap(frame, targetWidth, targetHeight, true).also {
+                    Bitmap.createScaledBitmap(frame, frameWidth, frameHeight, true).also {
                         if (it !== frame) frame.recycle()
                     }
                 }
@@ -678,6 +714,8 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        sourceDescriptors.values.forEach { try { it.close() } catch (_: Exception) {} }
+        sourceDescriptors.clear()
         directoryReaders.values.forEach { it.close() }
         directoryReaders.clear()
         sourceExecutor.shutdownNow()

@@ -464,6 +464,8 @@ class AppAudioController extends ChangeNotifier {
       // A failed open still has to finish its native cleanup before stop.
     }
     await _player?.stop();
+    await _sourceLease?.close();
+    _sourceLease = null;
     _openedEntityId = null;
     _session = null;
     _error = null;

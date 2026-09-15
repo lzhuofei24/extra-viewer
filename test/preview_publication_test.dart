@@ -84,6 +84,36 @@ void main() {
   });
 
   test(
+      'automatic node cover skips missing first thumbnail and propagates ready cover',
+      () async {
+    final root = library.ensureCollectionIndexRoot('fallback');
+    final child = library.createCustomNode(parentId: root.id, name: 'child');
+    final missing = entity('a-missing');
+    final ready = entity('b-ready');
+    final ticket = library.beginEntityPreview(ready);
+    final bytes = encodeThumbnailWebp(img.Image(width: 30, height: 40));
+    await library.thumbnailStore
+        .writeBytes(key: ticket.assetKey, format: 'webp', bytes: bytes);
+    library.commitEntityPreview(ticket, success(ticket),
+        byteSize: bytes.length);
+    for (final item in [missing, ready]) {
+      library.linkEntityToIndexNode(entityId: item.id, indexNodeId: child.id);
+    }
+    final previews = library.prepareNodePreviewBuilds([child.id, root.id]);
+    for (final preview in previews) {
+      expect(
+          preview.preview.tiles
+              .where((tile) => tile.kind == IndexNodePreviewTileKind.visual)
+              .every((tile) =>
+                  tile.entityId == ready.id && tile.thumbnailPath != null),
+          isTrue);
+    }
+    final result = await NodePreviewCompositeService(library)
+        .rebuildNodesAsync([child.id, root.id]);
+    expect(result.values.every((item) => item.succeeded), isTrue);
+  });
+
+  test(
       'equal fast fingerprints never share assets; failed rebuild retains old image',
       () async {
     final first = entity('a');

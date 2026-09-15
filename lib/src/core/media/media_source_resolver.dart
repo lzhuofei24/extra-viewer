@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/services.dart';
 
 import '../domain/models.dart';
 import '../sources/platform_directory_picker.dart';
@@ -12,6 +13,22 @@ class MediaSourceResolver {
   const MediaSourceResolver();
 
   static final _sessionCache = _AndroidSourceSessionCache();
+  static const _channel = MethodChannel('best_viewer/directory_picker');
+  static bool bypassSourceCache(EntityListItem entity) =>
+      (entity.entityType == EntityType.image ||
+          entity.entityType == EntityType.video) &&
+      entity.size > 50 * 1024 * 1024;
+
+  Future<SourceFileLease> _acquireDescriptor(EntityListItem entity) async {
+    final result = await _channel.invokeMapMethod<String, dynamic>(
+        'openSourceDescriptor', {'source': entity.path});
+    final token = result!['token'] as String;
+    return SourceFileLease(File(result['path'] as String), () async {
+      await _channel
+          .invokeMethod<void>('closeSourceDescriptor', {'token': token});
+    });
+  }
+
   static void stopSessionReads() => _sessionCache.stop();
   static Future<void> closeSessionCache() => _sessionCache.close();
 
@@ -34,6 +51,7 @@ class MediaSourceResolver {
     if (source.isLocalFile) {
       return Future.value(SourceFileLease(localFile(entity)));
     }
+    if (bypassSourceCache(entity)) return _acquireDescriptor(entity);
     return _sessionCache.acquire(entity);
   }
 

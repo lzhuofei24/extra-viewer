@@ -137,6 +137,15 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
       }
     } catch (error) {
       if (_lifecycle.isCurrent(generation) && mounted) {
+        AppDiagnosticLog.instance.error(
+            'video_player_open_failed', error, StackTrace.current,
+            fields: {
+              'entityId': widget.entity.id,
+              'size': widget.entity.size,
+              'sourceMode': MediaSourceResolver.bypassSourceCache(widget.entity)
+                  ? 'direct'
+                  : 'temporary'
+            });
         setState(() => _loadError = error);
       }
     }

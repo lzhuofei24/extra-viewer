@@ -60,8 +60,12 @@ class _ImagePreviewState extends State<_ImagePreview> {
     _session = widget.sessions.register(() async {
       widget.onReaderStateChanged
           ?.call(zoomScale: _controller.value.getMaxScaleOnAxis());
-      await _sourceLease.then<void>((lease) => lease.close(),
-          onError: (_, __) {});
+      await _sourceLease.then<void>((lease) async {
+        if (MediaSourceResolver.bypassSourceCache(widget.entity)) {
+          await FileImage(lease.file).evict();
+        }
+        await lease.close();
+      }, onError: (_, __) {});
     });
   }
 

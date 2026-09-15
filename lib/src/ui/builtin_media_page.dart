@@ -15,6 +15,7 @@ import 'package:pdfrx/pdfrx.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/domain/models.dart';
+import '../core/diagnostics/app_diagnostic_log.dart';
 import '../modules/browser/original_image_budget.dart';
 import '../modules/viewer/reading_position.dart';
 import '../modules/viewer/viewer_sessions.dart';
@@ -430,6 +431,7 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
     try {
       while (mounted && !_closing && _imagePrefetchQueue.isNotEmpty) {
         final entity = _imagePrefetchQueue.removeFirst();
+        if (MediaSourceResolver.bypassSourceCache(entity)) continue;
         if (!_activePrefetchWindow.containsKey(entity.id)) continue;
         _inFlightPrefetchIds.add(entity.id);
         SourceFileLease? lease;

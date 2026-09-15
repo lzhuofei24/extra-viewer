@@ -73,7 +73,7 @@ class NodePreviewCompositeService {
       }
       final visualTiles = preview.tiles
           .where((tile) => tile.kind == IndexNodePreviewTileKind.visual)
-          .toList(growable: false);
+          .toList();
       if (visualTiles.isEmpty) {
         // This is a visual preview description, but no source is available.
         // Treat it as a retryable failure instead of deleting a working asset.
@@ -82,9 +82,14 @@ class NodePreviewCompositeService {
         );
         continue;
       }
-      final missingSource = visualTiles.any(
-        (tile) => tile.thumbnailPath == null || tile.thumbnailPath!.isEmpty,
-      );
+      if (!preview.customOrderTopToBottom) {
+        visualTiles.removeWhere((tile) =>
+            tile.thumbnailPath == null || tile.thumbnailPath!.isEmpty);
+      }
+      final missingSource = visualTiles.isEmpty ||
+          visualTiles.any(
+            (tile) => tile.thumbnailPath == null || tile.thumbnailPath!.isEmpty,
+          );
       if (missingSource) {
         outcomes[preview.nodeId] = NodePreviewCompositeOutcome.failed(
           '视觉预览的实体缩略图尚未生成',

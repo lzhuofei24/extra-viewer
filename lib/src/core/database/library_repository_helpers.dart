@@ -98,7 +98,13 @@ IndexNodePreviewTile _representativePreviewTile(
           entity.entityType == EntityType.image ||
           entity.entityType == EntityType.video)
       .toList(growable: false);
-  if (visuals.isNotEmpty) return _visualPreviewTile(visuals.first);
+  if (visuals.isNotEmpty) {
+    return _visualPreviewTile(visuals
+            .where((item) =>
+                item.thumbnailKey != null && item.thumbnailFormat != null)
+            .firstOrNull ??
+        visuals.first);
+  }
   final audioNames = entities
       .where((entity) => entity.entityType == EntityType.audio)
       .map(_nodePreviewAudioTitle)
@@ -222,6 +228,18 @@ IndexNodePreviewTile? _selectRepresentativePreviewTile(
           entity.entityType == EntityType.image ||
           entity.entityType == EntityType.video)
       .toList(growable: false);
+  final ready = visuals
+      .where(
+          (item) => item.thumbnailKey != null && item.thumbnailFormat != null)
+      .firstOrNull;
+  if (ready != null) return _visualPreviewTile(ready);
+  final readyChild = childRepresentatives
+      .where((tile) =>
+          tile.kind == IndexNodePreviewTileKind.visual &&
+          tile.thumbnailKey != null &&
+          tile.thumbnailFormat != null)
+      .firstOrNull;
+  if (readyChild != null) return readyChild;
   if (visuals.isNotEmpty) return _visualPreviewTile(visuals.first);
   for (final child in childRepresentatives) {
     if (child.kind == IndexNodePreviewTileKind.visual) return child;
@@ -275,6 +293,13 @@ IndexNodePreview _buildIndexNodePreview({
           ? (left, right) => left.title.compareTo(right.title)
           : _compareNodePreviewVisualTiles,
     );
+  // Preserve name/shape ordering among usable candidates. Missing dependencies
+  // remain only when none are available, so a failed build preserves old art.
+  if (visualCandidates.any(
+      (tile) => tile.thumbnailKey != null && tile.thumbnailFormat != null)) {
+    visualCandidates.removeWhere(
+        (tile) => tile.thumbnailKey == null || tile.thumbnailFormat == null);
+  }
 
   if (visualCandidates.isEmpty) {
     if (distinctAudioNames.isEmpty && distinctDocumentNames.isEmpty) {

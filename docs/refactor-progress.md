@@ -8,6 +8,29 @@ Local commits only; no push or tablet installation. Keep release signing compati
 
 ## Baseline
 
+### Tablet source-cache pressure and preview failures (2026-09-16)
+
+- Tablet diagnostic UI showed 70 node-preview missing-dependency events and
+  21 video extraction failures in the recent window; these are event counts,
+  not distinct-file counts. Video task summaries showed 524/531 previews.
+- Visual sources larger than 50 MiB bypass source materialization. Android
+  opens read-only ParcelFileDescriptors; leases retain /proc/self/fd handles
+  until the viewer/player releases them. Large original images skip prefetch
+  and are evicted on close to avoid retaining a reused descriptor-path key.
+  Offline derived thumbnails remain independent of this source-cache policy.
+- Audio stop-and-clear now releases its source lease. Video open failures
+  include source mode and source size in persistent diagnostics.
+- Automatic covers choose available thumbnail candidates while retaining
+  existing name/shape ordering. Missing candidates no longer fail a whole
+  automatic montage with other usable tiles. Custom ordering remains strict;
+  completely missing dependencies still preserve old art and remain retryable.
+- Android scaled video extraction now tries bounded duration-aware timestamps
+  and falls back to ordinary extraction. Output dimensions use the decoded
+  frame ratio, including rotation and missing-metadata cases.
+- Full 125 tests passed; final candidate refinement passed seven preview tests
+  and static analysis. Kotlin compilation passed. Real TF-card
+  descriptor playback and the previously failing videos require device testing.
+
 ### Explicit PDF document ownership
 
 - Replaced PdfViewer.file's implicit asynchronous document disposal with an
