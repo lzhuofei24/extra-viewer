@@ -14,6 +14,11 @@ class MediaSourceResolver {
 
   static final _sessionCache = _AndroidSourceSessionCache();
   static const _channel = MethodChannel('best_viewer/directory_picker');
+  /// mpv must consume the existing descriptor rather than reopen its proc path.
+  static String playbackSourceForFile(File file) {
+    final match = RegExp(r'^/proc/self/fd/(\d+)$').firstMatch(file.path);
+    return match == null ? file.path : 'fd://${match.group(1)}';
+  }
   static bool bypassSourceCache(EntityListItem entity) =>
       (entity.entityType == EntityType.image ||
           entity.entityType == EntityType.video) &&

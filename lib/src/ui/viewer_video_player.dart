@@ -45,6 +45,7 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
   SourceFileLease? _sourceLease;
   StreamSubscription<bool>? _completedSubscription;
   StreamSubscription<bool>? _playingSubscription;
+  StreamSubscription<String>? _errorSubscription;
   Timer? _controlsTimer;
   Timer? _progressSaveTimer;
   Object? _loadError;
@@ -87,6 +88,13 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
         _scheduleControlsHide();
       }
     });
+    _errorSubscription = _player.stream.error.listen((message) {
+      if (!mounted || !_lifecycle.isCurrent(_activeGeneration)) return;
+      AppDiagnosticLog.instance.error('video_player_async_failed',
+          StateError(message), StackTrace.current,
+          fields: {'entityId': widget.entity.id, 'path': widget.entity.path});
+      setState(() => _loadError = message);
+    });
     _open();
     _progressSaveTimer =
         Timer.periodic(const Duration(seconds: 5), (_) => _savePlaybackState());
@@ -122,7 +130,8 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
         return;
       }
       _sourceLease = lease;
-      final source = lease.file.path;
+      final source = MediaSourceResolver.playbackSourceForFile(lease.file);
+      _activeGeneration = generation;
       await _player.open(
         Media(source),
       );
@@ -168,6 +177,7 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
     await Future.wait([
       if (_completedSubscription != null) _completedSubscription!.cancel(),
       if (_playingSubscription != null) _playingSubscription!.cancel(),
+      if (_errorSubscription != null) _errorSubscription!.cancel(),
     ]);
     try {
       await _openChain;

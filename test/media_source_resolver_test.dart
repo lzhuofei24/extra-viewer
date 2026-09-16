@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
 
@@ -6,6 +7,12 @@ import 'package:best_viewer/src/core/media/media_source_resolver.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('playback uses mpv descriptor protocol without reopening proc path', () {
+    expect(MediaSourceResolver.playbackSourceForFile(File('/proc/self/fd/77')),
+        'fd://77');
+    expect(MediaSourceResolver.playbackSourceForFile(File('/video/sample.mp4')),
+        '/video/sample.mp4');
+  });
   test('large visual sources use a read-only descriptor and release it once',
       () async {
     const channel = MethodChannel('best_viewer/directory_picker');
