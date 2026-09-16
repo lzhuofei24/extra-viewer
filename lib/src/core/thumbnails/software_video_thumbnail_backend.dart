@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:isolate';
+import 'package:flutter/foundation.dart';
 
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
@@ -100,8 +100,7 @@ class SoftwareVideoThumbnailBackend {
         throw TimeoutException('Software video frame timeout: $messages');
       });
       token?.throwIfCancelled();
-      final canvas =
-          await Isolate.run(() => prepareVideoThumbnailPixels(bytes));
+      final canvas = await prepareVideoThumbnailPixelsInWorker(bytes);
       token?.throwIfCancelled();
       final encoded = await encodeRgbaCanvasToWebp(
           pixels: canvas.$1,
@@ -136,6 +135,11 @@ class SoftwareVideoThumbnailBackend {
     }
   }
 }
+
+// A top-level callback prevents capturing the player's unsendable async state.
+Future<(Uint8List, int, int)> prepareVideoThumbnailPixelsInWorker(
+        Uint8List bytes) =>
+    compute(prepareVideoThumbnailPixels, bytes);
 
 (Uint8List, int, int) prepareVideoThumbnailPixels(Uint8List bytes) {
   if (bytes.length < 8) {
