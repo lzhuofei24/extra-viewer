@@ -17,6 +17,7 @@ import 'thumbnail_store.dart';
 import 'windows_wic_webp_thumbnail_backend.dart';
 import '../sources/platform_directory_picker.dart';
 import 'software_video_thumbnail_backend.dart';
+import 'temporary_thumbnail_fallback.dart';
 
 class ThumbnailService {
   ThumbnailService(
@@ -100,36 +101,11 @@ class ThumbnailService {
         'webp',
       );
       if (handler is ImageFileHandler) {
-        try {
-          artifact = await _encodeAndroidImageWithFallback(
-            entity,
-            nativeOutputPath,
-            cancellationToken,
-          );
-        } catch (_) {
-          // Android BitmapFactory cannot decode some animated GIFs. Use the
-          // Dart image decoder on a bounded temporary source as the final
-          // Android fallback instead of retrying the same native decoder.
-          if (!entity.path.startsWith('content://')) rethrow;
-          final fallbackPath = await PlatformDirectoryPicker.materializeDocument(
-            entity.path,
-            name: entity.name,
-            cacheScope: 'thumbnail_fallback',
-            maxBytes: 50 * 1024 * 1024,
-            cancellationToken: cancellationToken,
-          );
-          final bytes = await handler.buildThumbnailWebp(File(fallbackPath));
-          cancellationToken?.throwIfCancelled();
-          final decoded = img.decodeImage(bytes);
-          if (decoded == null) {
-            throw const FormatException('GIF fallback decode failed');
-          }
-          artifact = ThumbnailArtifact(
-            bytes: bytes,
-            width: decoded.width,
-            height: decoded.height,
-          );
-        }
+        artifact = await _encodeAndroidImageWithFallback(
+          entity,
+          nativeOutputPath,
+          cancellationToken,
+        );
         cancellationToken?.throwIfCancelled();
         artifact ??= await windowsWicBackend?.encode(
           sourceFile,
@@ -261,21 +237,45 @@ class ThumbnailService {
     } catch (firstError) {
       cancellationToken?.throwIfCancelled();
       if (!entity.path.startsWith('content://')) rethrow;
-      // Some SAF providers fail opening a URI intermittently. Materialize one
-      // readable copy and retry the native decoder before marking the entity.
-      final path = await PlatformDirectoryPicker.materializeDocument(
-        entity.path,
-        name: entity.name,
-        cacheScope: 'thumbnail_fallback',
-        maxBytes: 50 * 1024 * 1024,
+      return withTemporaryThumbnailSource(
+        firstError: firstError,
         cancellationToken: cancellationToken,
+        materialize: () async {
+          if (entity.size > 50 * 1024 * 1024) {
+            throw StateError('Source exceeds 50 MiB; temporary copy disabled');
+          }
+          return PlatformDirectoryPicker.materializeDocument(
+            entity.path,
+            name: entity.name,
+            cacheScope: 'scan',
+            maxBytes: 50 * 1024 * 1024,
+            cancellationToken: cancellationToken,
+          );
+        },
+        decode: (path) async {
+          try {
+            return await backend.encode(path,
+                outputPath: outputPath, cancellationToken: cancellationToken);
+          } catch (nativeError) {
+            cancellationToken?.throwIfCancelled();
+            try {
+              final bytes =
+                  await const ImageFileHandler().buildThumbnailWebp(File(path));
+              cancellationToken?.throwIfCancelled();
+              final decoded = img.decodeImage(bytes);
+              if (decoded == null) {
+                throw const FormatException('Image fallback decode failed');
+              }
+              return ThumbnailArtifact(
+                  bytes: bytes, width: decoded.width, height: decoded.height);
+            } catch (dartError) {
+              cancellationToken?.throwIfCancelled();
+              throw StateError(
+                  'Local native decode: $nativeError; Dart decode: $dartError');
+            }
+          }
+        },
       );
-      try {
-        return await backend.encode(path,
-            outputPath: outputPath, cancellationToken: cancellationToken);
-      } catch (_) {
-        Error.throwWithStackTrace(firstError, StackTrace.current);
-      }
     }
   }
 
