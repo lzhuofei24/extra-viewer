@@ -18,12 +18,10 @@ import '../sources/platform_directory_picker.dart';
 import '../sources/source_handle.dart';
 import '../thumbnails/android_image_thumbnail_backend.dart';
 import '../thumbnails/android_video_thumbnail_backend.dart';
-import '../thumbnails/native_image_thumbnail_backend.dart';
 import '../thumbnails/node_preview_composite_service.dart';
 import '../thumbnails/thumbnail_service.dart';
 import '../thumbnails/thumbnail_cancellation.dart';
 import '../thumbnails/cancellable_thumbnail_task.dart';
-import '../thumbnails/windows_wic_webp_thumbnail_backend.dart';
 import '../utils/file_fingerprint.dart';
 
 class LibraryBuildProgress {
@@ -85,8 +83,6 @@ class LibraryBuildTaskController extends ChangeNotifier {
           library,
           androidImageBackend: AndroidImageThumbnailBackend(),
           androidVideoBackend: AndroidVideoThumbnailBackend(),
-          nativeImageBackend: NativeImageThumbnailBackend(),
-          windowsWicBackend: WindowsWicWebpThumbnailBackend(),
         );
 
   Future<void> initialize() async {

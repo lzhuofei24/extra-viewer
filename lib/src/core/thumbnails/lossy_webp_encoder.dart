@@ -5,16 +5,14 @@ import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 
 import '../formats/thumbnail_spec.dart';
-import 'windows_wic_webp_thumbnail_backend.dart';
 import 'webp_encoder.dart';
 
 const _androidChannel = MethodChannel('best_viewer/directory_picker');
 
 /// Encodes an opaque RGBA canvas as a persistent lossy WebP.
 ///
-/// Android writes through Bitmap.compress on the worker executor and Windows
-/// uses the bundled libwebp FFI entry point. The Dart encoder remains only as
-/// a compatibility fallback for platforms without either native backend.
+/// Android writes through Bitmap.compress on the worker executor. The Dart
+/// encoder remains available for host-side tests.
 Future<LossyWebpArtifact> encodeRgbaCanvasToWebp({
   required Uint8List pixels,
   required int width,
@@ -42,16 +40,9 @@ Future<LossyWebpArtifact> encodeRgbaCanvasToWebp({
     );
   }
 
-  final nativeBytes = await encodeRgbaWebpOnWindows(
-    pixels,
-    width: width,
-    height: height,
-    quality: thumbnailWebpQuality.toDouble(),
+  final bytes = await Isolate.run<Uint8List>(
+    () => _encodeLosslessFallback(pixels, width, height),
   );
-  final Uint8List bytes = nativeBytes ??
-      await Isolate.run<Uint8List>(
-        () => _encodeLosslessFallback(pixels, width, height),
-      );
   final output = File(outputPath);
   await output.parent.create(recursive: true);
   final temporary = File(

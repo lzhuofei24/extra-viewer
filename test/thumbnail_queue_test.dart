@@ -1,13 +1,10 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:best_viewer/src/core/database/app_database.dart';
 import 'package:best_viewer/src/core/database/library_repository.dart';
 import 'package:best_viewer/src/core/domain/models.dart';
 import 'package:best_viewer/src/core/thumbnails/thumbnail_cancellation.dart';
 import 'package:best_viewer/src/core/thumbnails/thumbnail_service.dart';
-import 'package:best_viewer/src/core/thumbnails/native_image_thumbnail_backend.dart';
-import 'package:best_viewer/src/core/thumbnails/thumbnail_artifact.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -15,11 +12,9 @@ void main() {
     final database = AppDatabase.openInMemory();
     addTearDown(database.close);
     final repository = LibraryRepository(database);
-    final file = File('${database.storageDirectoryPath}/image.jpg');
-    await file.writeAsBytes([1]);
     final entity = repository
         .upsertEntity(
-            path: file.path,
+            path: '${database.storageDirectoryPath}/image.jpg',
             name: 'image.jpg',
             format: 'jpg',
             entityType: EntityType.image,
@@ -28,9 +23,10 @@ void main() {
             sourceCreatedAtMs: 0,
             sourceModifiedAtMs: 0)
         .entity;
+    final token = ThumbnailCancellationToken()..pause();
     await expectLater(
-        ThumbnailService(repository, nativeImageBackend: _PausedBackend())
-            .ensureThumbnail(entity),
+        ThumbnailService(repository)
+            .ensureThumbnail(entity, cancellationToken: token),
         throwsA(isA<ThumbnailTaskPausedException>()));
     expect(repository.getEntity(entity.id)!.thumbnailStatus,
         isNot(ThumbnailStatus.failed));
@@ -121,14 +117,6 @@ void main() {
     expect(
         repository.getEntity(entity.id)!.thumbnailStatus, ThumbnailStatus.none);
   });
-}
-
-class _PausedBackend extends NativeImageThumbnailBackend {
-  @override
-  Future<ThumbnailArtifact?> encode(File file,
-      {ThumbnailCancellationToken? cancellationToken}) async {
-    throw const ThumbnailTaskPausedException();
-  }
 }
 
 Entity _entity(String id) => Entity(

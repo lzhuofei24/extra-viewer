@@ -169,7 +169,8 @@ class ImageFileHandler extends FileFormatHandler {
     try {
       final bytes = await file.readAsBytes();
       final isGif = p.extension(file.path).toLowerCase() == '.gif';
-      return Isolate.run(() => _encodeAdaptiveWebpThumbnail(bytes, isGif: isGif));
+      return Isolate.run(
+          () => _encodeAdaptiveWebpThumbnail(bytes, isGif: isGif));
     } on FileSystemException {
       rethrow;
     } catch (_) {
@@ -255,7 +256,8 @@ Uint8List _encodeAdaptiveWebpThumbnail(
   Uint8List sourceBytes, {
   bool isGif = false,
 }) {
-  final source = isGif ? img.decodeGif(sourceBytes) : img.decodeImage(sourceBytes);
+  final source =
+      isGif ? img.decodeGif(sourceBytes) : img.decodeImage(sourceBytes);
   if (source == null) {
     throw const FormatException('Image thumbnail decode failed');
   }
@@ -625,26 +627,7 @@ class FfmpegVideoThumbnailBackend extends VideoThumbnailBackend {
     ].whereType<String>().where((path) => path.trim().isNotEmpty);
     final candidates = <String>[
       ...envCandidates,
-      p.join(
-        File(Platform.resolvedExecutable).parent.path,
-        'ffmpeg',
-        'ffmpeg.exe',
-      ),
-      p.join(
-        Directory.current.path,
-        'tools',
-        'ffmpeg',
-        'windows',
-        'ffmpeg-8.1.2-essentials_build',
-        'bin',
-        'ffmpeg.exe',
-      ),
       executable,
-      if (Platform.isWindows) ...const [
-        r'C:\Program Files\Topaz Labs LLC\Topaz Video\ffmpeg.exe',
-        r'C:\Program Files\Topaz Labs LLC\Topaz Video AI\ffmpeg.exe',
-        r'C:\Program Files (x86)\FormatFactory\ffmpeg.exe',
-      ],
     ];
     return candidates.toSet().toList();
   }
@@ -672,29 +655,10 @@ List<String> _ffprobeExecutableCandidates() {
   final configuredFfmpeg = Platform.environment['BEST_VIEWER_FFMPEG'] ??
       Platform.environment['FFMPEG_PATH'];
   final candidates = <String>[
-    p.join(
-      File(Platform.resolvedExecutable).parent.path,
-      'ffmpeg',
-      'ffprobe.exe',
-    ),
-    p.join(
-      Directory.current.path,
-      'tools',
-      'ffmpeg',
-      'windows',
-      'ffmpeg-8.1.2-essentials_build',
-      'bin',
-      'ffprobe.exe',
-    ),
     if (configured != null && configured.trim().isNotEmpty) configured,
     if (configuredFfmpeg != null && configuredFfmpeg.trim().isNotEmpty)
-      p.join(p.dirname(configuredFfmpeg), 'ffprobe.exe'),
+      p.join(p.dirname(configuredFfmpeg), 'ffprobe'),
     'ffprobe',
-    if (Platform.isWindows) ...const [
-      r'C:\Program Files\Topaz Labs LLC\Topaz Video\ffprobe.exe',
-      r'C:\Program Files\Topaz Labs LLC\Topaz Video AI\ffprobe.exe',
-      r'C:\Program Files (x86)\FormatFactory\ffprobe.exe',
-    ],
   ];
   return candidates.toSet().toList();
 }

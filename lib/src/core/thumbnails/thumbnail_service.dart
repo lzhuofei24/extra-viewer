@@ -10,11 +10,9 @@ import '../formats/file_format_handlers.dart';
 import 'image_thumbnail_worker_pool.dart';
 import 'android_image_thumbnail_backend.dart';
 import 'android_video_thumbnail_backend.dart';
-import 'native_image_thumbnail_backend.dart';
 import 'thumbnail_artifact.dart';
 import 'thumbnail_cancellation.dart';
 import 'thumbnail_store.dart';
-import 'windows_wic_webp_thumbnail_backend.dart';
 import '../sources/platform_directory_picker.dart';
 import 'software_video_thumbnail_backend.dart';
 import 'temporary_thumbnail_fallback.dart';
@@ -25,8 +23,6 @@ class ThumbnailService {
     this.imageWorkerPool,
     this.androidImageBackend,
     this.androidVideoBackend,
-    this.nativeImageBackend,
-    this.windowsWicBackend,
   }) : store = repository.thumbnailStore;
 
   final LibraryAccess repository;
@@ -34,8 +30,6 @@ class ThumbnailService {
   final ImageThumbnailWorkerPool? imageWorkerPool;
   final AndroidImageThumbnailBackend? androidImageBackend;
   final AndroidVideoThumbnailBackend? androidVideoBackend;
-  final NativeImageThumbnailBackend? nativeImageBackend;
-  final WindowsWicWebpThumbnailBackend? windowsWicBackend;
   final timings = ThumbnailTimingCollector();
   final concurrencyAdvisor = ThumbnailConcurrencyAdvisor();
 
@@ -105,16 +99,6 @@ class ThumbnailService {
           entity,
           nativeOutputPath,
           cancellationToken,
-        );
-        cancellationToken?.throwIfCancelled();
-        artifact ??= await windowsWicBackend?.encode(
-          sourceFile,
-          cancellationToken: cancellationToken,
-        );
-        cancellationToken?.throwIfCancelled();
-        artifact ??= await nativeImageBackend?.encode(
-          sourceFile,
-          cancellationToken: cancellationToken,
         );
         cancellationToken?.throwIfCancelled();
         final workerPool = imageWorkerPool;

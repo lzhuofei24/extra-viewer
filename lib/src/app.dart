@@ -5,9 +5,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:file_selector/file_selector.dart';
-import 'package:path/path.dart' as p;
-import 'package:window_manager/window_manager.dart';
 
 import 'core/database/app_database.dart';
 import 'modules/infrastructure/database_runtime.dart';
@@ -31,8 +28,6 @@ import 'core/tasks/task_scheduler.dart';
 import 'core/thumbnails/thumbnail_service.dart';
 import 'core/thumbnails/android_image_thumbnail_backend.dart';
 import 'core/thumbnails/android_video_thumbnail_backend.dart';
-import 'core/thumbnails/native_image_thumbnail_backend.dart';
-import 'core/thumbnails/windows_wic_webp_thumbnail_backend.dart';
 import 'core/thumbnails/browsing_thumbnail_controller.dart';
 import 'ui/browser_state.dart';
 import 'ui/browser_node_cache.dart';
@@ -74,24 +69,6 @@ class _BestViewerAppState extends State<BestViewerApp> {
       themeMode: _themeChoice == ViewerThemeChoice.galleryDark
           ? ThemeMode.dark
           : ThemeMode.light,
-      builder: (context, child) {
-        final appChild = child!;
-        if (!Platform.isWindows) return appChild;
-        final theme = Theme.of(context);
-        return Column(
-          children: [
-            SizedBox(
-              height: kWindowCaptionHeight,
-              child: WindowCaption(
-                backgroundColor: theme.scaffoldBackgroundColor,
-                brightness: theme.brightness,
-                title: const SizedBox.shrink(),
-              ),
-            ),
-            Expanded(child: appChild),
-          ],
-        );
-      },
       home: AppShell(
         databaseFactory: widget.databaseFactory,
         themeChoice: _themeChoice,
@@ -1458,18 +1435,10 @@ class _AppShellState extends State<AppShell> {
   }
 
   Future<void> _showCreateDirectoryIndex() async {
-    DirectorySelection? androidSelection;
-    String? desktopPath;
-    if (PlatformDirectoryPicker.isSupported) {
-      androidSelection = await PlatformDirectoryPicker.pickDirectory();
-      if (androidSelection == null || !mounted) return;
-    } else {
-      desktopPath = await getDirectoryPath();
-      if (desktopPath == null || desktopPath.isEmpty || !mounted) return;
-    }
-
-    final source = androidSelection?.source ?? desktopPath!;
-    final fallbackName = androidSelection?.displayName ?? p.basename(source);
+    final selection = await PlatformDirectoryPicker.pickDirectory();
+    if (selection == null || !mounted) return;
+    final source = selection.source;
+    final fallbackName = selection.displayName;
     // Android returns from the system DocumentsUI route asynchronously. Wait
     // until its inherited widgets are reattached before pushing our dialog.
     await WidgetsBinding.instance.endOfFrame;
@@ -1900,8 +1869,6 @@ class _AppShellState extends State<AppShell> {
         repository,
         androidImageBackend: AndroidImageThumbnailBackend(),
         androidVideoBackend: AndroidVideoThumbnailBackend(),
-        nativeImageBackend: NativeImageThumbnailBackend(),
-        windowsWicBackend: WindowsWicWebpThumbnailBackend(),
       ).regenerateThumbnail(entity);
       for (final nodeId
           in (await repository.listIndexNodeIdsForEntity(entity.id))) {

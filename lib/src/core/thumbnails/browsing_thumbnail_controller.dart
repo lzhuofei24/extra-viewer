@@ -6,10 +6,8 @@ import '../domain/models.dart';
 import '../formats/file_format_handlers.dart';
 import 'android_image_thumbnail_backend.dart';
 import 'android_video_thumbnail_backend.dart';
-import 'native_image_thumbnail_backend.dart';
 import 'thumbnail_cancellation.dart';
 import 'thumbnail_service.dart';
-import 'windows_wic_webp_thumbnail_backend.dart';
 
 /// Generates derived previews only for entities requested by browse views.
 /// Index construction never owns this queue or its LRU lifecycle.
@@ -22,8 +20,6 @@ class BrowsingThumbnailController {
           repository,
           androidImageBackend: AndroidImageThumbnailBackend(),
           androidVideoBackend: AndroidVideoThumbnailBackend(),
-          nativeImageBackend: NativeImageThumbnailBackend(),
-          windowsWicBackend: WindowsWicWebpThumbnailBackend(),
         );
 
   final LibraryAccess repository;

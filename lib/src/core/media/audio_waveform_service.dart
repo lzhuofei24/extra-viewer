@@ -214,11 +214,6 @@ class AudioWaveformService {
     return {
       ...configured,
       'ffmpeg',
-      if (Platform.isWindows) ...const [
-        r'C:\Program Files\Topaz Labs LLC\Topaz Video\ffmpeg.exe',
-        r'C:\Program Files\Topaz Labs LLC\Topaz Video AI\ffmpeg.exe',
-        r'C:\Program Files (x86)\FormatFactory\ffmpeg.exe',
-      ],
     }.toList();
   }
 }

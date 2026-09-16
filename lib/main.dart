@@ -1,10 +1,8 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
-import 'package:window_manager/window_manager.dart';
 
 import 'src/app.dart';
 import 'src/core/diagnostics/app_diagnostic_log.dart';
@@ -44,19 +42,6 @@ Future<void> main() async {
       };
       MediaKit.ensureInitialized();
       AppDiagnosticLog.instance.info('media_kit_initialized');
-      if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-        await windowManager.ensureInitialized();
-        const options = WindowOptions(
-          size: Size(1280, 720),
-          minimumSize: Size(960, 640),
-          center: true,
-          titleBarStyle: TitleBarStyle.hidden,
-        );
-        windowManager.waitUntilReadyToShow(options, () async {
-          await windowManager.show();
-          await windowManager.focus();
-        });
-      }
       runApp(const BestViewerApp());
     },
     (error, stackTrace) {
