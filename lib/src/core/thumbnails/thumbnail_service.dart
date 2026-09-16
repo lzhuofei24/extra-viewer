@@ -16,6 +16,7 @@ import 'thumbnail_cancellation.dart';
 import 'thumbnail_store.dart';
 import 'windows_wic_webp_thumbnail_backend.dart';
 import '../sources/platform_directory_picker.dart';
+import 'temporary_thumbnail_fallback.dart';
 
 class ThumbnailService {
   ThumbnailService(
@@ -291,19 +292,24 @@ class ThumbnailService {
     } catch (firstError) {
       cancellationToken?.throwIfCancelled();
       if (!entity.path.startsWith('content://')) rethrow;
-      final path = await PlatformDirectoryPicker.materializeDocument(
-        entity.path,
-        name: entity.name,
-        cacheScope: 'thumbnail_fallback',
-        maxBytes: 50 * 1024 * 1024,
+      return withTemporaryThumbnailSource(
+        firstError: firstError,
         cancellationToken: cancellationToken,
+        materialize: () async {
+          if (entity.size > 50 * 1024 * 1024) {
+            throw StateError('Source exceeds 50 MiB; temporary copy disabled');
+          }
+          return PlatformDirectoryPicker.materializeDocument(
+            entity.path,
+            name: entity.name,
+            cacheScope: 'scan',
+            maxBytes: 50 * 1024 * 1024,
+            cancellationToken: cancellationToken,
+          );
+        },
+        decode: (path) => backend.encode(path,
+            outputPath: outputPath, cancellationToken: cancellationToken),
       );
-      try {
-        return await backend.encode(path,
-            outputPath: outputPath, cancellationToken: cancellationToken);
-      } catch (_) {
-        Error.throwWithStackTrace(firstError, StackTrace.current);
-      }
     }
   }
 
