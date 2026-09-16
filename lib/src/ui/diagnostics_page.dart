@@ -65,7 +65,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
 
   Future<void> _copyDiagnostics(List<AppDiagnosticRecord> records) async {
     final buffer = StringBuffer()
-      ..writeln('Best Viewer 诊断摘要')
+      ..writeln('Extra Viewer 诊断摘要')
       ..writeln('平台: ${Platform.operatingSystem} ${Platform.operatingSystemVersion}')
       ..writeln('Schema: ${DatabaseDescriptor.schemaVersion}')
       ..writeln('日志目录: ${_redact(widget.log.directoryPath ?? '不可用')}')

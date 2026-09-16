@@ -1,7 +1,20 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+val releaseSigningFile = file(
+    System.getenv("EXTRA_VIEWER_SIGNING_PROPERTIES")
+        ?: "${System.getProperty("user.home")}/.extra-viewer/signing/key.properties"
+)
+val releaseSigning = Properties()
+val hasReleaseSigning = releaseSigningFile.isFile
+if (hasReleaseSigning) {
+    FileInputStream(releaseSigningFile).use(releaseSigning::load)
 }
 
 dependencies {
@@ -9,7 +22,7 @@ dependencies {
 }
 
 android {
-    namespace = "com.bestviewer.best_viewer"
+    namespace = "com.lzhuofei.extraviewer"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -19,22 +32,43 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.bestviewer.best_viewer"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        applicationId = "com.lzhuofei.extraviewer"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseSigning.getProperty("storeFile"))
+                storePassword = releaseSigning.getProperty("storePassword")
+                keyAlias = releaseSigning.getProperty("keyAlias")
+                keyPassword = releaseSigning.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                null
+            }
         }
+    }
+}
+
+gradle.taskGraph.whenReady {
+    val requestsRelease = allTasks.any {
+        it.name.contains("release", ignoreCase = true)
+    }
+    if (requestsRelease && !hasReleaseSigning) {
+        throw GradleException(
+            "Extra Viewer release signing is missing: ${releaseSigningFile.absolutePath}"
+        )
     }
 }
 

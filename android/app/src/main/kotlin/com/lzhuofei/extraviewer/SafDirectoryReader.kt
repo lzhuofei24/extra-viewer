@@ -1,4 +1,4 @@
-package com.bestviewer.best_viewer
+package com.lzhuofei.extraviewer
 
 import android.content.ContentResolver
 import android.net.Uri

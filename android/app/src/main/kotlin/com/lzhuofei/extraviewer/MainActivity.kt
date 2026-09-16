@@ -1,4 +1,4 @@
-package com.bestviewer.best_viewer
+package com.lzhuofei.extraviewer
 
 import android.app.Activity
 import android.graphics.Bitmap

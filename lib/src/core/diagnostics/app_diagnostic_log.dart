@@ -97,7 +97,7 @@ class AppDiagnosticLog extends ChangeNotifier {
       final support = await getApplicationSupportDirectory();
       await initializeAtPath(support.path);
     } catch (error, stackTrace) {
-      debugPrint('Best Viewer diagnostic log unavailable: $error\n$stackTrace');
+      debugPrint('Extra Viewer diagnostic log unavailable: $error\n$stackTrace');
     }
   }
 
@@ -259,7 +259,7 @@ class AppDiagnosticLog extends ChangeNotifier {
         notifyListeners();
       } catch (error, stackTrace) {
         debugPrint(
-            'Best Viewer diagnostic log write failed: $error\n$stackTrace');
+            'Extra Viewer diagnostic log write failed: $error\n$stackTrace');
       }
     });
     return _pending;
