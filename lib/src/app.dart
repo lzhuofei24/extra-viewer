@@ -1179,20 +1179,28 @@ class _AppShellState extends State<AppShell> {
       final queries = await _ensureReadWorker();
       if (!mounted) return;
       final result = await Navigator.of(context).push<NodeSearchResult>(
-        MaterialPageRoute(builder: (_) => NodeSearchPageView(queries: queries)));
+          MaterialPageRoute(
+              builder: (_) => NodeSearchPageView(queries: queries)));
       if (result == null || !mounted) return;
       _exitImmersiveBrowsing();
       _cancelPageWarmup();
       setState(() {
         _section = AppSection.data;
         _selectedIndexRoot = result.root;
-        _selectedItem = result.root.nodeType == NodeType.graphIndexRoot || result.node.id == result.root.id ? null : result.node;
-        _graphSearchTarget = result.root.nodeType == NodeType.graphIndexRoot ? result.node.id : null;
+        _selectedItem = result.root.nodeType == NodeType.graphIndexRoot ||
+                result.node.id == result.root.id
+            ? null
+            : result.node;
+        _graphSearchTarget = result.root.nodeType == NodeType.graphIndexRoot
+            ? result.node.id
+            : null;
         _detail = null;
       });
       _reload(indexNodeId: _currentIndexNode?.id);
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('无法打开节点搜索：$error')));
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('无法打开节点搜索：$error')));
     }
   }
 
@@ -1985,8 +1993,8 @@ class _AppShellState extends State<AppShell> {
     final name = await showDialog<String>(
       context: context,
       builder: (_) => TextPromptDialog(
-        title: '新建自定义索引',
-        label: '自定义索引名称',
+        title: '新建树索引',
+        label: '树索引名称',
         hintText: '例如：待读、银狼相关、睡前听',
         confirmLabel: entityIds.isEmpty ? '创建' : '创建并加入',
       ),
@@ -2008,7 +2016,7 @@ class _AppShellState extends State<AppShell> {
       _cacheWarmupGeneration++;
       _openIndexRoot(collection);
     } on ArgumentError catch (error) {
-      if (mounted) setState(() => _indexError = '创建自定义索引失败：${error.message}');
+      if (mounted) setState(() => _indexError = '创建树索引失败：${error.message}');
     }
   }
 
@@ -2040,8 +2048,8 @@ class _AppShellState extends State<AppShell> {
         .toList(growable: false);
     if (collections.isEmpty) {
       final name = await _askText(
-        title: '新建自定义索引',
-        label: '自定义索引名称',
+        title: '新建树索引',
+        label: '树索引名称',
         confirmLabel: '创建并加入',
         initialValue: '',
       );
@@ -2090,7 +2098,7 @@ class _AppShellState extends State<AppShell> {
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           return AlertDialog(
-            title: const Text('加入自定义索引'),
+            title: const Text('加入树索引'),
             content: SizedBox(
               width: 460,
               height: 500,
@@ -2215,13 +2223,13 @@ class _AppShellState extends State<AppShell> {
         .toList(growable: false);
     if (!mounted) return;
     if (targets.isEmpty) {
-      setState(() => _indexError = '请先创建一个自定义索引作为复制目标。');
+      setState(() => _indexError = '请先创建一个树索引作为复制目标。');
       return;
     }
     final targetId = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('复制节点树到自定义索引'),
+        title: const Text('复制节点树到树索引'),
         content: SizedBox(
           width: 380,
           child: ListView(
@@ -2739,15 +2747,6 @@ class _AppShellState extends State<AppShell> {
               label: Text(entry.value),
               selected: _section == entry.key,
               onSelected: (_) => _navigateToSection(entry.key)),
-      ]));
-    } else if (_section == AppSection.data &&
-        _browserState.rootTab != BrowserRootTab.directory) {
-      tabs.add(Wrap(spacing: 8, children: [
-        for (final tab in [BrowserRootTab.tree, BrowserRootTab.graph])
-          ChoiceChip(
-              label: Text(tab == BrowserRootTab.tree ? '自定义资料集' : '图画布'),
-              selected: _browserState.rootTab == tab,
-              onSelected: (_) => _selectDataRootTab(tab)),
       ]));
     } else if (_section == AppSection.logs) {
       tabs.add(TextButton.icon(

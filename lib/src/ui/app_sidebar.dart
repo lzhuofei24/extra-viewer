@@ -34,19 +34,21 @@ class AppSidebar extends StatelessWidget {
   final VoidCallback onToggleCollapsed;
 
   static const _primaryItems = [
-    _SidebarItem(AppSection.data, '资料目录', Icons.folder_copy_outlined,
+    _SidebarItem(AppSection.data, '目录索引', Icons.folder_copy_outlined,
         Icons.folder_copy_rounded,
         dataTab: BrowserRootTab.directory),
-    _SidebarItem(AppSection.data, '资料集', Icons.account_tree_outlined,
+    _SidebarItem(AppSection.data, '树索引', Icons.account_tree_outlined,
         Icons.account_tree_rounded,
         dataTab: BrowserRootTab.tree),
+    _SidebarItem(AppSection.data, '图索引', Icons.hub_outlined, Icons.hub_rounded,
+        dataTab: BrowserRootTab.graph),
     _SidebarItem(
-        AppSection.gallery, '最近浏览', Icons.history_outlined, Icons.history),
+        AppSection.gallery, '最近', Icons.history_outlined, Icons.history),
   ];
 
   static const _utilityItems = [
     _SidebarItem(
-        AppSection.indexes, '任务', Icons.task_alt_outlined, Icons.task_alt),
+        AppSection.indexes, '管理', Icons.task_alt_outlined, Icons.task_alt),
     _SidebarItem(
         AppSection.settings, '设置', Icons.tune_outlined, Icons.tune_rounded),
   ];
@@ -106,9 +108,6 @@ class AppSidebar extends StatelessWidget {
     }
     if (item.section == AppSection.settings && current == AppSection.logs) {
       return true;
-    }
-    if (item.dataTab == BrowserRootTab.tree) {
-      return current == AppSection.data && rootTab != BrowserRootTab.directory;
     }
     return current == item.section &&
         (item.dataTab == null || item.dataTab == rootTab);

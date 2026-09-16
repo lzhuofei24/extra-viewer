@@ -8,9 +8,9 @@ enum BrowserRootTab {
   graph;
 
   String get label => switch (this) {
-        BrowserRootTab.directory => '目录',
-        BrowserRootTab.tree => '树',
-        BrowserRootTab.graph => '图',
+        BrowserRootTab.directory => '目录索引',
+        BrowserRootTab.tree => '树索引',
+        BrowserRootTab.graph => '图索引',
       };
 }
 

@@ -246,7 +246,7 @@ class CollectionBrowserPage extends StatelessWidget {
                                 : '当前索引节点为空',
                         message: immersiveBrowsing
                             ? '当前节点及其下级节点中没有可展示的实体。'
-                            : '可从“索引”页面重新检查，或返回索引首页继续浏览。',
+                            : '可从“管理”页面重新检查，或返回索引首页继续浏览。',
                       ),
                     ),
                   ),
@@ -684,7 +684,7 @@ class _PathBar extends StatelessWidget {
             if (currentNode != null)
               MenuItemButton(
                 onPressed: onCloneCurrentNodeTree,
-                child: const Text('复制节点树到自定义索引'),
+                child: const Text('复制节点树到树索引'),
               ),
             if (canCreateNode)
               MenuItemButton(

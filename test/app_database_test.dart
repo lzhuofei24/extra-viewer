@@ -52,7 +52,7 @@ void main() {
     final now = DateTime.now().millisecondsSinceEpoch;
     raw.execute('''INSERT INTO index_nodes(id, name, node_type, view_type,
       sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)''',
-        ['search-root', '资料目录', 'directory_index_root', 'tree', 0, now, now]);
+        ['search-root', '目录索引', 'directory_index_root', 'tree', 0, now, now]);
     raw.execute('''INSERT INTO index_nodes(id, parent_id, name, node_type,
       view_type, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
         ['search-child', 'search-root', '银狼资料', 'folder', 'tree', 0, now, now]);

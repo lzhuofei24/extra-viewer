@@ -54,7 +54,7 @@ class IndexManagementPage extends StatelessWidget {
       padding: AppTokens.pagePadding,
       children: [
         const SectionHeader(
-          title: '索引',
+          title: '索引管理',
           subtitle: '建立和维护数据入口；不会复制或修改源文件。',
         ),
         const SizedBox(height: 18),
@@ -72,7 +72,7 @@ class IndexManagementPage extends StatelessWidget {
               OutlinedButton.icon(
                 onPressed: scanning ? null : onCreateCollection,
                 icon: const Icon(Icons.collections_bookmark_outlined),
-                label: const Text('自定义索引'),
+                label: const Text('树索引'),
               ),
               OutlinedButton.icon(
                 onPressed: scanning ? null : onCreateGraph,
@@ -413,7 +413,7 @@ class IndexRootPresentation {
     primaryActionLabel: '更新',
   );
   static const collection = IndexRootPresentation._(
-    title: '自定义索引',
+    title: '树索引',
     icon: Icons.collections_bookmark_outlined,
     primaryActionLabel: '新建节点',
   );
