@@ -13,6 +13,7 @@ import '../media/media_source_resolver.dart';
 import 'lossy_webp_encoder.dart';
 import 'thumbnail_artifact.dart';
 import 'thumbnail_cancellation.dart';
+import 'video_frame_capture.dart';
 
 /// An independent libmpv/FFmpeg software decoder for Android retriever failures.
 /// It never copies the source to disk and never shares the foreground player.
@@ -81,13 +82,23 @@ class SoftwareVideoThumbnailBackend {
         await decoder.open(Media(playbackSource), play: false);
         checkActive();
         await controller.waitUntilFirstFrameRendered;
-        for (var attempt = 0; attempt < 12; attempt++) {
-          checkActive();
-          final bytes = await decoder.screenshot(format: 'image/png');
-          if (bytes != null && bytes.isNotEmpty) return bytes;
-          await Future<void>.delayed(const Duration(milliseconds: 150));
-        }
-        throw StateError('Software decoder produced no frame: $messages');
+        final frame = await captureAdvancingVideoFrame(
+          play: decoder.play,
+          pause: decoder.pause,
+          screenshot: () => decoder.screenshot(format: 'image/png'),
+          checkActive: checkActive,
+          seek: (fraction) async {
+            final duration = decoder.state.duration.inMilliseconds;
+            if (duration > 0) {
+              await decoder
+                  .seek(Duration(milliseconds: (duration * fraction).round()));
+            }
+          },
+        );
+        if (frame != null) return frame;
+        throw StateError('Software decoder produced no frame after advancing '
+            'and seeking; duration=${decoder.state.duration}, '
+            'videoParams=${decoder.state.videoParams}, errors=$messages');
       }
 
       final bytes = await Future.any<Uint8List>([
