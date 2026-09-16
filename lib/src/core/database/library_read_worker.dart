@@ -6,10 +6,12 @@ import 'package:sqlite3/sqlite3.dart';
 
 import '../domain/models.dart';
 import '../thumbnails/thumbnail_store.dart';
+import '../../modules/library/library_queries.dart';
+import 'node_search_query.dart';
 
 /// A dedicated read-only SQLite isolate for non-interactive page warming.
 /// It keeps lookahead queries from blocking scroll and navigation frames.
-class LibraryReadWorker {
+class LibraryReadWorker implements LibraryQueries {
   LibraryReadWorker._(
     this._sendPort,
     this._isolate,
@@ -103,6 +105,19 @@ class LibraryReadWorker {
       'limit': limit,
     });
     return LibraryReadPage.fromMessage(message);
+  }
+
+  @override
+  Future<NodeSearchPage> searchNodes(NodeSearchQuery query) async {
+    final response = await _request({
+      'type': 'nodeSearch',
+      'text': query.text,
+      'scope': query.scope.name,
+      'offset': query.offset,
+      'limit': query.limit,
+    });
+    return NodeSearchPage.fromMessage(
+        response['page'] as Map<Object?, Object?>);
   }
 
   Future<LibraryReadPage> loadRecursivePage({
@@ -328,6 +343,18 @@ void _readWorkerMain(Map<String, Object> config) {
     }
     final replyPort = request['replyPort'] as SendPort;
     try {
+      if (request['type'] == 'nodeSearch') {
+        final query = NodeSearchQuery(
+          text: request['text'] as String,
+          scope: NodeSearchScope.values
+              .firstWhere((value) => value.name == request['scope']),
+          offset: request['offset'] as int,
+          limit: request['limit'] as int,
+        );
+        replyPort.send(
+            {'ok': true, 'page': queryNodes(database, query).toMessage()});
+        return;
+      }
       final page = switch (request['type']) {
         'directPage' =>
           _loadDirectPage(database, storageDirectoryPath, request),

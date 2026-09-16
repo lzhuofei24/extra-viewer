@@ -37,6 +37,7 @@ import 'ui/collection_browser_page.dart';
 import 'ui/design_tokens.dart';
 import 'ui/entity_detail_sheet.dart';
 import 'ui/graph_index_page.dart';
+import 'ui/node_search_page.dart';
 import 'ui/index_management_page.dart';
 import 'ui/music_page.dart';
 import 'ui/media_shelf_page.dart';
@@ -62,7 +63,7 @@ class _BestViewerAppState extends State<BestViewerApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Best Viewer',
+      title: 'Extra Viewer',
       debugShowCheckedModeBanner: false,
       theme: AppTokens.themeFor(_themeChoice),
       darkTheme: AppTokens.themeFor(ViewerThemeChoice.galleryDark),
@@ -125,6 +126,7 @@ class _AppShellState extends State<AppShell> {
   BrowserState _browserState = const BrowserState();
   IndexNode? _selectedIndexRoot;
   IndexNode? _selectedItem;
+  String? _graphSearchTarget;
   List<IndexNode> _indexRoots = const [];
   List<IndexNode> _childNodes = const [];
   List<IndexNode> _nodePath = const [];
@@ -1076,6 +1078,7 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _openIndexRoot(IndexNode root) {
+    _graphSearchTarget = null;
     _exitImmersiveBrowsing();
     _cancelPageWarmup();
     final cached = _browserNodeCache.get(
@@ -1118,6 +1121,7 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _openRootIndex() {
+    _graphSearchTarget = null;
     _exitImmersiveBrowsing();
     _cancelPageWarmup();
     setState(() {
@@ -1168,6 +1172,28 @@ class _AppShellState extends State<AppShell> {
       _section = AppSection.data;
     });
     _reload(indexNodeId: node.id);
+  }
+
+  Future<void> _searchNodes() async {
+    try {
+      final queries = await _ensureReadWorker();
+      if (!mounted) return;
+      final result = await Navigator.of(context).push<NodeSearchResult>(
+        MaterialPageRoute(builder: (_) => NodeSearchPageView(queries: queries)));
+      if (result == null || !mounted) return;
+      _exitImmersiveBrowsing();
+      _cancelPageWarmup();
+      setState(() {
+        _section = AppSection.data;
+        _selectedIndexRoot = result.root;
+        _selectedItem = result.root.nodeType == NodeType.graphIndexRoot || result.node.id == result.root.id ? null : result.node;
+        _graphSearchTarget = result.root.nodeType == NodeType.graphIndexRoot ? result.node.id : null;
+        _detail = null;
+      });
+      _reload(indexNodeId: _currentIndexNode?.id);
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('无法打开节点搜索：$error')));
+    }
   }
 
   bool _isIndexRoot(IndexNode node) {
@@ -2541,6 +2567,8 @@ class _AppShellState extends State<AppShell> {
       AppSection.data
           when _currentIndexNode?.nodeType == NodeType.graphIndexRoot =>
         GraphIndexPage(
+          key: ValueKey('${_currentIndexNode!.id}:$_graphSearchTarget'),
+          initialNodeId: _graphSearchTarget,
           repository: _repository!,
           graphRoot: _currentIndexNode!,
           onOpenNode: _openIndexNode,
@@ -2549,6 +2577,7 @@ class _AppShellState extends State<AppShell> {
           onThumbnailEntityNeeded: _requestBrowseThumbnailById,
         ),
       AppSection.data => CollectionBrowserPage(
+          onSearchNodes: _searchNodes,
           currentNode: _currentIndexNode,
           nodePath: _nodePath,
           childNodes: _childNodes,

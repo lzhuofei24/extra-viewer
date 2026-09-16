@@ -5,12 +5,13 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 import 'schema_v6.dart';
+import 'schema_v7.dart';
 
 /// SQLite storage and additive migrations, owned by database workers.
 class AppDatabase {
   AppDatabase._(this.db, this.storageDirectoryPath, this.databasePath);
 
-  static const currentSchemaVersion = 6;
+  static const currentSchemaVersion = 7;
 
   final Database db;
   final String storageDirectoryPath;
@@ -116,17 +117,18 @@ class AppDatabase {
       db.execute('PRAGMA optimize;');
       return;
     }
-    if (version == 5) {
+    if (version == 5 || version == 6) {
       final path = databasePath;
       if (path != null) {
-        final backup = '$path.schema5.backup';
+        final backup = '$path.schema$version.backup';
         if (!File(backup).existsSync()) {
           db.execute('VACUUM INTO ?', [backup]);
         }
       }
       db.execute('BEGIN IMMEDIATE');
       try {
-        db.execute(schemaV6Upgrade);
+        if (version == 5) db.execute(schemaV6Upgrade);
+        db.execute(schemaV7Upgrade);
         _ensurePreviewSchema();
         db.userVersion = currentSchemaVersion;
         db.execute('COMMIT');
@@ -144,6 +146,7 @@ class AppDatabase {
     try {
       db.execute(_schema);
       db.execute(schemaV6Upgrade);
+      db.execute(schemaV7Upgrade);
       _ensurePreviewSchema();
       db.userVersion = currentSchemaVersion;
       db.execute('COMMIT;');

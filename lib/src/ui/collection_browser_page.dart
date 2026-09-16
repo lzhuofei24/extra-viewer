@@ -19,6 +19,7 @@ import 'spanning_grid.dart';
 class CollectionBrowserPage extends StatelessWidget {
   const CollectionBrowserPage({
     super.key,
+    this.onSearchNodes,
     required this.currentNode,
     required this.nodePath,
     required this.childNodes,
@@ -70,6 +71,7 @@ class CollectionBrowserPage extends StatelessWidget {
   });
 
   final IndexNode? currentNode;
+  final VoidCallback? onSearchNodes;
   final List<IndexNode> nodePath;
   final List<IndexNode> childNodes;
   final Map<String, IndexNodeSummary> nodeSummaries;
@@ -134,6 +136,7 @@ class CollectionBrowserPage extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: _PathBar(
+            onSearchNodes: onSearchNodes,
             currentNode: currentNode,
             path: nodePath,
             onOpenRootIndex: onOpenRootIndex,
@@ -592,6 +595,7 @@ class _EntitySelectionRegistry {
 
 class _PathBar extends StatelessWidget {
   const _PathBar({
+    this.onSearchNodes,
     required this.currentNode,
     required this.path,
     required this.onOpenRootIndex,
@@ -615,6 +619,7 @@ class _PathBar extends StatelessWidget {
 
   final IndexNode? currentNode;
   final List<IndexNode> path;
+  final VoidCallback? onSearchNodes;
   final VoidCallback onOpenRootIndex;
   final ValueChanged<IndexNode> onPathNodeSelected;
   final BrowserState browserState;
@@ -645,6 +650,11 @@ class _PathBar extends StatelessWidget {
             onOpenRootIndex: onOpenRootIndex,
             onPathNodeSelected: onPathNodeSelected,
           ),
+        ),
+        IconButton(
+          tooltip: '搜索节点',
+          onPressed: onSearchNodes,
+          icon: const Icon(Icons.search),
         ),
         IconButton(
           tooltip: immersiveBrowsing ? '退出沉浸式浏览' : '沉浸式浏览',

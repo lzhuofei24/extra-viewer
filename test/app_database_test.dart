@@ -25,25 +25,58 @@ void main() {
     raw.execute('''
       CREATE TABLE entities(id TEXT PRIMARY KEY, name TEXT,
         thumbnail_key TEXT, thumbnail_format TEXT);
-      CREATE TABLE index_nodes(id TEXT PRIMARY KEY, source_path TEXT);
+      CREATE TABLE index_nodes(id TEXT PRIMARY KEY, source_path TEXT, name TEXT NOT NULL);
       CREATE TABLE node_preview_assets(node_id TEXT PRIMARY KEY,
         asset_key TEXT, format TEXT);
       CREATE TABLE library_build_jobs(id TEXT PRIMARY KEY, target_node_id TEXT,
         source_path TEXT, stage TEXT, status TEXT, indexed_total INTEGER, error TEXT);
       CREATE TABLE library_build_manifest(job_id TEXT, sequence INTEGER);
       INSERT INTO entities(id, name) VALUES ('original', 'keep');
-      INSERT INTO index_nodes VALUES ('root', '/original');
+      INSERT INTO index_nodes VALUES ('root', '/original', 'original');
       INSERT INTO library_build_jobs VALUES ('job', 'root', '/original', 'manifest', 'paused', 0, NULL);
     ''');
     raw.userVersion = 5;
     final database = AppDatabase.openForTesting(raw);
     addTearDown(database.close);
-    expect(raw.userVersion, 6);
+    expect(raw.userVersion, 7);
     expect(raw.select('SELECT name FROM entities').single['name'], 'keep');
     final job = raw.select('SELECT * FROM library_build_jobs').single;
     expect(job['scope_node_id'], 'root');
     expect(job['status'], 'blocked');
     expect(raw.select('PRAGMA foreign_key_check'), isEmpty);
+  });
+
+  test('schema 6 migration creates and backfills node search index', () {
+    final raw = sqlite3.openInMemory();
+    final database = AppDatabase.openForTesting(raw);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    raw.execute('''INSERT INTO index_nodes(id, name, node_type, view_type,
+      sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)''',
+        ['search-root', '资料目录', 'directory_index_root', 'tree', 0, now, now]);
+    raw.execute('''INSERT INTO index_nodes(id, parent_id, name, node_type,
+      view_type, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+        ['search-child', 'search-root', '银狼资料', 'folder', 'tree', 0, now, now]);
+    raw.execute('DROP TRIGGER index_node_search_insert');
+    raw.execute('DROP TRIGGER index_node_search_delete');
+    raw.execute('DROP TRIGGER index_node_search_update');
+    raw.execute('DROP TABLE index_node_search');
+    raw.userVersion = 6;
+    database.migrate();
+    addTearDown(database.close);
+
+    expect(raw.userVersion, 7);
+    expect(
+      raw.select(
+          "SELECT rowid FROM index_node_search WHERE index_node_search MATCH '银狼资'"),
+      isNotEmpty,
+    );
+    raw.execute(
+        "UPDATE index_nodes SET name = '星穹资料' WHERE id = 'search-child'");
+    expect(
+      raw.select(
+          "SELECT rowid FROM index_node_search WHERE index_node_search MATCH '星穹资'"),
+      isNotEmpty,
+    );
   });
   test('fresh database creates the current clean schema baseline', () {
     final database = AppDatabase.openInMemory();

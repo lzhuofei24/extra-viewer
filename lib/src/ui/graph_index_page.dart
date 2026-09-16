@@ -9,6 +9,7 @@ import 'index_node_thumbnail.dart';
 class GraphIndexPage extends StatefulWidget {
   const GraphIndexPage({
     super.key,
+    this.initialNodeId,
     required this.repository,
     required this.graphRoot,
     required this.onOpenNode,
@@ -18,6 +19,7 @@ class GraphIndexPage extends StatefulWidget {
   });
 
   final LibraryAccess repository;
+  final String? initialNodeId;
   final IndexNode graphRoot;
   final ValueChanged<IndexNode> onOpenNode;
   final VoidCallback onReturnToRootIndex;
@@ -33,6 +35,8 @@ class GraphIndexPage extends StatefulWidget {
 }
 
 class _GraphIndexPageState extends State<GraphIndexPage> {
+  final _transformation = TransformationController();
+  bool _initialFocusPending = true;
   static const _nodeSize = Size(168, 126);
   List<IndexNode> _nodes = const [];
   List<IndexNodeEdge> _edges = const [];
@@ -47,8 +51,12 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
   @override
   void initState() {
     super.initState();
+    _selectedId = widget.initialNodeId;
     _reload();
   }
+
+  @override
+  void dispose() { _transformation.dispose(); super.dispose(); }
 
   Future<void> _reload() async {
     final generation = ++_reloadGeneration;
@@ -74,6 +82,18 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
       _previews = previews;
       _summaries = summaries;
     });
+    if (_initialFocusPending && _selectedId != null) {
+      _initialFocusPending = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final position = _positions[_selectedId];
+        final size = context.size;
+        if (position == null || size == null) return;
+        _transformation.value = Matrix4.identity()..setTranslationRaw(
+          size.width / 2 - position.dx - _nodeSize.width / 2,
+          size.height / 2 - position.dy - _nodeSize.height / 2, 0);
+      });
+    }
     final selectedId = _selectedId;
     if (selectedId != null) {
       final entities =
@@ -239,6 +259,7 @@ class _GraphIndexPageState extends State<GraphIndexPage> {
     return Stack(
       children: [
         InteractiveViewer(
+          transformationController: _transformation,
           constrained: false,
           boundaryMargin: const EdgeInsets.all(280),
           minScale: .35,

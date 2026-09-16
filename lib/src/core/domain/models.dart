@@ -231,6 +231,100 @@ class NodePreviewBuildInput {
   final IndexNodePreview preview;
 }
 
+enum NodeSearchScope { all, directory, collection, graph }
+
+class NodeSearchQuery {
+  const NodeSearchQuery(
+      {required this.text,
+      this.scope = NodeSearchScope.all,
+      this.offset = 0,
+      this.limit = 60});
+  final String text;
+  final NodeSearchScope scope;
+  final int offset;
+  final int limit;
+}
+
+class NodeSearchResult {
+  NodeSearchResult(
+      {required this.node,
+      required this.root,
+      required List<IndexNode> breadcrumb,
+      required this.matchRank})
+      : breadcrumb = List.unmodifiable(breadcrumb);
+  final IndexNode node;
+  final IndexNode root;
+  final List<IndexNode> breadcrumb;
+  final int matchRank;
+}
+
+class NodeSearchPage {
+  NodeSearchPage({required List<NodeSearchResult> items, required this.hasMore})
+      : items = List.unmodifiable(items);
+  final List<NodeSearchResult> items;
+  final bool hasMore;
+
+  Map<String, Object?> toMessage() => {
+        'hasMore': hasMore,
+        'items': items
+            .map((item) => {
+                  'node': _nodeMessage(item.node),
+                  'root': _nodeMessage(item.root),
+                  'breadcrumb':
+                      item.breadcrumb.map(_nodeMessage).toList(growable: false),
+                  'matchRank': item.matchRank,
+                })
+            .toList(growable: false),
+      };
+
+  factory NodeSearchPage.fromMessage(Map<Object?, Object?> message) =>
+      NodeSearchPage(
+        hasMore: message['hasMore'] == true,
+        items: (message['items'] as List<Object?>).map((raw) {
+          final item = raw as Map<Object?, Object?>;
+          return NodeSearchResult(
+            node: _nodeFromMessage(item['node'] as Map<Object?, Object?>),
+            root: _nodeFromMessage(item['root'] as Map<Object?, Object?>),
+            breadcrumb: (item['breadcrumb'] as List<Object?>)
+                .map(
+                    (value) => _nodeFromMessage(value as Map<Object?, Object?>))
+                .toList(growable: false),
+            matchRank: item['matchRank'] as int,
+          );
+        }).toList(growable: false),
+      );
+}
+
+Map<String, Object?> _nodeMessage(IndexNode node) => {
+      'id': node.id,
+      'parentId': node.parentId,
+      'name': node.name,
+      'nodeType': node.nodeType.value,
+      'viewType': node.viewType.value,
+      'sortOrder': node.sortOrder,
+      'createdAtMs': node.createdAtMs,
+      'updatedAtMs': node.updatedAtMs,
+      'sourcePath': node.sourcePath,
+      'previewJson': node.previewJson,
+      'lastBuiltAtMs': node.lastBuiltAtMs,
+      'isStaging': node.isStaging,
+    };
+
+IndexNode _nodeFromMessage(Map<Object?, Object?> map) => IndexNode(
+      id: map['id'] as String,
+      parentId: map['parentId'] as String?,
+      name: map['name'] as String,
+      nodeType: NodeType.fromValue(map['nodeType'] as String),
+      viewType: ViewType.fromValue(map['viewType'] as String),
+      sortOrder: map['sortOrder'] as int,
+      createdAtMs: map['createdAtMs'] as int,
+      updatedAtMs: map['updatedAtMs'] as int,
+      sourcePath: map['sourcePath'] as String?,
+      previewJson: map['previewJson'] as String?,
+      lastBuiltAtMs: map['lastBuiltAtMs'] as int?,
+      isStaging: map['isStaging'] == true,
+    );
+
 class IndexNode {
   const IndexNode({
     required this.id,
