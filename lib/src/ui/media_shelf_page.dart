@@ -11,7 +11,7 @@ import 'collection_grid_layout.dart';
 import 'gallery_layout_settings.dart';
 import 'library_widgets.dart';
 import 'recent_media_switcher.dart';
-import 'spanning_grid.dart';
+import 'browser_list.dart';
 
 enum MediaShelfKind { video, gallery, reading }
 
@@ -27,6 +27,7 @@ class MediaShelfPage extends StatefulWidget {
     required this.onSortChanged,
     required this.onDisplayModeChanged,
     required this.onGridLayoutChanged,
+    required this.onListStyleChanged,
     required this.currentSection,
     required this.onSectionChanged,
   });
@@ -40,6 +41,7 @@ class MediaShelfPage extends StatefulWidget {
   final ValueChanged<EntitySortMode> onSortChanged;
   final ValueChanged<BrowserDisplayMode> onDisplayModeChanged;
   final ValueChanged<BrowserGridLayout> onGridLayoutChanged;
+  final ValueChanged<BrowserListStyle> onListStyleChanged;
   final AppSection currentSection;
   final ValueChanged<AppSection> onSectionChanged;
 
@@ -182,6 +184,7 @@ class _MediaShelfPageState extends State<MediaShelfPage> {
                   onSortChanged: widget.onSortChanged,
                   onDisplayModeChanged: widget.onDisplayModeChanged,
                   onGridLayoutChanged: widget.onGridLayoutChanged,
+                  onListStyleChanged: widget.onListStyleChanged,
                   onToggleImmersive:
                       _supportsImmersive ? _toggleImmersive : null,
                 ),
@@ -213,6 +216,7 @@ class _ShelfContentSliver extends StatelessWidget {
   Widget build(BuildContext context) {
     if (!immersive && browserState.displayMode == BrowserDisplayMode.list) {
       return _ShelfList(
+          style: browserState.listStyle,
           items: items,
           onOpen: onOpenEntity,
           onThumbnailNeeded: onThumbnailNeeded,
@@ -229,12 +233,6 @@ class _ShelfContentSliver extends StatelessWidget {
           selectedEntityIds: const {},
           layoutSettings: layoutSettings),
       BrowserGridLayout.equalWidth => _ShelfMasonry(
-          items: items,
-          immersive: immersive,
-          layout: layoutSettings,
-          onOpen: onOpenEntity,
-          onThumbnailNeeded: onThumbnailNeeded),
-      BrowserGridLayout.adaptive => _ShelfAdaptive(
           items: items,
           immersive: immersive,
           layout: layoutSettings,
@@ -296,42 +294,6 @@ class _ShelfMasonry extends StatelessWidget {
       onThumbnailNeeded: () => onThumbnailNeeded(entity));
 }
 
-class _ShelfAdaptive extends StatelessWidget {
-  const _ShelfAdaptive(
-      {required this.items,
-      required this.immersive,
-      required this.layout,
-      required this.onOpen,
-      required this.onThumbnailNeeded});
-  final List<EntityListItem> items;
-  final bool immersive;
-  final GalleryLayoutSettings layout;
-  final ValueChanged<EntityListItem> onOpen;
-  final ValueChanged<EntityListItem> onThumbnailNeeded;
-
-  @override
-  Widget build(BuildContext context) {
-    final isPortrait =
-        MediaQuery.orientationOf(context) == Orientation.portrait;
-    return SpanningGridSliver<EntityListItem>(
-      items: items,
-      columnCount: layout.equalWidthColumns(isPortrait: isPortrait),
-      targetRowHeight: layout.equalHeightTarget,
-      crossRowMode: false,
-      gap: immersive ? GalleryLayoutSettings.immersiveGap : layout.cardGap,
-      horizontalPadding:
-          immersive ? GalleryLayoutSettings.immersiveMargin : layout.pageMargin,
-      aspectRatio: _aspectRatio,
-      itemBuilder: (context, entity) => EntityCard(
-          entity: entity,
-          onOpen: () => onOpen(entity),
-          immersive: immersive,
-          cardRadius: layout.cardRadius,
-          onThumbnailNeeded: () => onThumbnailNeeded(entity)),
-    );
-  }
-}
-
 class _ShelfSquare extends StatelessWidget {
   const _ShelfSquare(
       {required this.items,
@@ -385,85 +347,31 @@ class _ShelfList extends StatelessWidget {
       {required this.items,
       required this.onOpen,
       required this.onThumbnailNeeded,
-      required this.horizontalPadding});
+      required this.horizontalPadding,
+      required this.style});
   final List<EntityListItem> items;
-  final ValueChanged<EntityListItem> onOpen;
-  final ValueChanged<EntityListItem> onThumbnailNeeded;
+  final ValueChanged<EntityListItem> onOpen, onThumbnailNeeded;
   final double horizontalPadding;
-
+  final BrowserListStyle style;
   @override
-  Widget build(BuildContext context) => SliverPadding(
-        padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-        sliver: SliverList.builder(
-            itemCount: (items.length + 2) ~/ 3,
-            itemBuilder: (context, rowIndex) {
-              final start = rowIndex * 3;
-              return Column(children: [
-                SizedBox(
-                    height: 76,
-                    child: Row(children: [
-                      for (var slot = 0; slot < 3; slot++)
-                        Expanded(
-                            child: start + slot < items.length
-                                ? _ShelfListCell(
-                                    entity: items[start + slot],
-                                    onOpen: onOpen,
-                                    onThumbnailNeeded: onThumbnailNeeded)
-                                : const SizedBox.shrink()),
-                    ])),
-                if (start + 3 < items.length)
-                  Divider(
-                      height: 1,
-                      color: Theme.of(context).colorScheme.outlineVariant),
-              ]);
-            }),
-      );
-}
-
-class _ShelfListCell extends StatelessWidget {
-  const _ShelfListCell(
-      {required this.entity,
-      required this.onOpen,
-      required this.onThumbnailNeeded});
-  final EntityListItem entity;
-  final ValueChanged<EntityListItem> onOpen;
-  final ValueChanged<EntityListItem> onThumbnailNeeded;
-
-  @override
-  Widget build(BuildContext context) => InkWell(
-        onTap: () => onOpen(entity),
-        child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(children: [
-              SizedBox.square(
-                  dimension: 48,
-                  child: EntityArtwork(
-                      entityType: entity.entityType,
-                      format: entity.format,
-                      title: entity.title,
-                      contentExcerpt: entity.contentExcerpt,
-                      thumbnailStatus: entity.thumbnailStatus,
-                      thumbnailPath: entity.thumbnailPath,
-                      onThumbnailNeeded: () => onThumbnailNeeded(entity))),
-              const SizedBox(width: 8),
-              Expanded(
-                  child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                    Text(entity.title,
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                    Text(entity.format.toUpperCase(),
-                        style: Theme.of(context).textTheme.labelSmall),
-                  ])),
-            ])),
-      );
-}
-
-double _aspectRatio(EntityListItem entity) {
-  final width = entity.thumbnailWidth;
-  final height = entity.thumbnailHeight;
-  return width != null && height != null && width > 0 && height > 0
-      ? width / height
-      : 1;
+  Widget build(BuildContext context) => BrowserListSliver(
+      count: items.length,
+      style: style,
+      padding: horizontalPadding,
+      itemBuilder: (context, index) {
+        final entity = items[index];
+        return BrowserListTile(
+            style: style,
+            title: entity.title,
+            subtitle: entity.format.toUpperCase(),
+            onTap: () => onOpen(entity),
+            previewBuilder: (_) => EntityArtwork(
+                entityType: entity.entityType,
+                format: entity.format,
+                title: entity.title,
+                contentExcerpt: entity.contentExcerpt,
+                thumbnailStatus: entity.thumbnailStatus,
+                thumbnailPath: entity.thumbnailPath,
+                onThumbnailNeeded: () => onThumbnailNeeded(entity)));
+      });
 }

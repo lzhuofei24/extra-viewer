@@ -14,6 +14,7 @@ void main() {
           onSortChanged: (_) {},
           onDisplayModeChanged: (_) {},
           onGridLayoutChanged: (_) {},
+          onListStyleChanged: (_) {},
           onSearch: () {},
           onToggleImmersive: () {},
           onToggleSelection: () {},
@@ -30,7 +31,7 @@ void main() {
     await tester.tap(find.byTooltip('浏览选项'));
     await tester.pumpAndSettle();
     expect(find.text('浏览选项'), findsOneWidget);
-    expect(find.text('卡片对齐方式'), findsOneWidget);
+    expect(find.text('样式'), findsOneWidget);
     expect(find.text('新建分类'), findsNothing);
     await tester.tap(find.byTooltip('浏览选项'));
     await tester.pumpAndSettle();
@@ -50,12 +51,16 @@ void main() {
           onSortChanged: (_) {},
           onDisplayModeChanged: (_) {},
           onGridLayoutChanged: (_) {},
+          onListStyleChanged: (_) {},
         ),
       ),
     ));
     await tester.tap(find.byTooltip('浏览选项'));
     await tester.pumpAndSettle();
-    expect(find.text('显示方式'), findsOneWidget);
+    expect(find.text('显示'), findsOneWidget);
+    expect(find.text('文本'), findsOneWidget);
+    expect(find.text('紧凑'), findsOneWidget);
+    expect(find.text('正常'), findsOneWidget);
     expect(find.text('卡片对齐方式'), findsNothing);
   });
 }

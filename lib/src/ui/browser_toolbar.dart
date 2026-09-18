@@ -24,6 +24,7 @@ class BrowserToolbar extends StatelessWidget {
     required this.onSortChanged,
     required this.onDisplayModeChanged,
     required this.onGridLayoutChanged,
+    required this.onListStyleChanged,
     this.onSearch,
     this.immersive = false,
     this.onToggleImmersive,
@@ -37,6 +38,7 @@ class BrowserToolbar extends StatelessWidget {
   final ValueChanged<EntitySortMode> onSortChanged;
   final ValueChanged<BrowserDisplayMode> onDisplayModeChanged;
   final ValueChanged<BrowserGridLayout> onGridLayoutChanged;
+  final ValueChanged<BrowserListStyle> onListStyleChanged;
   final VoidCallback? onSearch;
   final bool immersive;
   final VoidCallback? onToggleImmersive;
@@ -78,6 +80,7 @@ class BrowserToolbar extends StatelessWidget {
                 onSortChanged: onSortChanged,
                 onDisplayModeChanged: onDisplayModeChanged,
                 onGridLayoutChanged: onGridLayoutChanged,
+                onListStyleChanged: onListStyleChanged,
               ),
               if (moreActions.isNotEmpty)
                 _MoreActionsMenu(actions: moreActions),
@@ -128,80 +131,106 @@ class _BrowserOptionsMenu extends StatelessWidget {
     required this.onSortChanged,
     required this.onDisplayModeChanged,
     required this.onGridLayoutChanged,
+    required this.onListStyleChanged,
   });
 
   final BrowserState browserState;
   final ValueChanged<EntitySortMode> onSortChanged;
   final ValueChanged<BrowserDisplayMode> onDisplayModeChanged;
   final ValueChanged<BrowserGridLayout> onGridLayoutChanged;
+  final ValueChanged<BrowserListStyle> onListStyleChanged;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return MenuAnchor(
+      style: const MenuStyle(
+        backgroundColor: WidgetStatePropertyAll(Colors.transparent),
+        surfaceTintColor: WidgetStatePropertyAll(Colors.transparent),
+        shadowColor: WidgetStatePropertyAll(Colors.transparent),
+        elevation: WidgetStatePropertyAll(0),
+        padding: WidgetStatePropertyAll(EdgeInsets.zero),
+      ),
       menuChildren: [
-        SizedBox(
-          width: 276,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('浏览选项', style: theme.textTheme.labelLarge),
-                const SizedBox(height: 10),
-                Text('排序', style: theme.textTheme.labelMedium),
-                const SizedBox(height: 6),
-                SegmentedButton<EntitySortMode>(
-                  segments: const [
-                    ButtonSegment(
-                        value: EntitySortMode.modifiedDesc, label: Text('最近')),
-                    ButtonSegment(
-                        value: EntitySortMode.nameAsc, label: Text('名称')),
-                    ButtonSegment(
-                        value: EntitySortMode.sizeDesc, label: Text('大小')),
-                  ],
-                  selected: {browserState.sortMode},
-                  onSelectionChanged: (value) => onSortChanged(value.first),
-                ),
-                const SizedBox(height: 12),
-                Text('显示方式', style: theme.textTheme.labelMedium),
-                const SizedBox(height: 6),
-                SegmentedButton<BrowserDisplayMode>(
-                  segments: const [
-                    ButtonSegment(
-                      value: BrowserDisplayMode.grid,
-                      icon: Icon(Icons.grid_view_rounded),
-                      label: Text('卡片'),
-                    ),
-                    ButtonSegment(
-                      value: BrowserDisplayMode.list,
-                      icon: Icon(Icons.view_agenda_rounded),
-                      label: Text('列表'),
-                    ),
-                  ],
-                  selected: {browserState.displayMode},
-                  onSelectionChanged: (value) =>
-                      onDisplayModeChanged(value.first),
-                ),
-                if (browserState.displayMode == BrowserDisplayMode.grid) ...[
+        FloatingGlassSurface(
+          borderRadius: 20,
+          padding: const EdgeInsets.all(12),
+          child: SizedBox(
+            width: (MediaQuery.sizeOf(context).width - 48).clamp(160.0, 276.0),
+            child: SingleChildScrollView(
+              primary: false,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('浏览选项', style: theme.textTheme.labelLarge),
+                  const SizedBox(height: 10),
+                  Text('排序', style: theme.textTheme.labelMedium),
+                  const SizedBox(height: 6),
+                  SegmentedButton<EntitySortMode>(
+                    segments: const [
+                      ButtonSegment(
+                          value: EntitySortMode.modifiedDesc,
+                          label: Text('最近')),
+                      ButtonSegment(
+                          value: EntitySortMode.nameAsc, label: Text('名称')),
+                      ButtonSegment(
+                          value: EntitySortMode.sizeDesc, label: Text('大小')),
+                    ],
+                    selected: {browserState.sortMode},
+                    onSelectionChanged: (value) => onSortChanged(value.first),
+                  ),
                   const SizedBox(height: 12),
-                  Text('卡片对齐方式', style: theme.textTheme.labelMedium),
+                  Text('显示', style: theme.textTheme.labelMedium),
+                  const SizedBox(height: 6),
+                  SegmentedButton<BrowserDisplayMode>(
+                    segments: const [
+                      ButtonSegment(
+                        value: BrowserDisplayMode.grid,
+                        icon: Icon(Icons.grid_view_rounded),
+                        label: Text('卡片'),
+                      ),
+                      ButtonSegment(
+                        value: BrowserDisplayMode.list,
+                        icon: Icon(Icons.view_agenda_rounded),
+                        label: Text('列表'),
+                      ),
+                    ],
+                    selected: {browserState.displayMode},
+                    onSelectionChanged: (value) =>
+                        onDisplayModeChanged(value.first),
+                  ),
+                  const SizedBox(height: 12),
+                  Text('样式', style: theme.textTheme.labelMedium),
                   const SizedBox(height: 6),
                   Wrap(
                     spacing: 6,
                     runSpacing: 6,
-                    children: [
-                      for (final mode in BrowserGridLayout.values)
-                        _GridLayoutOption(
-                          mode: mode,
-                          selected: browserState.gridLayout == mode,
-                          onSelected: () => onGridLayoutChanged(mode),
-                        ),
-                    ],
+                    children:
+                        browserState.displayMode == BrowserDisplayMode.grid
+                            ? [
+                                for (final mode in [
+                                  BrowserGridLayout.equalHeight,
+                                  BrowserGridLayout.equalWidth,
+                                  BrowserGridLayout.square,
+                                ])
+                                  _GridLayoutOption(
+                                    mode: mode,
+                                    selected: browserState.gridLayout == mode,
+                                    onSelected: () => onGridLayoutChanged(mode),
+                                  ),
+                              ]
+                            : [
+                                for (final style in BrowserListStyle.values)
+                                  _ListStyleOption(
+                                    style: style,
+                                    selected: browserState.listStyle == style,
+                                    onSelected: () => onListStyleChanged(style),
+                                  ),
+                              ],
                   ),
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -245,8 +274,10 @@ class _GridLayoutOption extends StatelessWidget {
     required this.mode,
     required this.selected,
     required this.onSelected,
+    this.label,
   });
 
+  final String? label;
   final BrowserGridLayout mode;
   final bool selected;
   final VoidCallback onSelected;
@@ -280,7 +311,7 @@ class _GridLayoutOption extends StatelessWidget {
                 Icon(_gridLayoutIcon(mode), size: 18),
                 const SizedBox(width: 7),
                 Text(
-                  _gridLayoutLabel(mode),
+                  label ?? _gridLayoutLabel(mode),
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
                         color: selected ? colors.primary : null,
                         fontWeight:
@@ -299,13 +330,30 @@ class _GridLayoutOption extends StatelessWidget {
 String _gridLayoutLabel(BrowserGridLayout mode) => switch (mode) {
       BrowserGridLayout.equalHeight => '等高',
       BrowserGridLayout.equalWidth => '等宽',
-      BrowserGridLayout.adaptive => '自适应',
-      BrowserGridLayout.square => '方格',
+      BrowserGridLayout.square => '方形',
     };
 
 IconData _gridLayoutIcon(BrowserGridLayout mode) => switch (mode) {
       BrowserGridLayout.equalHeight => Icons.view_stream_outlined,
       BrowserGridLayout.equalWidth => Icons.view_column_outlined,
-      BrowserGridLayout.adaptive => Icons.auto_awesome_mosaic_outlined,
       BrowserGridLayout.square => Icons.grid_on_outlined,
     };
+
+class _ListStyleOption extends StatelessWidget {
+  const _ListStyleOption(
+      {required this.style, required this.selected, required this.onSelected});
+  final BrowserListStyle style;
+  final bool selected;
+  final VoidCallback onSelected;
+  @override
+  Widget build(BuildContext context) => _GridLayoutOption(
+        mode: BrowserGridLayout.equalHeight,
+        label: switch (style) {
+          BrowserListStyle.text => '文本',
+          BrowserListStyle.compact => '紧凑',
+          BrowserListStyle.normal => '正常'
+        },
+        selected: selected,
+        onSelected: onSelected,
+      );
+}

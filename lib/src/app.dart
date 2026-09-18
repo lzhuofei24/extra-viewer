@@ -219,6 +219,7 @@ class _AppShellState extends State<AppShell> {
       sortMode: preferences.sortMode,
       displayMode: preferences.displayMode,
       gridLayout: preferences.gridLayout,
+      listStyle: preferences.listStyle,
     );
     _registerRuntimeResources();
     _indexPathController = TextEditingController();
@@ -1312,6 +1313,11 @@ class _AppShellState extends State<AppShell> {
   void _setShelfDisplayMode(BrowserDisplayMode value) {
     setState(() => _browserState = _browserState.copyWith(displayMode: value));
     widget.preferences.setBrowser(displayMode: value);
+  }
+
+  void _setListStyle(BrowserListStyle value) {
+    setState(() => _browserState = _browserState.copyWith(listStyle: value));
+    widget.preferences.setBrowser(listStyle: value);
   }
 
   void _setShelfGridLayout(BrowserGridLayout value) {
@@ -2626,6 +2632,7 @@ class _AppShellState extends State<AppShell> {
                 _browserState = _browserState.copyWith(displayMode: value));
             widget.preferences.setBrowser(displayMode: value);
           },
+          onListStyleChanged: _setListStyle,
           onGridLayoutChanged: (value) {
             setState(() => _browserState = _browserState.copyWith(
                   gridLayout: value,
@@ -2680,6 +2687,7 @@ class _AppShellState extends State<AppShell> {
           onSortChanged: _setShelfSort,
           onDisplayModeChanged: _setShelfDisplayMode,
           onGridLayoutChanged: _setShelfGridLayout,
+          onListStyleChanged: _setListStyle,
           currentSection: _section,
           onSectionChanged: _navigateToSection,
         ),
@@ -2693,6 +2701,7 @@ class _AppShellState extends State<AppShell> {
           onSortChanged: _setShelfSort,
           onDisplayModeChanged: _setShelfDisplayMode,
           onGridLayoutChanged: _setShelfGridLayout,
+          onListStyleChanged: _setListStyle,
           currentSection: _section,
           onSectionChanged: _navigateToSection,
         ),
@@ -2706,6 +2715,7 @@ class _AppShellState extends State<AppShell> {
           onSortChanged: _setShelfSort,
           onDisplayModeChanged: _setShelfDisplayMode,
           onGridLayoutChanged: _setShelfGridLayout,
+          onListStyleChanged: _setListStyle,
           currentSection: _section,
           onSectionChanged: _navigateToSection,
         ),

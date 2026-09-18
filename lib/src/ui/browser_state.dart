@@ -15,9 +15,10 @@ enum BrowserRootTab {
 enum BrowserGridLayout {
   equalWidth,
   equalHeight,
-  adaptive,
   square,
 }
+
+enum BrowserListStyle { text, compact, normal }
 
 enum BrowserContentScope { direct, recursive }
 
@@ -28,6 +29,7 @@ class BrowserState {
     this.sortMode = EntitySortMode.nameAsc,
     this.displayMode = BrowserDisplayMode.grid,
     this.gridLayout = BrowserGridLayout.equalHeight,
+    this.listStyle = BrowserListStyle.normal,
     this.rootTab = BrowserRootTab.directory,
     this.contentScope = BrowserContentScope.direct,
     this.filter = BrowserFilter.all,
@@ -36,6 +38,7 @@ class BrowserState {
   final EntitySortMode sortMode;
   final BrowserDisplayMode displayMode;
   final BrowserGridLayout gridLayout;
+  final BrowserListStyle listStyle;
   final BrowserRootTab rootTab;
   final BrowserContentScope contentScope;
   final BrowserFilter filter;
@@ -44,6 +47,7 @@ class BrowserState {
     EntitySortMode? sortMode,
     BrowserDisplayMode? displayMode,
     BrowserGridLayout? gridLayout,
+    BrowserListStyle? listStyle,
     BrowserRootTab? rootTab,
     BrowserContentScope? contentScope,
     BrowserFilter? filter,
@@ -52,6 +56,7 @@ class BrowserState {
       sortMode: sortMode ?? this.sortMode,
       displayMode: displayMode ?? this.displayMode,
       gridLayout: gridLayout ?? this.gridLayout,
+      listStyle: listStyle ?? this.listStyle,
       rootTab: rootTab ?? this.rootTab,
       contentScope: contentScope ?? this.contentScope,
       filter: filter ?? this.filter,

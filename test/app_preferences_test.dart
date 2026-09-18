@@ -27,6 +27,7 @@ void main() {
       sortMode: EntitySortMode.sizeDesc,
       displayMode: BrowserDisplayMode.list,
       gridLayout: BrowserGridLayout.square,
+      listStyle: BrowserListStyle.compact,
       layoutPreset: GalleryLayoutPreset.compact,
     ));
     final restored = await store.load();
@@ -34,6 +35,7 @@ void main() {
     expect(restored.sortMode, EntitySortMode.sizeDesc);
     expect(restored.displayMode, BrowserDisplayMode.list);
     expect(restored.gridLayout, BrowserGridLayout.square);
+    expect(restored.listStyle, BrowserListStyle.compact);
     expect(restored.layoutPreset, GalleryLayoutPreset.compact);
     expect(restored.layout.portraitFolderColumns, 3);
   });
@@ -42,6 +44,7 @@ void main() {
     SharedPreferences.setMockInitialValues({
       'preferences.theme': 'removed-theme',
       'preferences.browser.display': 'removed-display',
+      'preferences.browser.layout': 'adaptive',
       'preferences.gallery.preset': 'removed-preset',
       'preferences.gallery.page_margin': 24.0,
     });
@@ -50,6 +53,8 @@ void main() {
     final value = await store.load();
     expect(value.themeChoice, ViewerThemeChoice.system);
     expect(value.displayMode, BrowserDisplayMode.grid);
+    expect(value.gridLayout, BrowserGridLayout.equalHeight);
+    expect(value.listStyle, BrowserListStyle.normal);
     expect(value.layoutPreset, GalleryLayoutPreset.standard);
     expect(value.layout.pageMargin, 8);
   });
