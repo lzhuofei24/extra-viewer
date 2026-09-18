@@ -132,6 +132,15 @@ class LibraryReadWorker implements LibraryQueries {
   }
 
   @override
+  Future<Map<String, EntityListItem>> loadRuleCovers(
+      List<String> ruleIds) async {
+    final response = await _request({'type': 'ruleCovers', 'ruleIds': ruleIds});
+    return (response['covers'] as Map<Object?, Object?>).map((key, value) =>
+        MapEntry(
+            key as String, _entityFromMap(value as Map<Object?, Object?>)));
+  }
+
+  @override
   Future<RuleResultPage> loadRulePage({
     required String ruleNodeId,
     RuleSortMode? sortMode,
@@ -434,6 +443,31 @@ void _readWorkerMain(Map<String, Object> config) {
           'ok': true,
           ..._loadRulePage(database, storageDirectoryPath, request),
         });
+        return;
+      }
+      if (request['type'] == 'ruleCovers') {
+        final covers = <String, Object?>{};
+        final now = DateTime.now().millisecondsSinceEpoch;
+        for (final id in (request['ruleIds'] as List).cast<String>().toSet()) {
+          final rules = database
+              .select('SELECT * FROM index_rules WHERE node_id = ?', [id]);
+          if (rules.isEmpty) continue;
+          final rule = rules.single;
+          final query = _ruleQuery(rule, now);
+          final sort =
+              RuleSortMode.values.byName(rule['default_sort'] as String);
+          final rows = database.select('''
+            SELECT * FROM (
+              SELECT e.* FROM entities e WHERE ${query.whereSql}
+              ORDER BY ${_ruleOrderBy(sort)} LIMIT ?
+            ) WHERE media_type IN ('image', 'video')
+            ORDER BY source_modified_at_ms DESC, id ASC LIMIT 1
+          ''', [...query.parameters, rule['max_results']]);
+          if (rows.isNotEmpty) {
+            covers[id] = _entityToMap(rows.single, storageDirectoryPath);
+          }
+        }
+        replyPort.send({'ok': true, 'covers': covers});
         return;
       }
       if (request['type'] == 'ruleFilterOptions') {

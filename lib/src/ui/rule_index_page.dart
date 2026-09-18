@@ -1,3 +1,5 @@
+import 'browser_node_grid.dart';
+import 'library_widgets.dart';
 import 'package:flutter/material.dart';
 import '../core/domain/models.dart';
 import '../modules/library/library_queries.dart';
@@ -27,6 +29,7 @@ class RuleIndexPage extends StatefulWidget {
     this.initialRuleId,
     required this.onSelectionModeChanged,
     this.controller,
+    this.onCreateRule,
   });
 
   final LibraryQueries queries;
@@ -44,6 +47,7 @@ class RuleIndexPage extends StatefulWidget {
   final String? initialRuleId;
   final ValueChanged<bool> onSelectionModeChanged;
   final RuleBrowserController? controller;
+  final VoidCallback? onCreateRule;
 
   @override
   State<RuleIndexPage> createState() => _RuleIndexPageState();
@@ -235,6 +239,8 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
         layoutPreset: widget.preferences.value.layoutPreset,
         onLayoutPresetChanged: widget.preferences.setLayoutPreset,
         onSearch: widget.onSearch,
+        onAdd: rule == null ? widget.onCreateRule : null,
+        addLabel: '新建规则',
         onToggleImmersive:
             rule == null ? null : () => setState(() => _immersive = true),
         selectionMode: _selectionMode,
@@ -265,68 +271,54 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
                 onTap: () =>
                     _selectionMode ? _select(rule.node.id) : _open(rule),
                 onLongPress: () => _select(rule.node.id),
-                previewBuilder: (_) => Icon(_ruleIcon(rule.builtInKind)));
+                previewBuilder: (_) => _cover(rule));
           });
     }
-    return SliverPadding(
-        padding: EdgeInsets.all(widget.layoutSettings.pageMargin),
-        sliver: SliverLayoutBuilder(builder: (context, constraints) {
-          final portrait =
-              MediaQuery.orientationOf(context) == Orientation.portrait;
-          final columns = portrait
-              ? 1
-              : (constraints.crossAxisExtent / 280).floor().clamp(1, 3);
-          final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
-          return SliverGrid(
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: columns,
-                  mainAxisExtent: 128 * scale.clamp(1, 3),
-                  mainAxisSpacing: widget.layoutSettings.cardGap,
-                  crossAxisSpacing: widget.layoutSettings.cardGap),
-              delegate: SliverChildBuilderDelegate((context, i) {
-                final rule = _controller.rules[i];
-                return Card(
-                    color: _selected.contains(rule.node.id)
-                        ? Theme.of(context).colorScheme.secondaryContainer
-                        : null,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(
-                            widget.layoutSettings.cardRadius)),
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      onTap: () =>
-                          _selectionMode ? _select(rule.node.id) : _open(rule),
-                      onLongPress: () => _select(rule.node.id),
-                      child: Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Row(children: [
-                            Icon(_ruleIcon(rule.builtInKind)),
-                            const SizedBox(width: 12),
-                            Expanded(
-                                child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                  Text(rule.node.name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleMedium),
-                                  Text(_ruleSummary(rule),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis),
-                                  Text('${rule.resultCount ?? 0} 个文件'),
-                                ])),
-                            if (rule.isBuiltIn)
-                              const Icon(Icons.lock_outline, size: 16),
-                            if (_selected.contains(rule.node.id))
-                              const Icon(Icons.check_circle),
-                          ])),
-                    ));
-              }, childCount: _controller.rules.length));
-        }));
+    final rules = {for (final rule in _controller.rules) rule.node.id: rule};
+    return BrowserNodeGridSliver(
+      nodes: _controller.rules.map((r) => r.node).toList(),
+      summaries: const {},
+      previews: const {},
+      selectedNodeIds: _selected,
+      selectionMode: _selectionMode,
+      layoutSettings: widget.layoutSettings,
+      onOpenNode: (node) => _open(rules[node.id]!),
+      onToggleNodeSelection: (node) => _select(node.id),
+      onStartNodeSelection: (node) => _select(node.id),
+      onThumbnailEntityNeeded: (_) {},
+      coverAspectRatio: (node) {
+        final cover = _controller.covers[node.id];
+        final width = cover?.thumbnailWidth ?? 0,
+            height = cover?.thumbnailHeight ?? 0;
+        return width > 0 && height > 0 ? width / height : 1;
+      },
+      countLabel: (node) =>
+          '${rules[node.id]!.resultCount ?? 0} 个文件${rules[node.id]!.isBuiltIn ? " · 内置" : ""}',
+      description: (node) => _ruleSummary(rules[node.id]!),
+      coverBuilder: (node, portrait) => _cover(rules[node.id]!),
+    );
+  }
+
+  Widget _cover(RuleDefinition rule) {
+    final entity = _controller.covers[rule.node.id];
+    if (entity == null) {
+      return ColoredBox(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: Center(
+              child: Icon(_ruleIcon(rule.builtInKind),
+                  size: 56,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)));
+    }
+    return EntityArtwork(
+        entityType: entity.entityType,
+        format: entity.format,
+        title: entity.title,
+        borderRadius: BorderRadius.zero,
+        thumbnailPath: entity.thumbnailPath,
+        thumbnailStatus: entity.thumbnailStatus,
+        onThumbnailNeeded: entity.thumbnailStatus == ThumbnailStatus.failed
+            ? null
+            : () => widget.onThumbnailNeeded(entity));
   }
 
   Widget _selectionBar() {

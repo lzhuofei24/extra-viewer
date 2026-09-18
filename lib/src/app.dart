@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'ui/browser_location_session.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -169,6 +170,10 @@ class _AppShellState extends State<AppShell> {
   final TaskScheduler _taskScheduler = TaskScheduler(maxConcurrent: 1);
   int _cacheWarmupGeneration = 0;
   int _reloadGeneration = 0;
+  int _browserDataRevision = 0;
+  bool _navigationLoading = false;
+  Object? _navigationError;
+  final Map<BrowserRootTab, BrowserLocationSession> _locations = {};
   Map<String, int> _rootCounts = const {};
   Map<String, IndexNodeSummary> _nodeSummaries = const {};
   Map<String, IndexNodePreview> _nodePreviews = const {};
@@ -600,6 +605,7 @@ class _AppShellState extends State<AppShell> {
     _thumbnailRefreshTimer?.cancel();
     _thumbnailRefreshTimer = Timer(const Duration(milliseconds: 250), () {
       if (!mounted) return;
+      _ruleBrowserController?.refreshCovers();
       _reload(
         indexNodeId: _currentIndexNode?.id,
         invalidateBrowserCache: true,
@@ -688,43 +694,65 @@ class _AppShellState extends State<AppShell> {
     final repository = _repository;
     if (repository == null) return;
     final generation = ++_reloadGeneration;
+    final requestedRoot = _selectedIndexRoot;
+    final targetId = indexNodeId ?? _selectedItem?.id;
+    final requestedPath = List<IndexNode>.of(_nodePath);
+    final sortMode = _browserState.sortMode;
+    final requestedScope = _recursiveScope(_currentIndexNode);
+    final requestedTab = _browserState.rootTab;
+    final recursiveBrowsing =
+        _browserState.contentScope == BrowserContentScope.recursive;
+    final detailId = _detail?.id;
     if (invalidateBrowserCache) {
       _browserNodeCache.clear();
+      _browserDataRevision++;
       _cacheWarmupGeneration++;
     }
     try {
       final roots = await _read(
-        (worker) => worker.loadIndexRoots(sortMode: _browserState.sortMode),
+        (worker) => worker.loadIndexRoots(sortMode: sortMode),
       );
       if (!mounted || generation != _reloadGeneration) return;
-      final selectedRoot = _resolveSelectedIndexRoot(roots);
-      final targetId = indexNodeId ?? _selectedItem?.id;
+      final selectedRoot =
+          roots.where((root) => root.id == requestedRoot?.id).firstOrNull;
       List<IndexNode> nodePath = const <IndexNode>[];
       IndexNode? selectedItem;
       if (selectedRoot != null) {
-        final currentId = targetId ?? selectedRoot.id;
+        var currentId = targetId ?? selectedRoot.id;
         nodePath = await _read(
           (worker) => worker.loadNodePath(
             indexRootId: selectedRoot.id,
             currentNodeId: currentId,
           ),
         );
+        if (nodePath.isEmpty) {
+          for (final ancestor in [...requestedPath.reversed, selectedRoot]) {
+            nodePath = await _read((worker) => worker.loadNodePath(
+                indexRootId: selectedRoot.id, currentNodeId: ancestor.id));
+            if (nodePath.isNotEmpty) {
+              currentId = ancestor.id;
+              break;
+            }
+          }
+        }
+        if (!mounted || generation != _reloadGeneration) return;
         if (nodePath.isNotEmpty && currentId != selectedRoot.id) {
           selectedItem = nodePath.last;
         }
       }
       final currentNode = selectedItem ?? selectedRoot;
-      final recursiveBrowsing =
-          _browserState.contentScope == BrowserContentScope.recursive;
       final cacheKey = selectedRoot == null || currentNode == null
           ? null
           : BrowserNodeCacheKey(
               indexRootId: selectedRoot.id,
               nodeId: currentNode.id,
-              sortMode: _browserState.sortMode,
+              sortMode: sortMode,
               recursive: recursiveBrowsing,
             );
-      final cached = cacheKey == null ? null : _browserNodeCache.get(cacheKey);
+      final cached =
+          cacheKey == null || (targetId != null && currentNode?.id != targetId)
+              ? null
+              : _browserNodeCache.get(cacheKey);
       List<IndexNode> childNodes;
       EntityPage? uncachedPage;
       if (recursiveBrowsing) {
@@ -733,8 +761,14 @@ class _AppShellState extends State<AppShell> {
           final page = await _read(
             (worker) => worker.loadRecursivePage(
               nodeId: currentNode?.id,
-              scope: _recursiveScope(currentNode),
-              sortMode: _browserState.sortMode,
+              scope: currentNode != null
+                  ? RecursiveReadScope.node
+                  : requestedScope == RecursiveReadScope.node
+                      ? (requestedTab == BrowserRootTab.directory
+                          ? RecursiveReadScope.directoryHome
+                          : RecursiveReadScope.collectionHome)
+                      : requestedScope,
+              sortMode: sortMode,
               limit: _entityPageSize,
             ),
           );
@@ -754,7 +788,7 @@ class _AppShellState extends State<AppShell> {
         final page = await _read(
           (worker) => worker.loadDirectPage(
             parentNodeId: currentNode.id,
-            sortMode: _browserState.sortMode,
+            sortMode: sortMode,
             limit: _entityPageSize,
           ),
         );
@@ -790,9 +824,9 @@ class _AppShellState extends State<AppShell> {
           ),
         );
       }
-      final detail = _detail == null
+      final detail = detailId == null
           ? null
-          : await _read((worker) => worker.loadEntity(_detail!.id));
+          : await _read((worker) => worker.loadEntity(detailId));
       if (!mounted || generation != _reloadGeneration) return;
       if (cacheKey != null && cached == null) {
         _browserNodeCache.put(
@@ -831,10 +865,16 @@ class _AppShellState extends State<AppShell> {
         _detail = detail;
         _nodeSummaries = nodeSummaries;
         _nodePreviews = nodePreviews;
+        _navigationLoading = false;
+        _navigationError = null;
       });
       if (_section != AppSection.data) await _reloadDashboardDataAsync();
     } catch (error, stackTrace) {
       if (mounted && generation == _reloadGeneration) {
+        setState(() {
+          _navigationLoading = false;
+          _navigationError = error;
+        });
         _setReadError(error, stackTrace);
       }
     }
@@ -1104,23 +1144,23 @@ class _AppShellState extends State<AppShell> {
         _recursiveEntityCursor = page.recursiveCursor ?? _recursiveEntityCursor;
       });
     } catch (error, stackTrace) {
-      _setReadError(error, stackTrace);
+      if (mounted && generation == _reloadGeneration) {
+        _setReadError(error, stackTrace);
+      }
     } finally {
-      if (mounted) setState(() => _loadingMoreEntities = false);
-    }
-  }
-
-  IndexNode? _resolveSelectedIndexRoot(List<IndexNode> roots) {
-    final selected = _selectedIndexRoot;
-    if (selected != null) {
-      for (final root in roots) {
-        if (root.id == selected.id) return root;
+      if (mounted && generation == _reloadGeneration) {
+        setState(() => _loadingMoreEntities = false);
       }
     }
-    return null;
   }
 
   void _openIndexRoot(IndexNode root) {
+    final targetTab = root.nodeType == NodeType.directoryIndexRoot
+        ? BrowserRootTab.directory
+        : BrowserRootTab.tree;
+    if (targetTab != _browserState.rootTab) _rememberDataLocation();
+    _reloadGeneration++;
+    _exitBrowserSelection();
     _exitImmersiveBrowsing();
     _cancelPageWarmup();
     final cached = _browserNodeCache.get(
@@ -1135,6 +1175,10 @@ class _AppShellState extends State<AppShell> {
       setState(() {
         _section = AppSection.data;
         _selectedIndexRoot = root;
+        _browserState = _browserState.copyWith(
+            rootTab: root.nodeType == NodeType.directoryIndexRoot
+                ? BrowserRootTab.directory
+                : BrowserRootTab.tree);
         _selectedItem = null;
         _detail = null;
         _childNodes = cached.childNodes;
@@ -1144,6 +1188,9 @@ class _AppShellState extends State<AppShell> {
         _nodePath = cached.nodePath;
         _nodeSummaries = cached.nodeSummaries;
         _nodePreviews = cached.nodePreviews;
+        _navigationLoading = false;
+        _navigationError = null;
+        _loadingMoreEntities = false;
       });
       _updateNavigationCacheScope(
         root: root,
@@ -1158,11 +1205,18 @@ class _AppShellState extends State<AppShell> {
       _selectedIndexRoot = root;
       _selectedItem = null;
       _detail = null;
+      _browserState = _browserState.copyWith(
+          rootTab: root.nodeType == NodeType.directoryIndexRoot
+              ? BrowserRootTab.directory
+              : BrowserRootTab.tree);
+      _prepareDataNavigation(root);
     });
     _reload(indexNodeId: root.id);
   }
 
   void _openRootIndex() {
+    _reloadGeneration++;
+    _exitBrowserSelection();
     _exitImmersiveBrowsing();
     _cancelPageWarmup();
     setState(() {
@@ -1170,14 +1224,18 @@ class _AppShellState extends State<AppShell> {
       _selectedIndexRoot = null;
       _selectedItem = null;
       _detail = null;
+      _prepareDataNavigation(null);
     });
     _reload();
   }
 
   void _navigateToSection(AppSection section) {
+    _rememberDataLocation();
+    _reloadGeneration++;
+    _exitBrowserSelection();
     if (section != AppSection.rules) _setRuleSelectionMode(false);
     if (section == AppSection.data) {
-      _openRootIndex();
+      _selectDataRootTab(_browserState.rootTab);
       return;
     }
     if (section == AppSection.indexes) {
@@ -1189,21 +1247,120 @@ class _AppShellState extends State<AppShell> {
     });
   }
 
-  void _selectDataRootTab(BrowserRootTab tab) {
+  void _rememberDataLocation() {
+    if (_section != AppSection.data) return;
+    _locations[_browserState.rootTab] = BrowserLocationSession(
+        root: _selectedIndexRoot,
+        node: _selectedItem,
+        sortMode: _browserState.sortMode,
+        contentScope: _browserState.contentScope,
+        dataRevision: _browserDataRevision,
+        loading: _navigationLoading,
+        page: EntityPageSnapshot(
+            childNodes: _childNodes,
+            entities: _entities,
+            nodePath: _nodePath,
+            nodeSummaries: _nodeSummaries,
+            nodePreviews: _nodePreviews,
+            hasMore: _entitiesHasMore,
+            recursiveCursor: _recursiveEntityCursor));
+  }
+
+  void _exitBrowserSelection() {
+    if (_selection.enabled) {
+      _selection.exit();
+      if (_restoreExpandedMiniPlayerAfterSelection) {
+        _miniPlayerCollapsed = false;
+      }
+      _restoreExpandedMiniPlayerAfterSelection = false;
+    }
     _setRuleSelectionMode(false);
-    _exitImmersiveBrowsing();
+  }
+
+  void _prepareDataNavigation(IndexNode? target) {
+    _navigationLoading = true;
+    _navigationError = null;
+    _childNodes = const [];
+    _entities = const [];
+    _entitiesHasMore = false;
+    _loadingMoreEntities = false;
+    _recursiveEntityCursor = null;
+    _nodeSummaries = const {};
+    _nodePreviews = const {};
+    if (target == null) {
+      _nodePath = const [];
+    } else {
+      final index = _nodePath.indexWhere((node) => node.id == target.id);
+      final parentIndex =
+          _nodePath.indexWhere((node) => node.id == target.parentId);
+      _nodePath = index >= 0
+          ? _nodePath.take(index + 1).toList()
+          : target.id == _selectedIndexRoot?.id
+              ? [target]
+              : parentIndex >= 0
+                  ? [..._nodePath.take(parentIndex + 1), target]
+                  : [
+                      if (_selectedIndexRoot != null) _selectedIndexRoot!,
+                      target
+                    ];
+    }
+  }
+
+  void _applyLocationPage(EntityPageSnapshot page) {
+    _childNodes = page.childNodes;
+    _entities = page.entities;
+    _entitiesHasMore = page.hasMore;
+    _recursiveEntityCursor = page.recursiveCursor;
+    _nodePath = page.nodePath;
+    _nodeSummaries = page.nodeSummaries;
+    _nodePreviews = page.nodePreviews;
+    _navigationLoading = false;
+    _navigationError = null;
+    _loadingMoreEntities = false;
+  }
+
+  void _selectDataRootTab(BrowserRootTab tab) {
+    if (_section == AppSection.data && _browserState.rootTab == tab) return;
+    _rememberDataLocation();
+    _exitBrowserSelection();
     _cancelPageWarmup();
+    _reloadGeneration++;
+    final saved = _locations[tab];
     setState(() {
-      _browserState = _browserState.copyWith(rootTab: tab);
+      _browserState = _browserState.copyWith(
+          rootTab: tab,
+          contentScope: saved?.contentScope ?? BrowserContentScope.direct);
       _section = AppSection.data;
-      _selectedIndexRoot = null;
-      _selectedItem = null;
+      _selectedIndexRoot = saved?.root;
+      _selectedItem = saved?.node;
       _detail = null;
+      if (saved != null &&
+          !saved.loading &&
+          saved.sortMode == _browserState.sortMode &&
+          saved.dataRevision == _browserDataRevision) {
+        if (saved.root != null) {
+          _browserNodeCache.put(
+              BrowserNodeCacheKey(
+                  indexRootId: saved.root!.id,
+                  nodeId: (saved.node ?? saved.root)!.id,
+                  sortMode: saved.sortMode,
+                  recursive:
+                      saved.contentScope == BrowserContentScope.recursive),
+              saved.page,
+              priority: BrowserNodeCachePriority.pinned);
+        }
+        _applyLocationPage(saved.page);
+      } else {
+        _nodePath = saved?.page.nodePath ?? const [];
+        _prepareDataNavigation(_currentIndexNode);
+      }
     });
-    _reload();
+    _reload(indexNodeId: _currentIndexNode?.id);
   }
 
   void _openIndexNode(IndexNode node) {
+    _reloadGeneration++;
+    _exitBrowserSelection();
     _exitImmersiveBrowsing();
     _cancelPageWarmup();
     // 一级索引根是索引首页的直属节点；进入它时必须先切换索引上下文。
@@ -1216,6 +1373,7 @@ class _AppShellState extends State<AppShell> {
       _selectedItem = node;
       _detail = null;
       _section = AppSection.data;
+      _prepareDataNavigation(node);
     });
     _reload(indexNodeId: node.id);
   }
@@ -1228,6 +1386,9 @@ class _AppShellState extends State<AppShell> {
           MaterialPageRoute(
               builder: (_) => NodeSearchPageView(queries: queries)));
       if (result == null || !mounted) return;
+      _rememberDataLocation();
+      _reloadGeneration++;
+      _exitBrowserSelection();
       if (result.node.nodeType == NodeType.ruleNode) {
         _setRuleSelectionMode(false);
         setState(() {
@@ -1245,6 +1406,11 @@ class _AppShellState extends State<AppShell> {
         _selectedIndexRoot = result.root;
         _selectedItem = result.node.id == result.root.id ? null : result.node;
         _detail = null;
+        _browserState = _browserState.copyWith(
+            rootTab: result.root.nodeType == NodeType.directoryIndexRoot
+                ? BrowserRootTab.directory
+                : BrowserRootTab.tree);
+        _prepareDataNavigation(_currentIndexNode);
       });
       _reload(indexNodeId: _currentIndexNode?.id);
     } catch (error) {
@@ -1271,6 +1437,7 @@ class _AppShellState extends State<AppShell> {
   }
 
   bool _activateCachedNodePage(IndexNode node) {
+    _reloadGeneration++;
     final root = _selectedIndexRoot;
     if (root == null) return false;
     final cached = _browserNodeCache.get(
@@ -1293,6 +1460,9 @@ class _AppShellState extends State<AppShell> {
       _nodePath = cached.nodePath;
       _nodeSummaries = cached.nodeSummaries;
       _nodePreviews = cached.nodePreviews;
+      _navigationLoading = false;
+      _navigationError = null;
+      _loadingMoreEntities = false;
     });
     _updateNavigationCacheScope(
       root: root,
@@ -2170,6 +2340,7 @@ class _AppShellState extends State<AppShell> {
       await _refreshNodePreview(node.id, reason: 'custom_node_created');
       setState(_selection.exit);
       _browserNodeCache.clear();
+      _browserDataRevision++;
       _cacheWarmupGeneration++;
       if (parentOverride != null) {
         setState(() {
@@ -2212,6 +2383,7 @@ class _AppShellState extends State<AppShell> {
       );
       setState(_selection.exit);
       _browserNodeCache.clear();
+      _browserDataRevision++;
       _cacheWarmupGeneration++;
       _openIndexRoot(collection);
     } on ArgumentError catch (error) {
@@ -2262,6 +2434,7 @@ class _AppShellState extends State<AppShell> {
       await Future.wait(previewRefreshes);
       _exitSelectionMode();
       _browserNodeCache.clear();
+      _browserDataRevision++;
       _cacheWarmupGeneration++;
       _openIndexRoot(collection);
       return;
@@ -2478,6 +2651,7 @@ class _AppShellState extends State<AppShell> {
         reason: 'node_tree_cloned',
       );
       _browserNodeCache.clear();
+      _browserDataRevision++;
       _cacheWarmupGeneration++;
       _reloadDashboardData();
       _openIndexRoot(target);
@@ -2762,6 +2936,23 @@ class _AppShellState extends State<AppShell> {
       AppSection.data => CollectionBrowserPage(
           onSearchNodes: _searchNodes,
           currentNode: _currentIndexNode,
+          loading: _navigationLoading,
+          loadError: _navigationError,
+          onRetry: () => _reload(indexNodeId: _currentIndexNode?.id),
+          onAdd: _scanning
+              ? null
+              : _browserState.rootTab == BrowserRootTab.directory
+                  ? (_currentIndexNode == null
+                      ? _showCreateDirectoryIndex
+                      : null)
+                  : _currentIndexNode == null
+                      ? () => _showCreateCollection()
+                      : () => _showCreateCustomNode(),
+          addLabel: _browserState.rootTab == BrowserRootTab.directory
+              ? '添加目录'
+              : _currentIndexNode == null
+                  ? '新建分类'
+                  : '新建子分类',
           nodePath: _nodePath,
           childNodes: _childNodes,
           nodeSummaries: _nodeSummaries,
@@ -2836,6 +3027,7 @@ class _AppShellState extends State<AppShell> {
           key: ValueKey('$_requestedRuleId:$_ruleNavigationRevision'),
           queries: _readWorker!,
           controller: _ruleBrowser,
+          onCreateRule: _scanning ? null : _createRule,
           initialRuleId: _requestedRuleId,
           browserState: _browserState,
           layoutSettings: widget.preferences.value.layout,

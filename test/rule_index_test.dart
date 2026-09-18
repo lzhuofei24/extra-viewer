@@ -8,6 +8,62 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
+  test(
+      'rule covers select latest visual within capped default results and scope',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('rule_covers_');
+    addTearDown(() => temp.delete(recursive: true));
+    final database =
+        AppDatabase.openAtPathForTesting(p.join(temp.path, 'library.db'));
+    addTearDown(database.close);
+    final repository = LibraryRepository(database);
+    final scope = repository.ensureCollectionIndexRoot('范围');
+    final child = repository.createCustomNode(parentId: scope.id, name: '子分类');
+    final oldLarge = _entity(repository, 'large.jpg', EntityType.image, 100);
+    final newSmall = _entity(repository, 'small.mp4', EntityType.video, 10);
+    final outside = _entity(repository, 'outside.jpg', EntityType.image, 1000);
+    final note = _entity(repository, 'note.txt', EntityType.text, 200);
+    database.db.execute(
+        'UPDATE entities SET source_modified_at_ms = 1 WHERE id = ?',
+        [oldLarge.id]);
+    database.db.execute(
+        'UPDATE entities SET source_modified_at_ms = 2 WHERE id = ?',
+        [newSmall.id]);
+    database.db.execute(
+        'UPDATE entities SET source_modified_at_ms = 999 WHERE id = ?',
+        [outside.id]);
+    repository.linkEntitiesToIndexNode(
+        entityIds: [oldLarge.id, newSmall.id, note.id], indexNodeId: child.id);
+    final capped = repository.createRule(
+        name: '限制',
+        scopeNodeId: scope.id,
+        entityTypes: [EntityType.image, EntityType.video],
+        defaultSort: RuleSortMode.size,
+        maxResults: 1);
+    final all = repository.createRule(name: '全部视觉', scopeNodeId: scope.id);
+    final text =
+        repository.createRule(name: '文本', entityTypes: [EntityType.text]);
+    final worker = await LibraryReadWorker.start(
+        databasePath: database.databasePath!,
+        storageDirectoryPath: database.storageDirectoryPath);
+    addTearDown(worker.close);
+    final covers = await worker
+        .loadRuleCovers([capped.node.id, all.node.id, text.node.id, 'deleted']);
+    expect(covers[capped.node.id]!.id, oldLarge.id);
+    expect(covers[all.node.id]!.id, newSmall.id);
+    expect(covers.containsKey(text.node.id), isFalse);
+    expect(covers.containsKey('deleted'), isFalse);
+    await worker.loadRulePage(
+        ruleNodeId: all.node.id, sortMode: RuleSortMode.name);
+    expect((await worker.loadRuleCovers([all.node.id]))[all.node.id]!.id,
+        newSmall.id);
+    database.db.execute(
+        'UPDATE entities SET source_modified_at_ms = 2 WHERE id = ?',
+        [oldLarge.id]);
+    expect((await worker.loadRuleCovers([all.node.id]))[all.node.id]!.id,
+        ([oldLarge.id, newSmall.id]..sort()).first);
+  });
+
   test('system favorites and built-in rules reject rename and delete', () {
     final database = AppDatabase.openInMemory();
     addTearDown(database.close);

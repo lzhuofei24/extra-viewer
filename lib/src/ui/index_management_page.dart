@@ -4,7 +4,6 @@ import '../core/controllers/library_build_task_controller.dart';
 import '../core/domain/models.dart';
 import 'design_tokens.dart';
 import 'app_sidebar.dart';
-import 'library_widgets.dart';
 
 class IndexManagementPage extends StatelessWidget {
   const IndexManagementPage({
@@ -55,11 +54,6 @@ class IndexManagementPage extends StatelessWidget {
     return ListView(
       padding: AppTokens.pagePadding.add(AppNavigationObstruction.of(context)),
       children: [
-        const SectionHeader(
-          title: '管理',
-          subtitle: '添加资料目录，建立分类，或创建自动筛选规则。',
-        ),
-        const SizedBox(height: 18),
         Text('全部资料', style: theme.textTheme.titleLarge),
         const SizedBox(height: 12),
         _IndexRootSection(
@@ -243,7 +237,7 @@ class _IndexRootSection extends StatelessWidget {
                   MediaQuery.orientationOf(context) == Orientation.portrait
                       ? 2
                       : 4,
-              mainAxisExtent: 112 *
+              mainAxisExtent: 72 *
                   (MediaQuery.textScalerOf(context).scale(14) / 14).clamp(1, 3),
               crossAxisSpacing: 8,
               mainAxisSpacing: 1,
@@ -320,25 +314,22 @@ class _ManagementItem extends StatelessWidget {
   Widget build(BuildContext context) => Card(
       margin: EdgeInsets.zero,
       child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Row(children: [
+            Icon(icon, size: 18),
+            const SizedBox(width: 6),
             Expanded(
-                child: Row(children: [
-              Icon(icon, size: 18),
-              const SizedBox(width: 6),
-              Expanded(
-                  child:
-                      Text(name, maxLines: 2, overflow: TextOverflow.ellipsis)),
-            ])),
-            Row(children: [
-              Expanded(
-                  child: Text('$count 个文件',
+                child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text('$count 个文件',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.labelSmall)),
-              actions,
-            ]),
+                      style: Theme.of(context).textTheme.labelSmall),
+                ])),
+            actions,
           ])));
 }
 
@@ -431,7 +422,7 @@ class _RuleManagementSection extends StatelessWidget {
                   MediaQuery.orientationOf(context) == Orientation.portrait
                       ? 2
                       : 4,
-              mainAxisExtent: 112 *
+              mainAxisExtent: 72 *
                   (MediaQuery.textScalerOf(context).scale(14) / 14).clamp(1, 3),
               crossAxisSpacing: 8,
               mainAxisSpacing: 1,

@@ -35,6 +35,8 @@ class BrowserToolbar extends StatelessWidget {
     required this.layoutPreset,
     required this.onLayoutPresetChanged,
     this.onSearch,
+    this.onAdd,
+    this.addLabel = '添加',
     this.allowSorting = true,
     this.allowGridStyle = true,
     this.sortDescription,
@@ -57,6 +59,8 @@ class BrowserToolbar extends StatelessWidget {
   final GalleryLayoutPreset layoutPreset;
   final ValueChanged<GalleryLayoutPreset> onLayoutPresetChanged;
   final VoidCallback? onSearch;
+  final VoidCallback? onAdd;
+  final String addLabel;
   final bool immersive;
   final VoidCallback? onToggleImmersive;
   final bool selectionMode;
@@ -68,6 +72,11 @@ class BrowserToolbar extends StatelessWidget {
           final actions = Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (onAdd != null)
+                IconButton(
+                    tooltip: addLabel,
+                    onPressed: onAdd,
+                    icon: const Icon(Icons.add)),
               if (onSearch != null)
                 IconButton(
                   tooltip: '搜索目录、分类或规则',

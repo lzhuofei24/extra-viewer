@@ -4,6 +4,8 @@ import 'package:best_viewer/src/modules/library/library_queries.dart';
 import 'package:best_viewer/src/ui/app_preferences.dart';
 import 'package:best_viewer/src/ui/browser_entity_sliver.dart';
 import 'package:best_viewer/src/ui/browser_list.dart';
+import 'package:best_viewer/src/ui/browser_node_grid.dart';
+import 'package:best_viewer/src/ui/library_widgets.dart';
 import 'package:best_viewer/src/ui/browser_state.dart';
 import 'package:best_viewer/src/ui/browser_toolbar.dart';
 import 'package:best_viewer/src/ui/gallery_layout_settings.dart';
@@ -38,11 +40,16 @@ EntityListItem entity(String id) => EntityListItem(
     modifiedAtMs: 0);
 
 class Queries implements LibraryQueries {
+  Map<String, EntityListItem> covers = {};
   List<RuleDefinition> rules = [rule('常用', builtIn: true), rule('自定义')];
   Future<RuleResultPage> Function(String, RuleSortMode?, RulePageCursor?)?
       loader;
   @override
   Future<List<RuleDefinition>> listRules() async => rules;
+  @override
+  Future<Map<String, EntityListItem>> loadRuleCovers(
+          List<String> ruleIds) async =>
+      covers;
   @override
   Future<RuleResultPage> loadRulePage(
           {required String ruleNodeId,
@@ -57,6 +64,55 @@ class Queries implements LibraryQueries {
 }
 
 void main() {
+  testWidgets('rule home shares folder cards and requests missing covers',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(500, 900);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final queries = Queries();
+    queries.covers = {
+      '常用': const EntityListItem(
+          id: 'image',
+          title: 'photo',
+          entityType: EntityType.image,
+          path: '/photo.jpg',
+          format: 'jpg',
+          size: 1,
+          modifiedAtMs: 1),
+      '自定义': const EntityListItem(
+          id: 'failed',
+          title: 'video',
+          entityType: EntityType.video,
+          path: '/video.mp4',
+          format: 'mp4',
+          size: 1,
+          modifiedAtMs: 1,
+          thumbnailStatus: ThumbnailStatus.failed),
+    };
+    for (final preset in GalleryLayoutPreset.values) {
+      final requests = <String>[];
+      await pumpRulePage(tester, queries,
+          preset: preset, onThumbnail: (e) => requests.add(e.id));
+      expect(find.byType(BrowserNodeGridSliver), findsOneWidget);
+      expect(find.byType(IndexNodePreviewCard), findsNWidgets(2));
+      expect(find.byType(EntityArtwork), findsNWidgets(2));
+      final grid = tester.widget<SliverGrid>(find.byType(SliverGrid));
+      expect(
+          (grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount)
+              .crossAxisCount,
+          preset.settings.portraitFolderColumns);
+      expect(requests, contains('image'));
+      expect(requests, isNot(contains('failed')));
+      expect(find.byTooltip('新建规则'), findsOneWidget);
+      await tester.tap(find.text('常用'));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('新建规则'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    }
+  });
+
   testWidgets('ordinary result scroll position returns after immersive mode',
       (tester) async {
     final queries = Queries();
@@ -292,6 +348,8 @@ Future<void> pumpRulePage(WidgetTester tester, Queries queries,
     {BrowserState state = const BrowserState(),
     ValueChanged<bool>? onSelection,
     ValueChanged<BrowserState>? onBrowserChanged,
+    ValueChanged<EntityListItem>? onThumbnail,
+    GalleryLayoutPreset preset = GalleryLayoutPreset.standard,
     double textScale = 1}) async {
   final prefs = AppPreferencesController.memory();
   addTearDown(prefs.dispose);
@@ -304,10 +362,11 @@ Future<void> pumpRulePage(WidgetTester tester, Queries queries,
           body: RuleIndexPage(
         queries: queries,
         browserState: state,
-        layoutSettings: GalleryLayoutPreset.standard.settings,
+        layoutSettings: preset.settings,
         preferences: prefs,
         onOpenEntity: (_, __) {},
-        onThumbnailNeeded: (_) {},
+        onThumbnailNeeded: onThumbnail ?? (_) {},
+        onCreateRule: () {},
         onSearch: () {},
         onBrowserStateChanged: onBrowserChanged ?? (_) {},
         onAddToCollection: (_) async {},

@@ -6,6 +6,22 @@ class RuleBrowserController extends ChangeNotifier {
   RuleBrowserController(this.queries);
   final LibraryQueries queries;
   List<RuleDefinition> rules = const [];
+  Map<String, EntityListItem> covers = const {};
+  int _coverGeneration = 0;
+
+  Future<void> refreshCovers() async {
+    final generation = ++_coverGeneration;
+    try {
+      final result =
+          await queries.loadRuleCovers(rules.map((r) => r.node.id).toList());
+      if (_disposed || generation != _coverGeneration) return;
+      covers = result;
+      notifyListeners();
+    } catch (_) {
+      // A failed cover lookup must not hide usable rule entries.
+    }
+  }
+
   RuleDefinition? activeRule;
   List<EntityListItem> items = const [];
   RulePageCursor? cursor;
@@ -25,6 +41,7 @@ class RuleBrowserController extends ChangeNotifier {
       final result = await queries.listRules();
       if (!_current(generation)) return;
       rules = result;
+      refreshCovers();
       loading = false;
       notifyListeners();
       if (initialRuleId != null) {
@@ -65,6 +82,7 @@ class RuleBrowserController extends ChangeNotifier {
     final updated = await queries.listRules();
     if (!_current(generation)) return;
     rules = updated;
+    refreshCovers();
     final active = activeRule;
     if (active != null) {
       final matching = updated.where((rule) => rule.node.id == active.node.id);

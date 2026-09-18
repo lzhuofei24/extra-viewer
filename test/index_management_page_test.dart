@@ -10,9 +10,11 @@ void main() {
       final delegate =
           grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
       expect(delegate.crossAxisCount, 2);
+      expect(delegate.mainAxisExtent, 72);
     }
     expect(tester.takeException(), isNull);
     expect(find.text('添加资料'), findsNothing);
+    expect(find.text('管理'), findsNothing);
     expect(find.text('全部资料'), findsOneWidget);
     expect(find.byTooltip('添加目录'), findsOneWidget);
     await tester.tap(find.byTooltip('操作').first);
