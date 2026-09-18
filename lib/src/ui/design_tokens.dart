@@ -2,6 +2,7 @@ import 'package:flex_color_scheme/flex_color_scheme.dart';
 import 'package:flutter/material.dart';
 
 enum ViewerThemeChoice {
+  system('跟随系统'),
   galleryLight('画廊亮色'),
   galleryDark('画廊暗色');
 

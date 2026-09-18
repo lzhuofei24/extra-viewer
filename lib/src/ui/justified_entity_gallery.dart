@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../core/domain/models.dart';
+import 'gallery_layout_settings.dart';
 import 'library_widgets.dart';
-import 'gallery_metrics.dart';
 
 /// Packs media by aspect ratio into rows that fill the available width.
 /// Completed rows vary slightly around the target height without cropping.
@@ -17,6 +17,7 @@ class JustifiedEntityGallerySliver extends StatelessWidget {
     this.onShowEntityMenu,
     required this.onThumbnailNeeded,
     required this.selectedEntityIds,
+    required this.layoutSettings,
     this.onToggleEntitySelection,
     this.onStartEntitySelection,
   });
@@ -29,14 +30,18 @@ class JustifiedEntityGallerySliver extends StatelessWidget {
   final ValueChanged<EntityListItem>? onShowEntityMenu;
   final ValueChanged<EntityListItem> onThumbnailNeeded;
   final Set<String> selectedEntityIds;
+  final GalleryLayoutSettings layoutSettings;
   final ValueChanged<EntityListItem>? onToggleEntitySelection;
   final ValueChanged<EntityListItem>? onStartEntitySelection;
 
   @override
   Widget build(BuildContext context) {
-    final gap = immersive ? 1.0 : 8.0;
-    final horizontalPadding = immersive ? 2.0 : 8.0;
-    final targetHeight = GalleryMetrics.cardHeight;
+    final gap =
+        immersive ? GalleryLayoutSettings.immersiveGap : layoutSettings.cardGap;
+    final horizontalPadding = immersive
+        ? GalleryLayoutSettings.immersiveMargin
+        : layoutSettings.pageMargin;
+    final targetHeight = layoutSettings.equalHeightTarget;
     return SliverLayoutBuilder(
       builder: (context, constraints) {
         final rows = JustifiedGalleryLayout.calculate(
@@ -78,6 +83,7 @@ class JustifiedEntityGallerySliver extends StatelessWidget {
                               selected: selectedEntityIds
                                   .contains(row.items[index].id),
                               immersive: immersive,
+                              cardRadius: layoutSettings.cardRadius,
                               selectionMode: selectionMode,
                               onToggleSelection: onToggleEntitySelection == null
                                   ? null

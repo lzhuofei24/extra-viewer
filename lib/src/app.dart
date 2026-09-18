@@ -32,6 +32,7 @@ import 'core/thumbnails/browsing_thumbnail_controller.dart';
 import 'ui/browser_state.dart';
 import 'ui/browser_node_cache.dart';
 import 'ui/app_sidebar.dart';
+import 'ui/app_preferences.dart';
 import 'ui/builtin_media_page.dart';
 import 'ui/collection_browser_page.dart';
 import 'ui/design_tokens.dart';
@@ -48,31 +49,48 @@ import 'ui/dialogs/app_dialogs.dart';
 import 'ui/widgets/app_widgets.dart';
 
 class BestViewerApp extends StatefulWidget {
-  const BestViewerApp({super.key, this.databaseFactory});
+  const BestViewerApp({super.key, this.databaseFactory, this.preferences});
 
   final Future<AppDatabase> Function()? databaseFactory;
+  final AppPreferencesController? preferences;
 
   @override
   State<BestViewerApp> createState() => _BestViewerAppState();
 }
 
 class _BestViewerAppState extends State<BestViewerApp> {
-  ViewerThemeChoice _themeChoice = ViewerThemeChoice.galleryDark;
+  late final AppPreferencesController _preferences =
+      widget.preferences ?? AppPreferencesController.memory();
+
+  @override
+  void initState() {
+    super.initState();
+    _preferences.addListener(_handlePreferencesChanged);
+  }
+
+  @override
+  void dispose() {
+    _preferences.removeListener(_handlePreferencesChanged);
+    super.dispose();
+  }
+
+  void _handlePreferencesChanged() => setState(() {});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Extra Viewer',
       debugShowCheckedModeBanner: false,
-      theme: AppTokens.themeFor(_themeChoice),
+      theme: AppTokens.themeFor(ViewerThemeChoice.galleryLight),
       darkTheme: AppTokens.themeFor(ViewerThemeChoice.galleryDark),
-      themeMode: _themeChoice == ViewerThemeChoice.galleryDark
-          ? ThemeMode.dark
-          : ThemeMode.light,
+      themeMode: switch (_preferences.value.themeChoice) {
+        ViewerThemeChoice.system => ThemeMode.system,
+        ViewerThemeChoice.galleryLight => ThemeMode.light,
+        ViewerThemeChoice.galleryDark => ThemeMode.dark,
+      },
       home: AppShell(
         databaseFactory: widget.databaseFactory,
-        themeChoice: _themeChoice,
-        onThemeChanged: (value) => setState(() => _themeChoice = value),
+        preferences: _preferences,
       ),
     );
   }
@@ -82,13 +100,11 @@ class AppShell extends StatefulWidget {
   const AppShell({
     super.key,
     this.databaseFactory,
-    required this.themeChoice,
-    required this.onThemeChanged,
+    required this.preferences,
   });
 
   final Future<AppDatabase> Function()? databaseFactory;
-  final ViewerThemeChoice themeChoice;
-  final ValueChanged<ViewerThemeChoice> onThemeChanged;
+  final AppPreferencesController preferences;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -122,7 +138,7 @@ class _AppShellState extends State<AppShell> {
   String? _readError;
   bool _readRetrying = false;
   AppSection _section = AppSection.data;
-  BrowserState _browserState = const BrowserState();
+  late BrowserState _browserState;
   IndexNode? _selectedIndexRoot;
   IndexNode? _selectedItem;
   List<IndexNode> _indexRoots = const [];
@@ -197,6 +213,12 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    final preferences = widget.preferences.value;
+    _browserState = BrowserState(
+      sortMode: preferences.sortMode,
+      displayMode: preferences.displayMode,
+      gridLayout: preferences.gridLayout,
+    );
     _registerRuntimeResources();
     _indexPathController = TextEditingController();
     _selection = SelectionController();
@@ -1285,6 +1307,21 @@ class _AppShellState extends State<AppShell> {
   void _setShelfImmersive(bool enabled) {
     if (!mounted) return;
     setState(() => _sidebarCollapsed = enabled);
+  }
+
+  void _setShelfSort(EntitySortMode value) {
+    setState(() => _browserState = _browserState.copyWith(sortMode: value));
+    widget.preferences.setBrowser(sortMode: value);
+  }
+
+  void _setShelfDisplayMode(BrowserDisplayMode value) {
+    setState(() => _browserState = _browserState.copyWith(displayMode: value));
+    widget.preferences.setBrowser(displayMode: value);
+  }
+
+  void _setShelfGridLayout(BrowserGridLayout value) {
+    setState(() => _browserState = _browserState.copyWith(gridLayout: value));
+    widget.preferences.setBrowser(gridLayout: value);
   }
 
   Future<void> _scan({String? rootDisplayName}) async {
@@ -2556,20 +2593,24 @@ class _AppShellState extends State<AppShell> {
           hasMoreEntities: _entitiesHasMore,
           loadingMoreEntities: _loadingMoreEntities,
           browserState: _browserState,
+          layoutSettings: widget.preferences.value.layout,
           onOpenRootIndex: _openRootIndex,
           onSortChanged: (value) {
             setState(
                 () => _browserState = _browserState.copyWith(sortMode: value));
+            widget.preferences.setBrowser(sortMode: value);
             _reload(indexNodeId: _currentIndexNode?.id);
           },
           onDisplayModeChanged: (value) {
             setState(() =>
                 _browserState = _browserState.copyWith(displayMode: value));
+            widget.preferences.setBrowser(displayMode: value);
           },
           onGridLayoutChanged: (value) {
             setState(() => _browserState = _browserState.copyWith(
                   gridLayout: value,
                 ));
+            widget.preferences.setBrowser(gridLayout: value);
           },
           immersiveBrowsing:
               _browserState.contentScope == BrowserContentScope.recursive,
@@ -2614,6 +2655,11 @@ class _AppShellState extends State<AppShell> {
           repository: _repository!,
           onOpenEntity: _openEntity,
           onThumbnailNeeded: _requestBrowseThumbnail,
+          browserState: _browserState,
+          layoutSettings: widget.preferences.value.layout,
+          onSortChanged: _setShelfSort,
+          onDisplayModeChanged: _setShelfDisplayMode,
+          onGridLayoutChanged: _setShelfGridLayout,
           onImmersiveChanged: _setShelfImmersive,
         ),
       AppSection.gallery => MediaShelfPage(
@@ -2621,6 +2667,11 @@ class _AppShellState extends State<AppShell> {
           repository: _repository!,
           onOpenEntity: _openEntity,
           onThumbnailNeeded: _requestBrowseThumbnail,
+          browserState: _browserState,
+          layoutSettings: widget.preferences.value.layout,
+          onSortChanged: _setShelfSort,
+          onDisplayModeChanged: _setShelfDisplayMode,
+          onGridLayoutChanged: _setShelfGridLayout,
           onImmersiveChanged: _setShelfImmersive,
         ),
       AppSection.reading => MediaShelfPage(
@@ -2628,6 +2679,11 @@ class _AppShellState extends State<AppShell> {
           repository: _repository!,
           onOpenEntity: _openEntity,
           onThumbnailNeeded: _requestBrowseThumbnail,
+          browserState: _browserState,
+          layoutSettings: widget.preferences.value.layout,
+          onSortChanged: _setShelfSort,
+          onDisplayModeChanged: _setShelfDisplayMode,
+          onGridLayoutChanged: _setShelfGridLayout,
         ),
       AppSection.music => MusicPage(
           sessions: _audioSessions,
@@ -2674,15 +2730,12 @@ class _AppShellState extends State<AppShell> {
         ),
       AppSection.settings => SettingsPage(
           onOpenDiagnostics: () => _navigateToSection(AppSection.logs),
-          themeChoice: widget.themeChoice,
-          sortMode: _browserState.sortMode,
-          onThemeChanged: widget.onThemeChanged,
+          themeChoice: widget.preferences.value.themeChoice,
+          layoutSettings: widget.preferences.value.layout,
+          onThemeChanged: widget.preferences.setTheme,
+          onLayoutChanged: widget.preferences.setLayout,
+          onResetLayout: widget.preferences.resetLayout,
           onResetLocalIndex: _resetLocalIndexStorage,
-          onSortChanged: (value) {
-            setState(
-                () => _browserState = _browserState.copyWith(sortMode: value));
-            _reload(indexNodeId: _currentIndexNode?.id);
-          },
         ),
       AppSection.logs => DiagnosticsPage(
           database: _database!,

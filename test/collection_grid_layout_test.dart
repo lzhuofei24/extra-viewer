@@ -17,7 +17,22 @@ void main() {
   test('a content region narrowed by the sidebar gets narrower cards', () {
     final layout = CollectionGridLayout.calculate(availableWidth: 956);
 
-    expect(layout.columnCount, 4);
-    expect(layout.itemWidth, closeTo(232, 0.001));
+    expect(layout.columnCount, 3);
+    expect(layout.itemWidth, closeTo(310.666, 0.001));
+  });
+
+  test('configured card width controls density without overflow', () {
+    final compact = CollectionGridLayout.calculate(
+      availableWidth: 956,
+      targetItemWidth: 200,
+    );
+    final spacious = CollectionGridLayout.calculate(
+      availableWidth: 956,
+      targetItemWidth: 400,
+    );
+
+    expect(compact.columnCount, 4);
+    expect(spacious.columnCount, 2);
+    expect(compact.contentWidth, spacious.contentWidth);
   });
 }

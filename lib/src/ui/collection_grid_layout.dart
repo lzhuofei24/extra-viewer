@@ -1,4 +1,4 @@
-import 'gallery_metrics.dart';
+import 'gallery_layout_settings.dart';
 
 class CollectionGridLayout {
   const CollectionGridLayout({
@@ -22,7 +22,8 @@ class CollectionGridLayout {
     double? targetItemWidth,
     int maxColumns = 8,
   }) {
-    final resolvedTargetItemWidth = targetItemWidth ?? GalleryMetrics.cardWidth;
+    final resolvedTargetItemWidth =
+        targetItemWidth ?? GalleryLayoutSettings.defaultEqualWidthTarget;
     final contentWidth =
         (availableWidth - horizontalPadding * 2).clamp(1.0, double.infinity);
     final rawColumns =

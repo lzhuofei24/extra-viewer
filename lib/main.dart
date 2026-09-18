@@ -6,6 +6,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'src/app.dart';
 import 'src/core/diagnostics/app_diagnostic_log.dart';
+import 'src/ui/app_preferences.dart';
 
 Future<void> main() async {
   final bootstrap = runZonedGuarded<Future<void>>(
@@ -42,7 +43,20 @@ Future<void> main() async {
       };
       MediaKit.ensureInitialized();
       AppDiagnosticLog.instance.info('media_kit_initialized');
-      runApp(const BestViewerApp());
+      late final AppPreferencesController preferences;
+      try {
+        final preferencesStore =
+            await SharedPreferencesAppPreferencesStore.create();
+        preferences = await AppPreferencesController.load(preferencesStore);
+      } catch (error, stackTrace) {
+        AppDiagnosticLog.instance.error(
+          'preferences_load_failed',
+          error,
+          stackTrace,
+        );
+        preferences = AppPreferencesController.memory();
+      }
+      runApp(BestViewerApp(preferences: preferences));
     },
     (error, stackTrace) {
       AppDiagnosticLog.instance.error('uncaught_zone_error', error, stackTrace);

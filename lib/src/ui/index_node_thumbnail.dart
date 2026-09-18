@@ -40,11 +40,13 @@ class IndexNodeThumbnail extends StatelessWidget {
     required this.preview,
     required this.nodeName,
     required this.hasContent,
+    this.borderRadius = 16,
   });
 
   final IndexNodePreview? preview;
   final String nodeName;
   final bool hasContent;
+  final double borderRadius;
 
   @override
   Widget build(BuildContext context) {
@@ -59,7 +61,7 @@ class IndexNodeThumbnail extends StatelessWidget {
       return const SizedBox.expand();
     }
     return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(borderRadius),
       child: ColoredBox(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
         child: switch (data.kind) {

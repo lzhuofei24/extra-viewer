@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../core/domain/models.dart';
 import '../core/formats/file_format_handlers.dart';
 import 'design_tokens.dart';
+import 'gallery_layout_settings.dart';
 
 class EntityArtwork extends StatelessWidget {
   const EntityArtwork({
@@ -132,6 +133,7 @@ class EntityCard extends StatelessWidget {
     this.onStartSelection,
     this.onShowMenu,
     this.onThumbnailNeeded,
+    this.cardRadius = 16,
   });
 
   final EntityListItem entity;
@@ -143,6 +145,7 @@ class EntityCard extends StatelessWidget {
   final VoidCallback? onStartSelection;
   final VoidCallback? onShowMenu;
   final VoidCallback? onThumbnailNeeded;
+  final double cardRadius;
 
   @override
   Widget build(BuildContext context) {
@@ -164,7 +167,9 @@ class EntityCard extends StatelessWidget {
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(immersive ? 2 : 16),
+        borderRadius: BorderRadius.circular(
+          immersive ? GalleryLayoutSettings.immersiveRadius : cardRadius,
+        ),
         side: BorderSide(
           color: theme.colorScheme.outlineVariant.withValues(alpha: 0.65),
           width: 1,

@@ -8,10 +8,11 @@ import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import '../core/domain/models.dart';
 import '../modules/browser/thumbnail_warmup.dart';
 import 'browser_state.dart';
+import 'browser_toolbar.dart';
 import 'collection_grid_layout.dart';
 import 'design_tokens.dart';
 import 'index_node_thumbnail.dart';
-import 'gallery_metrics.dart';
+import 'gallery_layout_settings.dart';
 import 'justified_entity_gallery.dart';
 import 'library_widgets.dart';
 import 'spanning_grid.dart';
@@ -29,6 +30,7 @@ class CollectionBrowserPage extends StatelessWidget {
     required this.hasMoreEntities,
     required this.loadingMoreEntities,
     required this.browserState,
+    required this.layoutSettings,
     required this.onOpenRootIndex,
     required this.onSortChanged,
     required this.onDisplayModeChanged,
@@ -107,6 +109,7 @@ class CollectionBrowserPage extends StatelessWidget {
   final Set<String> selectedNodeIds;
   final ValueChanged<IndexNode> onToggleNodeSelection;
   final ValueChanged<IndexNode> onStartNodeSelection;
+  final GalleryLayoutSettings layoutSettings;
   final VoidCallback onClearEntitySelection;
   final VoidCallback onSelectAllVisible;
   final VoidCallback onInvertVisibleSelection;
@@ -200,6 +203,7 @@ class CollectionBrowserPage extends StatelessWidget {
                           selectionMode: selectionMode,
                           onToggleNodeSelection: onToggleNodeSelection,
                           onStartNodeSelection: onStartNodeSelection,
+                          horizontalPadding: layoutSettings.pageMargin,
                         )
                       : _NodeGridSliver(
                           nodes: visibleNodes,
@@ -211,6 +215,7 @@ class CollectionBrowserPage extends StatelessWidget {
                           selectionMode: selectionMode,
                           onToggleNodeSelection: onToggleNodeSelection,
                           onStartNodeSelection: onStartNodeSelection,
+                          layoutSettings: layoutSettings,
                         )),
                 if (hasNodes && currentNode != null)
                   listMode
@@ -222,6 +227,7 @@ class CollectionBrowserPage extends StatelessWidget {
                           selectionMode: selectionMode,
                           onToggleNodeSelection: onToggleNodeSelection,
                           onStartNodeSelection: onStartNodeSelection,
+                          horizontalPadding: layoutSettings.pageMargin,
                         )
                       : _NodeGridSliver(
                           nodes: childNodes,
@@ -233,6 +239,7 @@ class CollectionBrowserPage extends StatelessWidget {
                           selectionMode: selectionMode,
                           onToggleNodeSelection: onToggleNodeSelection,
                           onStartNodeSelection: onStartNodeSelection,
+                          layoutSettings: layoutSettings,
                         ),
                 if (!hasNodes && !hasEntities)
                   SliverPadding(
@@ -252,7 +259,8 @@ class CollectionBrowserPage extends StatelessWidget {
                   ),
                 if (hasNodes && hasEntities)
                   SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    padding: EdgeInsets.symmetric(
+                        horizontal: layoutSettings.pageMargin),
                     sliver: SliverToBoxAdapter(
                       child: Divider(
                           height: 1,
@@ -274,6 +282,7 @@ class CollectionBrowserPage extends StatelessWidget {
                               onThumbnailNeeded: onThumbnailNeeded,
                               onToggleEntitySelection: onToggleEntitySelection,
                               onStartEntitySelection: onStartEntitySelection,
+                              layoutSettings: layoutSettings,
                             ),
                           BrowserGridLayout.equalWidth =>
                             _EntityMasonryGridSliver(
@@ -287,6 +296,7 @@ class CollectionBrowserPage extends StatelessWidget {
                               onThumbnailNeeded: onThumbnailNeeded,
                               onToggleEntitySelection: onToggleEntitySelection,
                               onStartEntitySelection: onStartEntitySelection,
+                              layoutSettings: layoutSettings,
                             ),
                           BrowserGridLayout.adaptive =>
                             _SpanningEntityGridSliver(
@@ -300,7 +310,8 @@ class CollectionBrowserPage extends StatelessWidget {
                                 selectedEntityIds: selectedEntityIds,
                                 onToggleEntitySelection:
                                     onToggleEntitySelection,
-                                onStartEntitySelection: onStartEntitySelection),
+                                onStartEntitySelection: onStartEntitySelection,
+                                layoutSettings: layoutSettings),
                           BrowserGridLayout.square => _SquareEntityGridSliver(
                               entities: entities,
                               immersive: immersiveBrowsing,
@@ -311,7 +322,8 @@ class CollectionBrowserPage extends StatelessWidget {
                               onThumbnailNeeded: onThumbnailNeeded,
                               selectedEntityIds: selectedEntityIds,
                               onToggleEntitySelection: onToggleEntitySelection,
-                              onStartEntitySelection: onStartEntitySelection),
+                              onStartEntitySelection: onStartEntitySelection,
+                              layoutSettings: layoutSettings),
                         }
                       : _EntityListSliver(
                           entities: entities,
@@ -322,6 +334,7 @@ class CollectionBrowserPage extends StatelessWidget {
                           onThumbnailNeeded: onThumbnailNeeded,
                           onToggleEntitySelection: onToggleEntitySelection,
                           onStartEntitySelection: onStartEntitySelection,
+                          horizontalPadding: layoutSettings.pageMargin,
                         ),
                 if (hasMoreEntities)
                   SliverToBoxAdapter(
@@ -640,132 +653,47 @@ class _PathBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      children: [
-        Expanded(
-          child: _IndexPathRail(
-            currentNode: currentNode,
-            path: path,
-            onOpenRootIndex: onOpenRootIndex,
-            onPathNodeSelected: onPathNodeSelected,
-          ),
-        ),
-        IconButton(
-          tooltip: '搜索目录或分类',
-          onPressed: onSearchNodes,
-          icon: const Icon(Icons.search),
-        ),
-        IconButton(
-          tooltip: immersiveBrowsing ? '退出沉浸式浏览' : '沉浸式浏览',
-          onPressed: currentNode == null ? null : onToggleImmersiveBrowsing,
-          icon: Icon(
-            immersiveBrowsing
-                ? Icons.fullscreen_exit_rounded
-                : Icons.fullscreen_rounded,
-          ),
-        ),
-        IconButton(
-          tooltip: selectionMode ? '退出选择模式' : '选择模式',
-          onPressed: onToggleSelectionMode,
-          icon: Icon(
-            selectionMode ? Icons.checklist_rounded : Icons.checklist_outlined,
-          ),
-        ),
+    return BrowserToolbar(
+      leading: _IndexPathRail(
+        currentNode: currentNode,
+        path: path,
+        onOpenRootIndex: onOpenRootIndex,
+        onPathNodeSelected: onPathNodeSelected,
+      ),
+      browserState: browserState,
+      onSortChanged: onSortChanged,
+      onDisplayModeChanged: onDisplayModeChanged,
+      onGridLayoutChanged: onGridLayoutChanged,
+      onSearch: onSearchNodes,
+      immersive: immersiveBrowsing,
+      onToggleImmersive: currentNode == null ? null : onToggleImmersiveBrowsing,
+      selectionMode: selectionMode,
+      onToggleSelection: onToggleSelectionMode,
+      moreActions: [
         if (canUpdateDirectoryNode)
-          IconButton(
-            tooltip: '更新当前文件夹及其内容',
+          BrowserToolbarAction(
+            label: '更新当前文件夹',
+            icon: Icons.refresh_rounded,
             onPressed: onUpdateDirectoryNode,
-            icon: const Icon(Icons.refresh_rounded),
           ),
-        const SizedBox(width: 4),
-        MenuAnchor(
-          menuChildren: [
-            if (currentNode != null)
-              MenuItemButton(
-                onPressed: onCloneCurrentNodeTree,
-                child: const Text('复制结构到分类'),
-              ),
-            if (canCreateNode)
-              MenuItemButton(
-                onPressed: onCreateNode,
-                child: const Text('新建分类'),
-              ),
-            if (canDeleteCurrentNode)
-              MenuItemButton(
-                onPressed: onDeleteCurrentNode,
-                child: const Text('删除当前分类'),
-              ),
-            if (currentNode != null && (canCreateNode || canDeleteCurrentNode))
-              const Divider(height: 1),
-            SizedBox(
-              width: 260,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('设置', style: theme.textTheme.labelLarge),
-                    const SizedBox(height: 10),
-                    Text('排序', style: theme.textTheme.labelMedium),
-                    const SizedBox(height: 6),
-                    SegmentedButton<EntitySortMode>(
-                      segments: const [
-                        ButtonSegment(
-                            value: EntitySortMode.modifiedDesc,
-                            label: Text('最近')),
-                        ButtonSegment(
-                            value: EntitySortMode.nameAsc, label: Text('名称')),
-                        ButtonSegment(
-                            value: EntitySortMode.sizeDesc, label: Text('体积')),
-                      ],
-                      selected: {browserState.sortMode},
-                      onSelectionChanged: (value) => onSortChanged(value.first),
-                    ),
-                    const SizedBox(height: 12),
-                    Text('显示', style: theme.textTheme.labelMedium),
-                    const SizedBox(height: 6),
-                    SegmentedButton<BrowserDisplayMode>(
-                      segments: const [
-                        ButtonSegment(
-                            value: BrowserDisplayMode.grid,
-                            icon: Icon(Icons.grid_view_rounded)),
-                        ButtonSegment(
-                            value: BrowserDisplayMode.list,
-                            icon: Icon(Icons.view_agenda_rounded)),
-                      ],
-                      selected: {browserState.displayMode},
-                      onSelectionChanged: (value) =>
-                          onDisplayModeChanged(value.first),
-                    ),
-                    const SizedBox(height: 6),
-                    Text('卡片布局', style: theme.textTheme.labelMedium),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        for (final mode in BrowserGridLayout.values)
-                          _GridLayoutOption(
-                            mode: mode,
-                            selected: browserState.gridLayout == mode,
-                            onSelected: () => onGridLayoutChanged(mode),
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-          builder: (context, controller, child) => IconButton(
-            tooltip: '设置',
-            onPressed: () =>
-                controller.isOpen ? controller.close() : controller.open(),
-            icon: const Icon(Icons.tune_rounded),
+        if (currentNode != null)
+          BrowserToolbarAction(
+            label: '复制结构到分类',
+            icon: Icons.account_tree_outlined,
+            onPressed: onCloneCurrentNodeTree,
           ),
-        ),
+        if (canCreateNode)
+          BrowserToolbarAction(
+            label: '新建分类',
+            icon: Icons.create_new_folder_outlined,
+            onPressed: onCreateNode,
+          ),
+        if (canDeleteCurrentNode)
+          BrowserToolbarAction(
+            label: '删除当前分类',
+            icon: Icons.delete_outline_rounded,
+            onPressed: onDeleteCurrentNode,
+          ),
       ],
     );
   }
@@ -783,6 +711,7 @@ class _EntityGridSliver extends StatelessWidget {
     required this.selectedEntityIds,
     required this.onToggleEntitySelection,
     required this.onStartEntitySelection,
+    required this.layoutSettings,
   });
 
   final List<EntityListItem> entities;
@@ -795,6 +724,7 @@ class _EntityGridSliver extends StatelessWidget {
   final Set<String> selectedEntityIds;
   final ValueChanged<EntityListItem> onToggleEntitySelection;
   final ValueChanged<EntityListItem> onStartEntitySelection;
+  final GalleryLayoutSettings layoutSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -807,6 +737,7 @@ class _EntityGridSliver extends StatelessWidget {
       onShowEntityMenu: onShowEntityMenu,
       onThumbnailNeeded: onThumbnailNeeded,
       selectedEntityIds: selectedEntityIds,
+      layoutSettings: layoutSettings,
       onToggleEntitySelection: onToggleEntitySelection,
       onStartEntitySelection: onStartEntitySelection,
     );
@@ -825,6 +756,7 @@ class _EntityMasonryGridSliver extends StatelessWidget {
     required this.selectedEntityIds,
     required this.onToggleEntitySelection,
     required this.onStartEntitySelection,
+    required this.layoutSettings,
   });
 
   final List<EntityListItem> entities;
@@ -837,21 +769,28 @@ class _EntityMasonryGridSliver extends StatelessWidget {
   final Set<String> selectedEntityIds;
   final ValueChanged<EntityListItem> onToggleEntitySelection;
   final ValueChanged<EntityListItem> onStartEntitySelection;
+  final GalleryLayoutSettings layoutSettings;
 
   @override
   Widget build(BuildContext context) {
-    final gap = immersive ? 1.0 : 8.0;
+    final gap =
+        immersive ? GalleryLayoutSettings.immersiveGap : layoutSettings.cardGap;
+    final margin = immersive
+        ? GalleryLayoutSettings.immersiveMargin
+        : layoutSettings.pageMargin;
     return SliverLayoutBuilder(
       builder: (context, constraints) {
         final layout = CollectionGridLayout.calculate(
           availableWidth: constraints.crossAxisExtent,
+          horizontalPadding: margin,
           gap: gap,
+          targetItemWidth: layoutSettings.equalWidthTarget,
         );
         return SliverPadding(
           padding: EdgeInsets.fromLTRB(
-            immersive ? 2 : 8,
-            immersive ? 2 : 12,
-            immersive ? 2 : 8,
+            margin,
+            immersive ? GalleryLayoutSettings.immersiveMargin : margin,
+            margin,
             0,
           ),
           sliver: SliverMasonryGrid.count(
@@ -865,6 +804,7 @@ class _EntityMasonryGridSliver extends StatelessWidget {
               onOpen: () => onOpenEntity(entities[index]),
               selected: selectedEntityIds.contains(entities[index].id),
               immersive: immersive,
+              cardRadius: layoutSettings.cardRadius,
               selectionMode: selectionMode,
               onToggleSelection: () => onToggleEntitySelection(entities[index]),
               onShowMenu: () => onShowEntityMenu(entities[index]),
@@ -889,7 +829,8 @@ class _SpanningEntityGridSliver extends StatelessWidget {
       required this.onThumbnailNeeded,
       required this.selectedEntityIds,
       required this.onToggleEntitySelection,
-      required this.onStartEntitySelection});
+      required this.onStartEntitySelection,
+      required this.layoutSettings});
   final List<EntityListItem> entities;
   final bool immersive;
   final bool selectionMode;
@@ -900,14 +841,19 @@ class _SpanningEntityGridSliver extends StatelessWidget {
   final Set<String> selectedEntityIds;
   final ValueChanged<EntityListItem> onToggleEntitySelection;
   final ValueChanged<EntityListItem> onStartEntitySelection;
+  final GalleryLayoutSettings layoutSettings;
   @override
   Widget build(BuildContext context) => SpanningGridSliver<EntityListItem>(
         items: entities,
-        targetCellWidth: GalleryMetrics.cardWidth,
-        targetRowHeight: GalleryMetrics.cardHeight,
+        targetCellWidth: layoutSettings.equalWidthTarget,
+        targetRowHeight: layoutSettings.equalHeightTarget,
         crossRowMode: false,
-        gap: immersive ? 1 : 8,
-        horizontalPadding: immersive ? 2 : 8,
+        gap: immersive
+            ? GalleryLayoutSettings.immersiveGap
+            : layoutSettings.cardGap,
+        horizontalPadding: immersive
+            ? GalleryLayoutSettings.immersiveMargin
+            : layoutSettings.pageMargin,
         aspectRatio: _entityAspectRatio,
         itemBuilder: (context, entity) => EntityCard(
             key: selectionRegistry.keyFor(entity),
@@ -915,6 +861,7 @@ class _SpanningEntityGridSliver extends StatelessWidget {
             onOpen: () => onOpenEntity(entity),
             selected: selectedEntityIds.contains(entity.id),
             immersive: immersive,
+            cardRadius: layoutSettings.cardRadius,
             selectionMode: selectionMode,
             onToggleSelection: () => onToggleEntitySelection(entity),
             onShowMenu: () => onShowEntityMenu(entity),
@@ -934,7 +881,8 @@ class _SquareEntityGridSliver extends StatelessWidget {
       required this.onThumbnailNeeded,
       required this.selectedEntityIds,
       required this.onToggleEntitySelection,
-      required this.onStartEntitySelection});
+      required this.onStartEntitySelection,
+      required this.layoutSettings});
   final List<EntityListItem> entities;
   final bool immersive;
   final bool selectionMode;
@@ -945,16 +893,23 @@ class _SquareEntityGridSliver extends StatelessWidget {
   final Set<String> selectedEntityIds;
   final ValueChanged<EntityListItem> onToggleEntitySelection;
   final ValueChanged<EntityListItem> onStartEntitySelection;
+  final GalleryLayoutSettings layoutSettings;
   @override
   Widget build(BuildContext context) =>
       SliverLayoutBuilder(builder: (context, constraints) {
+        final gap = immersive
+            ? GalleryLayoutSettings.immersiveGap
+            : layoutSettings.cardGap;
+        final margin = immersive
+            ? GalleryLayoutSettings.immersiveMargin
+            : layoutSettings.pageMargin;
         final layout = CollectionGridLayout.calculate(
             availableWidth: constraints.crossAxisExtent,
-            gap: immersive ? 1 : 8,
-            targetItemWidth: GalleryMetrics.squareSize);
+            horizontalPadding: margin,
+            gap: gap,
+            targetItemWidth: layoutSettings.squareSize);
         return SliverPadding(
-            padding: EdgeInsets.fromLTRB(
-                immersive ? 2 : 8, immersive ? 2 : 12, immersive ? 2 : 8, 0),
+            padding: EdgeInsets.fromLTRB(margin, margin, margin, 0),
             sliver: SliverGrid(
                 delegate: SliverChildBuilderDelegate((context, index) {
                   final entity = entities[index];
@@ -964,6 +919,7 @@ class _SquareEntityGridSliver extends StatelessWidget {
                       onOpen: () => onOpenEntity(entity),
                       selected: selectedEntityIds.contains(entity.id),
                       immersive: immersive,
+                      cardRadius: layoutSettings.cardRadius,
                       selectionMode: selectionMode,
                       onToggleSelection: () => onToggleEntitySelection(entity),
                       onShowMenu: () => onShowEntityMenu(entity),
@@ -972,8 +928,8 @@ class _SquareEntityGridSliver extends StatelessWidget {
                 }, childCount: entities.length),
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: layout.columnCount,
-                    mainAxisSpacing: immersive ? 1 : 8,
-                    crossAxisSpacing: immersive ? 1 : 8,
+                    mainAxisSpacing: gap,
+                    crossAxisSpacing: gap,
                     childAspectRatio: 1)));
       });
 }
@@ -990,76 +946,6 @@ double _entityAspectRatio(EntityListItem entity) {
   };
 }
 
-String _gridLayoutLabel(BrowserGridLayout mode) => switch (mode) {
-      BrowserGridLayout.equalHeight => '等高',
-      BrowserGridLayout.equalWidth => '等宽',
-      BrowserGridLayout.adaptive => '自适应',
-      BrowserGridLayout.square => '方格',
-    };
-
-class _GridLayoutOption extends StatelessWidget {
-  const _GridLayoutOption({
-    required this.mode,
-    required this.selected,
-    required this.onSelected,
-  });
-
-  final BrowserGridLayout mode;
-  final bool selected;
-  final VoidCallback onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return SizedBox(
-      width: 115,
-      height: 54,
-      child: Material(
-        color: selected
-            ? colors.secondaryContainer.withValues(alpha: .72)
-            : colors.surfaceContainerHighest.withValues(alpha: .42),
-        borderRadius: BorderRadius.circular(6),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(6),
-          onTap: onSelected,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: selected
-                    ? colors.primary.withValues(alpha: .76)
-                    : colors.outlineVariant.withValues(alpha: .58),
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(_gridLayoutIcon(mode), size: 18),
-                const SizedBox(width: 7),
-                Text(
-                  _gridLayoutLabel(mode),
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: selected ? colors.primary : null,
-                        fontWeight:
-                            selected ? FontWeight.w700 : FontWeight.w500,
-                      ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-IconData _gridLayoutIcon(BrowserGridLayout mode) => switch (mode) {
-      BrowserGridLayout.equalHeight => Icons.view_stream_outlined,
-      BrowserGridLayout.equalWidth => Icons.view_column_outlined,
-      BrowserGridLayout.adaptive => Icons.auto_awesome_mosaic_outlined,
-      BrowserGridLayout.square => Icons.grid_on_outlined,
-    };
-
 class _EntityListSliver extends StatelessWidget {
   const _EntityListSliver({
     required this.entities,
@@ -1070,6 +956,7 @@ class _EntityListSliver extends StatelessWidget {
     required this.selectedEntityIds,
     required this.onToggleEntitySelection,
     required this.onStartEntitySelection,
+    required this.horizontalPadding,
   });
 
   final List<EntityListItem> entities;
@@ -1080,13 +967,15 @@ class _EntityListSliver extends StatelessWidget {
   final Set<String> selectedEntityIds;
   final ValueChanged<EntityListItem> onToggleEntitySelection;
   final ValueChanged<EntityListItem> onStartEntitySelection;
+  final double horizontalPadding;
 
   @override
   Widget build(BuildContext context) {
     final rowCount = (entities.length + 2) ~/ 3;
     final background = Theme.of(context).scaffoldBackgroundColor;
     return SliverPadding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      padding: EdgeInsets.fromLTRB(
+          horizontalPadding, horizontalPadding, horizontalPadding, 0),
       sliver: SliverList.builder(
         itemCount: rowCount,
         itemBuilder: (context, index) {
@@ -1358,6 +1247,7 @@ class _NodeListSliver extends StatelessWidget {
     required this.selectionMode,
     required this.onToggleNodeSelection,
     required this.onStartNodeSelection,
+    required this.horizontalPadding,
   });
 
   final List<IndexNode> nodes;
@@ -1367,13 +1257,15 @@ class _NodeListSliver extends StatelessWidget {
   final bool selectionMode;
   final ValueChanged<IndexNode> onToggleNodeSelection;
   final ValueChanged<IndexNode> onStartNodeSelection;
+  final double horizontalPadding;
 
   @override
   Widget build(BuildContext context) {
     final rowCount = (nodes.length + 2) ~/ 3;
     final background = Theme.of(context).scaffoldBackgroundColor;
     return SliverPadding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      padding: EdgeInsets.fromLTRB(
+          horizontalPadding, horizontalPadding, horizontalPadding, 0),
       sliver: SliverList.builder(
         itemCount: rowCount,
         itemBuilder: (context, index) {
@@ -1502,6 +1394,7 @@ class _NodeGridSliver extends StatelessWidget {
     required this.selectionMode,
     required this.onToggleNodeSelection,
     required this.onStartNodeSelection,
+    required this.layoutSettings,
   });
 
   final List<IndexNode> nodes;
@@ -1513,6 +1406,7 @@ class _NodeGridSliver extends StatelessWidget {
   final bool selectionMode;
   final ValueChanged<IndexNode> onToggleNodeSelection;
   final ValueChanged<IndexNode> onStartNodeSelection;
+  final GalleryLayoutSettings layoutSettings;
 
   @override
   Widget build(BuildContext context) => _JustifiedNodeGridSliver(
@@ -1525,6 +1419,7 @@ class _NodeGridSliver extends StatelessWidget {
         selectionMode: selectionMode,
         onToggleNodeSelection: onToggleNodeSelection,
         onStartNodeSelection: onStartNodeSelection,
+        layoutSettings: layoutSettings,
       );
 }
 
@@ -1539,6 +1434,7 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
     required this.selectionMode,
     required this.onToggleNodeSelection,
     required this.onStartNodeSelection,
+    required this.layoutSettings,
   });
 
   final List<IndexNode> nodes;
@@ -1550,28 +1446,30 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
   final bool selectionMode;
   final ValueChanged<IndexNode> onToggleNodeSelection;
   final ValueChanged<IndexNode> onStartNodeSelection;
+  final GalleryLayoutSettings layoutSettings;
 
   @override
   Widget build(BuildContext context) {
-    const gap = 8.0;
-    final targetHeight = GalleryMetrics.nodeCardHeight;
+    final gap = layoutSettings.cardGap;
+    final margin = layoutSettings.pageMargin;
+    final targetHeight = layoutSettings.folderHeight;
     return SliverLayoutBuilder(
       builder: (context, constraints) {
         final rows = _FixedHeightNodeRows.calculate(
           nodes: nodes,
-          availableWidth: constraints.crossAxisExtent - 16,
+          availableWidth: constraints.crossAxisExtent - margin * 2,
           height: targetHeight,
           gap: gap,
           aspectRatio: (node) => indexNodePreviewAspectRatio(previews[node.id]),
         );
         return SliverPadding(
-          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          padding: EdgeInsets.fromLTRB(margin, 0, margin, margin),
           sliver: SliverList.builder(
             itemCount: rows.length,
             itemBuilder: (context, rowIndex) {
               final row = rows[rowIndex];
               return Padding(
-                padding: const EdgeInsets.only(bottom: gap),
+                padding: EdgeInsets.only(bottom: gap),
                 child: SizedBox(
                   height: targetHeight,
                   child: SingleChildScrollView(
@@ -1612,6 +1510,7 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
           : () => onOpenNode(node),
       onLongPress: () => onStartNodeSelection(node),
       onThumbnailEntityNeeded: onThumbnailEntityNeeded,
+      cardRadius: layoutSettings.cardRadius,
     );
   }
 }
@@ -1676,6 +1575,7 @@ class IndexNodePreviewCard extends StatelessWidget {
     required this.onThumbnailEntityNeeded,
     this.selected = false,
     this.onLongPress,
+    this.cardRadius = 16,
   });
 
   final IndexNode node;
@@ -1685,6 +1585,7 @@ class IndexNodePreviewCard extends StatelessWidget {
   final ValueChanged<String> onThumbnailEntityNeeded;
   final bool selected;
   final VoidCallback? onLongPress;
+  final double cardRadius;
 
   @override
   Widget build(BuildContext context) {
@@ -1694,7 +1595,7 @@ class IndexNodePreviewCard extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         onLongPress: onLongPress,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(cardRadius),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -1702,7 +1603,7 @@ class IndexNodePreviewCard extends StatelessWidget {
             AspectRatio(
               aspectRatio: indexNodePreviewAspectRatio(preview),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(cardRadius),
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -1711,6 +1612,7 @@ class IndexNodePreviewCard extends StatelessWidget {
                       nodeName: node.name,
                       hasContent: (summary?.childNodeCount ?? 0) > 0 ||
                           (summary?.directEntityCount ?? 0) > 0,
+                      borderRadius: cardRadius,
                     ),
                     Positioned(
                       top: 6,

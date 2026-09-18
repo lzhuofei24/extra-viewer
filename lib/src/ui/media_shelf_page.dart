@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 import '../modules/library/library_access.dart';
 import '../core/domain/models.dart';
 import 'justified_entity_gallery.dart';
+import 'browser_state.dart';
+import 'browser_toolbar.dart';
+import 'collection_grid_layout.dart';
+import 'gallery_layout_settings.dart';
+import 'library_widgets.dart';
+import 'spanning_grid.dart';
 
 enum MediaShelfKind { video, gallery, reading }
 
@@ -13,6 +20,11 @@ class MediaShelfPage extends StatefulWidget {
     required this.repository,
     required this.onOpenEntity,
     required this.onThumbnailNeeded,
+    required this.browserState,
+    required this.layoutSettings,
+    required this.onSortChanged,
+    required this.onDisplayModeChanged,
+    required this.onGridLayoutChanged,
     this.onImmersiveChanged,
   });
 
@@ -20,6 +32,11 @@ class MediaShelfPage extends StatefulWidget {
   final LibraryAccess repository;
   final ValueChanged<EntityListItem> onOpenEntity;
   final ValueChanged<EntityListItem> onThumbnailNeeded;
+  final BrowserState browserState;
+  final GalleryLayoutSettings layoutSettings;
+  final ValueChanged<EntitySortMode> onSortChanged;
+  final ValueChanged<BrowserDisplayMode> onDisplayModeChanged;
+  final ValueChanged<BrowserGridLayout> onGridLayoutChanged;
   final ValueChanged<bool>? onImmersiveChanged;
 
   @override
@@ -82,8 +99,27 @@ class _MediaShelfPageState extends State<MediaShelfPage> {
     setState(() => _items = items);
   }
 
+  List<EntityListItem> get _sortedItems {
+    final items = [..._items];
+    items.sort(switch (widget.browserState.sortMode) {
+      EntitySortMode.nameAsc => (a, b) =>
+          a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+      EntitySortMode.nameDesc => (a, b) =>
+          b.title.toLowerCase().compareTo(a.title.toLowerCase()),
+      EntitySortMode.modifiedDesc => (a, b) =>
+          b.modifiedAtMs.compareTo(a.modifiedAtMs),
+      EntitySortMode.modifiedAsc => (a, b) =>
+          a.modifiedAtMs.compareTo(b.modifiedAtMs),
+      EntitySortMode.sizeDesc => (a, b) => b.size.compareTo(a.size),
+      EntitySortMode.sizeAsc => (a, b) => a.size.compareTo(b.size),
+      EntitySortMode.typeAsc => (a, b) => a.format.compareTo(b.format),
+    });
+    return items;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final items = _sortedItems;
     return Stack(
       children: [
         CustomScrollView(
@@ -94,32 +130,34 @@ class _MediaShelfPageState extends State<MediaShelfPage> {
                 sliver: SliverToBoxAdapter(
                   child: Row(
                     children: [
-                      Text(_title,
-                          style: Theme.of(context).textTheme.titleLarge),
-                      const Spacer(),
-                      if (_supportsImmersive)
-                        IconButton(
-                          tooltip: '沉浸式浏览',
-                          onPressed: _toggleImmersive,
-                          icon: const Icon(Icons.fullscreen_rounded),
+                      Expanded(
+                        child: BrowserToolbar(
+                          leading: Text(_title,
+                              style: Theme.of(context).textTheme.titleLarge),
+                          browserState: widget.browserState,
+                          onSortChanged: widget.onSortChanged,
+                          onDisplayModeChanged: widget.onDisplayModeChanged,
+                          onGridLayoutChanged: widget.onGridLayoutChanged,
+                          onToggleImmersive:
+                              _supportsImmersive ? _toggleImmersive : null,
                         ),
+                      ),
                     ],
                   ),
                 ),
               ),
-            if (_items.isEmpty)
+            if (items.isEmpty)
               SliverFillRemaining(
                 child: Center(child: Text('暂无$_title内容')),
               )
             else ...[
-              JustifiedEntityGallerySliver(
-                entities: _items,
+              _ShelfContentSliver(
+                items: items,
+                browserState: widget.browserState,
+                layoutSettings: widget.layoutSettings,
                 immersive: _immersive,
-                selectionMode: false,
-                keyFor: (entity) => ValueKey('shelf-${entity.id}'),
                 onOpenEntity: widget.onOpenEntity,
                 onThumbnailNeeded: widget.onThumbnailNeeded,
-                selectedEntityIds: const <String>{},
               ),
               const SliverPadding(padding: EdgeInsets.only(bottom: 92)),
             ],
@@ -143,4 +181,270 @@ class _MediaShelfPageState extends State<MediaShelfPage> {
       ],
     );
   }
+}
+
+class _ShelfContentSliver extends StatelessWidget {
+  const _ShelfContentSliver(
+      {required this.items,
+      required this.browserState,
+      required this.layoutSettings,
+      required this.immersive,
+      required this.onOpenEntity,
+      required this.onThumbnailNeeded});
+
+  final List<EntityListItem> items;
+  final BrowserState browserState;
+  final GalleryLayoutSettings layoutSettings;
+  final bool immersive;
+  final ValueChanged<EntityListItem> onOpenEntity;
+  final ValueChanged<EntityListItem> onThumbnailNeeded;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!immersive && browserState.displayMode == BrowserDisplayMode.list) {
+      return _ShelfList(
+          items: items,
+          onOpen: onOpenEntity,
+          onThumbnailNeeded: onThumbnailNeeded,
+          horizontalPadding: layoutSettings.pageMargin);
+    }
+    return switch (browserState.gridLayout) {
+      BrowserGridLayout.equalHeight => JustifiedEntityGallerySliver(
+          entities: items,
+          immersive: immersive,
+          selectionMode: false,
+          keyFor: (entity) => ValueKey('shelf-${entity.id}'),
+          onOpenEntity: onOpenEntity,
+          onThumbnailNeeded: onThumbnailNeeded,
+          selectedEntityIds: const {},
+          layoutSettings: layoutSettings),
+      BrowserGridLayout.equalWidth => _ShelfMasonry(
+          items: items,
+          immersive: immersive,
+          layout: layoutSettings,
+          onOpen: onOpenEntity,
+          onThumbnailNeeded: onThumbnailNeeded),
+      BrowserGridLayout.adaptive => _ShelfAdaptive(
+          items: items,
+          immersive: immersive,
+          layout: layoutSettings,
+          onOpen: onOpenEntity,
+          onThumbnailNeeded: onThumbnailNeeded),
+      BrowserGridLayout.square => _ShelfSquare(
+          items: items,
+          immersive: immersive,
+          layout: layoutSettings,
+          onOpen: onOpenEntity,
+          onThumbnailNeeded: onThumbnailNeeded),
+    };
+  }
+}
+
+class _ShelfMasonry extends StatelessWidget {
+  const _ShelfMasonry(
+      {required this.items,
+      required this.immersive,
+      required this.layout,
+      required this.onOpen,
+      required this.onThumbnailNeeded});
+  final List<EntityListItem> items;
+  final bool immersive;
+  final GalleryLayoutSettings layout;
+  final ValueChanged<EntityListItem> onOpen;
+  final ValueChanged<EntityListItem> onThumbnailNeeded;
+
+  @override
+  Widget build(BuildContext context) =>
+      SliverLayoutBuilder(builder: (context, constraints) {
+        final gap =
+            immersive ? GalleryLayoutSettings.immersiveGap : layout.cardGap;
+        final margin = immersive
+            ? GalleryLayoutSettings.immersiveMargin
+            : layout.pageMargin;
+        final grid = CollectionGridLayout.calculate(
+            availableWidth: constraints.crossAxisExtent,
+            horizontalPadding: margin,
+            gap: gap,
+            targetItemWidth: layout.equalWidthTarget);
+        return SliverPadding(
+            padding: EdgeInsets.fromLTRB(margin, margin, margin, 0),
+            sliver: SliverMasonryGrid.count(
+                crossAxisCount: grid.columnCount,
+                mainAxisSpacing: gap,
+                crossAxisSpacing: gap,
+                childCount: items.length,
+                itemBuilder: (context, index) => _card(items[index])));
+      });
+
+  Widget _card(EntityListItem entity) => EntityCard(
+      entity: entity,
+      onOpen: () => onOpen(entity),
+      immersive: immersive,
+      cardRadius: layout.cardRadius,
+      onThumbnailNeeded: () => onThumbnailNeeded(entity));
+}
+
+class _ShelfAdaptive extends StatelessWidget {
+  const _ShelfAdaptive(
+      {required this.items,
+      required this.immersive,
+      required this.layout,
+      required this.onOpen,
+      required this.onThumbnailNeeded});
+  final List<EntityListItem> items;
+  final bool immersive;
+  final GalleryLayoutSettings layout;
+  final ValueChanged<EntityListItem> onOpen;
+  final ValueChanged<EntityListItem> onThumbnailNeeded;
+
+  @override
+  Widget build(BuildContext context) => SpanningGridSliver<EntityListItem>(
+      items: items,
+      targetCellWidth: layout.equalWidthTarget,
+      targetRowHeight: layout.equalHeightTarget,
+      crossRowMode: false,
+      gap: immersive ? GalleryLayoutSettings.immersiveGap : layout.cardGap,
+      horizontalPadding:
+          immersive ? GalleryLayoutSettings.immersiveMargin : layout.pageMargin,
+      aspectRatio: _aspectRatio,
+      itemBuilder: (context, entity) => EntityCard(
+          entity: entity,
+          onOpen: () => onOpen(entity),
+          immersive: immersive,
+          cardRadius: layout.cardRadius,
+          onThumbnailNeeded: () => onThumbnailNeeded(entity)));
+}
+
+class _ShelfSquare extends StatelessWidget {
+  const _ShelfSquare(
+      {required this.items,
+      required this.immersive,
+      required this.layout,
+      required this.onOpen,
+      required this.onThumbnailNeeded});
+  final List<EntityListItem> items;
+  final bool immersive;
+  final GalleryLayoutSettings layout;
+  final ValueChanged<EntityListItem> onOpen;
+  final ValueChanged<EntityListItem> onThumbnailNeeded;
+
+  @override
+  Widget build(BuildContext context) =>
+      SliverLayoutBuilder(builder: (context, constraints) {
+        final gap =
+            immersive ? GalleryLayoutSettings.immersiveGap : layout.cardGap;
+        final margin = immersive
+            ? GalleryLayoutSettings.immersiveMargin
+            : layout.pageMargin;
+        final grid = CollectionGridLayout.calculate(
+            availableWidth: constraints.crossAxisExtent,
+            horizontalPadding: margin,
+            gap: gap,
+            targetItemWidth: layout.squareSize);
+        return SliverPadding(
+            padding: EdgeInsets.fromLTRB(margin, margin, margin, 0),
+            sliver: SliverGrid(
+                delegate: SliverChildBuilderDelegate((context, index) {
+                  final entity = items[index];
+                  return EntityCard(
+                      entity: entity,
+                      onOpen: () => onOpen(entity),
+                      immersive: immersive,
+                      cardRadius: layout.cardRadius,
+                      onThumbnailNeeded: () => onThumbnailNeeded(entity));
+                }, childCount: items.length),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: grid.columnCount,
+                    mainAxisSpacing: gap,
+                    crossAxisSpacing: gap,
+                    childAspectRatio: 1)));
+      });
+}
+
+class _ShelfList extends StatelessWidget {
+  const _ShelfList(
+      {required this.items,
+      required this.onOpen,
+      required this.onThumbnailNeeded,
+      required this.horizontalPadding});
+  final List<EntityListItem> items;
+  final ValueChanged<EntityListItem> onOpen;
+  final ValueChanged<EntityListItem> onThumbnailNeeded;
+  final double horizontalPadding;
+
+  @override
+  Widget build(BuildContext context) => SliverPadding(
+        padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+        sliver: SliverList.builder(
+            itemCount: (items.length + 2) ~/ 3,
+            itemBuilder: (context, rowIndex) {
+              final start = rowIndex * 3;
+              return Column(children: [
+                SizedBox(
+                    height: 76,
+                    child: Row(children: [
+                      for (var slot = 0; slot < 3; slot++)
+                        Expanded(
+                            child: start + slot < items.length
+                                ? _ShelfListCell(
+                                    entity: items[start + slot],
+                                    onOpen: onOpen,
+                                    onThumbnailNeeded: onThumbnailNeeded)
+                                : const SizedBox.shrink()),
+                    ])),
+                if (start + 3 < items.length)
+                  Divider(
+                      height: 1,
+                      color: Theme.of(context).colorScheme.outlineVariant),
+              ]);
+            }),
+      );
+}
+
+class _ShelfListCell extends StatelessWidget {
+  const _ShelfListCell(
+      {required this.entity,
+      required this.onOpen,
+      required this.onThumbnailNeeded});
+  final EntityListItem entity;
+  final ValueChanged<EntityListItem> onOpen;
+  final ValueChanged<EntityListItem> onThumbnailNeeded;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+        onTap: () => onOpen(entity),
+        child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(children: [
+              SizedBox.square(
+                  dimension: 48,
+                  child: EntityArtwork(
+                      entityType: entity.entityType,
+                      format: entity.format,
+                      title: entity.title,
+                      contentExcerpt: entity.contentExcerpt,
+                      thumbnailStatus: entity.thumbnailStatus,
+                      thumbnailPath: entity.thumbnailPath,
+                      onThumbnailNeeded: () => onThumbnailNeeded(entity))),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text(entity.title,
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text(entity.format.toUpperCase(),
+                        style: Theme.of(context).textTheme.labelSmall),
+                  ])),
+            ])),
+      );
+}
+
+double _aspectRatio(EntityListItem entity) {
+  final width = entity.thumbnailWidth;
+  final height = entity.thumbnailHeight;
+  return width != null && height != null && width > 0 && height > 0
+      ? width / height
+      : 1;
 }
