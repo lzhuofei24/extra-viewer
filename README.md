@@ -1,139 +1,207 @@
 # Extra Viewer
 
-> 把散落在硬盘、TF 卡和移动存储里的资料，变成一个真正可以浏览的个人资料库。
+> An Android-first local library for browsing large collections from folders, removable storage, and offline media sources.
 
-Extra Viewer 是一款 **Android 本地资料浏览器**。文件始终保留在原目录中，你可以按原始目录浏览、用分类重新整理，也可以通过规则动态汇集常用和最近打开的内容。应用会生成预览并保存阅读和播放进度。
+Extra Viewer turns scattered files into a browsable personal library without taking ownership of the originals. It keeps source folders read-only, separates physical location from personal organization, and lets you browse the same files through three complementary index types.
 
 <p align="center">
-  <img src="assets/images/best_viewer_welcome.png" alt="Extra Viewer" width="720">
+  <img src="assets/images/best_viewer_welcome.png" alt="Extra Viewer welcome screen" width="720">
 </p>
 
-## 为什么是 Extra Viewer
+## What makes it different
 
-- **资料仍归你所有**：源目录只读，应用不会改名、移动或删除原始文件。
-- **目录、分类与规则**：目录保留原始结构，分类用于自由整理，规则按条件动态筛选文件。
-- **为大资料库设计**：SQLite 写入 worker、只读查询 isolate、分页浏览和可恢复构建任务，适合从几千项扩展到十万级资料。
-- **预览优先**：图片、视频、电子书和文档都会生成适合浏览的预览；目录和分类可以显示合成封面。
-- **离线可用**：不依赖云端账号，不上传文件，不把媒体复制到服务器。
-- **中文友好**：支持目录、分类与规则搜索、中文短词匹配、完整路径展示和 Android SAF 目录授权。
-- **按你的习惯浏览**：横竖屏自适应、悬浮玻璃工具栏、卡片与列表切换，以及一键进入和退出沉浸式浏览。
+Most file browsers force one structure to do several jobs. Extra Viewer keeps those jobs separate:
 
-## 核心体验
+| Index | Answers | How it works |
+| --- | --- | --- |
+| **Directory** | Where is the file physically stored? | Mirrors the real folder tree and remains connected to the source directory. |
+| **Category** | How do I want to organize it? | Stores references to files and folders without copying or moving originals. |
+| **Rule** | Which files matter right now? | Computes a live result set from conditions such as type, location, time, size, and usage. |
 
-### 目录
+This separation is the central design of Extra Viewer. A file can remain in its original directory, appear in several categories, and also appear in dynamic rules. These views do not compete with one another and do not create duplicate physical files.
 
-选择 Android 文件夹后，Extra Viewer 会读取其中的文件和下级文件夹。文件增加、删除或更新后，可以更新整个目录或指定文件夹。
+## The three-index model
 
-### 分类
+### 1. Directory index: preserve reality
 
-把不同目录中的文件加入分类，建立阅读专题、收藏主题或工作集合。分类只记录整理关系，不复制原始文件。
+Choose a folder through Android's system file picker. Extra Viewer scans the selected directory and keeps its hierarchy as the source of truth.
 
-系统提供不可删除的“收藏”分类，可直接加入文件并继续建立子分类。
+- Original files stay in place and are never renamed, moved, or deleted.
+- Subfolders remain navigable as real folders rather than imported labels.
+- Incremental updates can be run for a source or a folder.
+- The app can continue displaying saved library data when a removable source is temporarily offline.
+- Returning from a file opened through a category or rule can jump to its actual directory folder.
 
-### 规则
+The directory index is for reliable location and source management. It is not mixed with personal tags or temporary queries.
 
-“常用、最近图片、最近视频、最近文本、最近音乐”会根据访问记录实时更新，不复制文件，也不需要重新扫描。还可以按文件类型、扩展名、目录或分类、大小和时间建立自定义规则。
+### 2. Category index: organize without duplication
 
-规则首页使用与目录、分类一致的封面卡片，选取匹配结果中最新的图片或视频预览。五个内置规则不可删除；自定义规则可以编辑。规则范围可选择目录或分类，不支持规则嵌套。
+Categories are a separate organization layer built from references. Add files to multiple categories, create nested groups, and arrange material around a project, subject, or workflow.
 
-### 搜索
+- One file can belong to multiple categories.
+- Categories do not copy, move, or rewrite source files.
+- The protected **收藏** category is available for files you want to keep close.
+- Category covers and local ordering are independent from the physical source tree.
+- Removing a category relationship does not delete the original file.
 
-按名称查找目录、分类或规则。搜索支持中文短词、类型筛选和完整路径，不读取文件正文，也不会加载整个资料库的预览图。
+The category index is intentionally manual. It represents your decisions, not an automatic guess made from file names.
 
-### 随手调整浏览方式
+### 3. Rule index: dynamic views instead of duplicate collections
 
-浏览选项提供最近、名称、大小排序；卡片支持等高、等宽和方形，列表支持文本、紧凑和正常三种样式。竖屏列表每行一项，横屏每行三项；紧凑和正常列表中的文件夹显示方形封面。
+Rules are virtual indexes. They do not write result references into a second collection table; they query the existing library data when opened.
 
-在顶部的 **浏览选项** 中，还可以选择系统／暗色／亮色主题，以及紧凑／默认／宽阔布局。竖屏方形文件夹封面、等宽和方形文件卡片分别采用 **4／3／2 列**。
+Built-in rules include:
 
-卡片模式提供 **文件夹封面：自动／方形／叠加**。自动模式下竖屏使用方形拼图、横屏使用书本叠加；也可手动固定样式。浏览偏好会保存，重启后继续使用。
+- 常用
+- 最近图片
+- 最近视频
+- 最近文本
+- 最近音乐
 
-目录、分类各自记住当前会话中的文件夹和滚动位置，规则页保留当前规则；切换底部入口不会回到首页。顶部加号用于添加目录、新建分类或规则，在分类内部则创建子分类。长按或点击选择按钮可整理多个项目。
+Custom rules can combine file type, extension, directory or category scope, size, modification time, and recent-open time. Conditions across fields use `AND`; multiple values inside one field use `OR`.
 
-### 内置查看器
+This gives rules three practical advantages:
 
-图片、视频、音频和文档在应用内打开，并保存阅读位置和播放进度。浏览缩略图使用内存缓存，离线生成的预览资产存放在应用自己的数据目录。
+1. **Always current**: opening a rule reflects the latest library state and access history.
+2. **No duplicate references**: a matching file is not copied into a rule-specific result table.
+3. **No rebuild step**: changing a rule changes the next query, not a background indexing job.
 
-图片和视频共用底部玻璃控制栏的视觉样式，Mini 音乐播放器保持可见。从分类或规则打开媒体后，可点击 **返回目录**，直接进入该文件所在的真实目录文件夹，继续浏览相邻文件。
+The **常用** rule uses access count and last-opened time. Opening a file increments its usage atomically, so frequently used material naturally rises to the top.
 
-### 集中管理
+## Browse the way you want
 
-管理页按目录、分类、规则展示全部资料，下方集中显示可恢复任务。各区段的加号用于添加资料；卡片上的“操作”菜单提供适用的更新、重命名和删除功能，收藏与内置规则保留保护限制。
+The top floating **浏览选项** panel controls the current browsing experience:
 
-## 数据原则
+- Sort by recent modification, name, or size.
+- Switch between cards and lists.
+- Card styles: equal height, equal width, or square.
+- List styles: text-only, compact, or normal.
+- Select the theme: system, light, or dark.
+- Select the layout density: compact, standard, or spacious.
+- Select folder covers: automatic, square, or stacked.
+
+Automatic folder covers use square compositions in portrait orientation and stacked covers in landscape orientation. In portrait mode, folder grids use 4 columns for compact, 3 for standard, and 2 for spacious. The chosen browsing preferences are saved locally.
+
+Other browsing behavior is designed for repeated use:
+
+- Directory and category pages remember their separate folder and scroll position during the current app session.
+- Rule pages remember the active rule while moving between top-level sections.
+- Immersive browsing expands the visible content without losing an exit control.
+- Long press or the selection button opens the same multi-selection toolbar.
+- The floating glass controls stay above content and respect safe areas on phones and tablets.
+
+## Built-in viewing
+
+Extra Viewer opens common images, videos, audio files, PDFs, EPUBs, and text documents inside the app.
+
+- Images and videos use a shared bottom control surface.
+- The mini audio player remains available above media viewers when appropriate.
+- Reading positions are saved using document-aware anchors where available.
+- Playback position and duration are saved for audio and video.
+- Folder previews can use generated local assets, with an empty-folder fallback when no content is available.
+- Missing previews can be retried without hiding the file from the library.
+
+## Designed for large local libraries
+
+The application is a modular Flutter/Dart monolith with a strict database boundary:
 
 ```text
-源目录 / TF 卡 / 移动存储
-          │ 只读访问
-          ▼
-文件 ──────────────► 文件预览
-          ▲
-          │ 引用
-目录 / 分类 / 规则
-          │
-          └────────► 封面与阅读、播放状态
+Android SAF / local source
+          |
+          | read-only access
+          v
+     Directory index ---- physical location
+          |
+          +---- Category index ---- manual references
+          |
+          +---- Rule index -------- live queries
+          |
+          +---- Preview assets, reading state, playback state
 ```
 
-- 原始资料只读，目录记录、分类、预览图和缓存写入应用私有目录。
-- Android 使用系统文件选择器和持久化 SAF 授权访问目录。
-- 快速文件指纹使用首 8 KB 加文件大小的 SHA-256；它用于判断扫描结果，不代替完整内容校验。
-- 取消或放弃构建不会删除已经提交的资料；失败项可以单独重试。
+The storage and browsing design is optimized around predictable work:
 
-## 获取与安装
+- SQLite is owned by a single write worker, preventing competing business writes.
+- Read queries run through a separate read worker so UI code does not hold database connections.
+- Browsing uses paged queries and stable cursors instead of loading an entire library into memory.
+- Long scans persist scope, directory queues, item status, progress, and retry state.
+- A pause stops new work at a commit boundary; abandoning a task keeps already committed files.
+- Partial source failures are recorded as failures and do not become evidence that files should be deleted.
+- Preview files are published atomically and old assets are cleaned up later.
+- Thumbnail decoding, source-file staging, and offline preview storage have separate lifecycles.
 
-当前发布目标为 Android arm64 平板。
+This architecture keeps the three index types useful at different scales: the directory index provides source fidelity, categories provide human control, and rules provide fast-changing views without multiplying stored relationships.
 
-### 直接安装 APK
+## Data and privacy
 
-如仓库的 [Releases](https://github.com/lzhuofei24/extra-viewer/releases) 已提供 APK 附件，可下载 `extra-viewer-1.0.0-arm64.apk`，在 Android 设备上允许安装未知来源应用后安装。源码更新不代表已发布对应 APK；没有附件时可按下面的步骤构建。
+Extra Viewer is local-first.
 
-### 从源码构建
+- Source files remain read-only.
+- Android folder access uses the system Storage Access Framework (SAF).
+- The app does not upload your files or require a cloud account.
+- Database records, thumbnails, previews, and playback state are stored in the app's private data area.
+- A scan can be paused, resumed, retried, or abandoned without deleting successfully committed library data.
+- Clearing app-owned data is separate from deleting source files; the app never treats a source folder as writable storage.
 
-需要 Flutter、Android SDK、Android NDK、JDK 21 和已配置的 Android license。Windows 电脑可作为 Android 构建主机使用。
+## Download and install
+
+Extra Viewer currently targets Android arm64 devices, including phones and tablets.
+
+Download the latest APK from [GitHub Releases](https://github.com/lzhuofei24/extra-viewer/releases) when a release asset is available. The expected arm64 artifact is:
+
+```text
+extra-viewer-1.0.0-arm64.apk
+```
+
+Allow installation from the source you used to download the APK, then open Extra Viewer and grant access to the directories you want to browse. The app does not need permission to modify those directories.
+
+## Build from source
+
+Development requires:
+
+- Flutter SDK
+- Android SDK and NDK
+- JDK 21
+- Accepted Android SDK licenses
+- A configured Extra Viewer release signing file for release builds
+
+Run the regular checks:
 
 ```powershell
 flutter pub get
 flutter analyze
 flutter test
+```
+
+Build signed Android artifacts with:
+
+```powershell
 .\tools\build-android-release.ps1
 ```
 
-构建脚本会生成：
+The build script produces an arm64 APK, an all-ABI AAB, and SHA-256 checksums under `dist/`. Release builds fail when the configured release key is missing; they never silently fall back to a debug certificate.
+
+## Repository layout
 
 ```text
-dist/extra-viewer-1.0.0-arm64.apk
-dist/extra-viewer-1.0.0.aab
-dist/SHA256SUMS.txt
+lib/src/core/          database, source access, media and preview foundations
+lib/src/modules/       library, build, preview and viewer boundaries
+lib/src/ui/             browsing, rules, management and shared glass UI
+android/                Android SAF and native media integrations
+assets/                 application assets
+docs/                   architecture and historical engineering notes
+tools/                  release and maintenance scripts
+test/                   database, worker, recovery and UI tests
 ```
 
-Release 包使用正式签名配置。签名文件位于本机用户目录，不会进入仓库；没有签名配置时构建会直接失败。
+The Android app is intentionally the maintained product target. Desktop and iOS builds are not release targets at this time.
 
-## 项目结构
+## Project status
 
-```text
-lib/src/      Flutter 应用与领域模块
-android/      Android 原生 SAF、预览和播放器桥接
-assets/       应用内静态资源
-docs/         架构、术语和开发文档
-tools/        构建与维护脚本
-```
+Extra Viewer is an Android-focused personal-library project under active development. The stable product direction is local browsing through directory, category, and rule indexes. Search is limited to index names and does not search entity names, file paths, document bodies, or cloud content.
 
-主要模块位于 `lib/src/`：
+Bug reports are most useful when they include the Android version, device model, source type (local folder, TF card, or removable drive), and the relevant diagnostic details. Please do not upload private media when reporting an issue.
 
-- `core/database`：SQLite schema、读写 worker 和领域仓储
-- `core/controllers`：目录扫描、预览图和任务恢复
-- `modules/library`：资料、分类、规则和搜索接口
-- `modules/build`：可暂停、可恢复的构建任务
-- `modules/previews`：文件预览和目录封面资产
-- `modules/viewer`：媒体查看器、阅读位置和播放状态
-- `ui`：浏览、规则和资料管理页面
+## License
 
-## 开发状态
-
-Extra Viewer 目前处于 Android 内测阶段。项目重点是本地资料管理、长任务恢复和大规模媒体浏览；搜索只覆盖目录、分类和规则名称，不搜索文件名、文件正文或云端内容。
-
-欢迎通过 [Issues](https://github.com/lzhuofei24/extra-viewer/issues) 提交崩溃日志、性能数据和功能建议。提交问题时请附上 Android 版本、设备型号和资料来源类型。
-
-## 许可证
-
-许可证和第三方依赖说明将在正式公开发布前补充。
+License and third-party attribution details will be added before the first public distribution release.
