@@ -9,7 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('preferences use product defaults and persist browser choices',
+  test('preferences use defaults and persist browser choices and preset',
       () async {
     SharedPreferences.setMockInitialValues({});
     final store = SharedPreferencesAppPreferencesStore(
@@ -19,6 +19,7 @@ void main() {
     expect(initial.sortMode, EntitySortMode.nameAsc);
     expect(initial.displayMode, BrowserDisplayMode.grid);
     expect(initial.gridLayout, BrowserGridLayout.equalHeight);
+    expect(initial.layoutPreset, GalleryLayoutPreset.standard);
     expect(initial.layout, const GalleryLayoutSettings());
 
     await store.save(initial.copyWith(
@@ -26,54 +27,52 @@ void main() {
       sortMode: EntitySortMode.sizeDesc,
       displayMode: BrowserDisplayMode.list,
       gridLayout: BrowserGridLayout.square,
-      layout: initial.layout.copyWith(
-        cardRadius: 24,
-        portraitEqualWidthColumns: 3,
-        landscapeSquareColumns: 5,
-      ),
+      layoutPreset: GalleryLayoutPreset.compact,
     ));
     final restored = await store.load();
     expect(restored.themeChoice, ViewerThemeChoice.galleryDark);
     expect(restored.sortMode, EntitySortMode.sizeDesc);
     expect(restored.displayMode, BrowserDisplayMode.list);
     expect(restored.gridLayout, BrowserGridLayout.square);
-    expect(restored.layout.cardRadius, 24);
-    expect(restored.layout.portraitEqualWidthColumns, 3);
-    expect(restored.layout.landscapeSquareColumns, 5);
+    expect(restored.layoutPreset, GalleryLayoutPreset.compact);
+    expect(restored.layout.portraitFolderColumns, 3);
   });
 
-  test('invalid stored values fall back or clamp to supported ranges',
-      () async {
+  test('invalid and old granular values use the standard preset', () async {
     SharedPreferences.setMockInitialValues({
       'preferences.theme': 'removed-theme',
       'preferences.browser.display': 'removed-display',
-      'preferences.gallery.page_margin': -40.0,
-      'preferences.gallery.equal_height': 9999.0,
-      'preferences.gallery.portrait_equal_width_columns': 0,
-      'preferences.gallery.landscape_square_columns': 99,
+      'preferences.gallery.preset': 'removed-preset',
+      'preferences.gallery.page_margin': 24.0,
     });
     final store = SharedPreferencesAppPreferencesStore(
         await SharedPreferences.getInstance());
     final value = await store.load();
     expect(value.themeChoice, ViewerThemeChoice.system);
     expect(value.displayMode, BrowserDisplayMode.grid);
-    expect(value.layout.pageMargin, 0);
-    expect(value.layout.equalHeightTarget, 600);
-    expect(value.layout.portraitEqualWidthColumns, 1);
-    expect(value.layout.landscapeSquareColumns, 8);
+    expect(value.layoutPreset, GalleryLayoutPreset.standard);
+    expect(value.layout.pageMargin, 8);
   });
 
-  test('controller serializes changes and resets only layout', () async {
+  test('controller serializes preset changes independently', () async {
     final store = MemoryAppPreferencesStore();
     final controller = await AppPreferencesController.load(store);
     controller.setTheme(ViewerThemeChoice.galleryLight);
     controller.setBrowser(displayMode: BrowserDisplayMode.list);
-    controller.setLayout(
-        controller.value.layout.copyWith(cardGap: 20, folderHeight: 450));
-    controller.resetLayout();
+    controller.setLayoutPreset(GalleryLayoutPreset.spacious);
     await controller.flush();
     expect(store.value.themeChoice, ViewerThemeChoice.galleryLight);
     expect(store.value.displayMode, BrowserDisplayMode.list);
-    expect(store.value.layout, const GalleryLayoutSettings());
+    expect(store.value.layoutPreset, GalleryLayoutPreset.spacious);
+    expect(store.value.layout.portraitFolderColumns, 1);
+  });
+
+  test('layout preset values match the product density contract', () {
+    expect(GalleryLayoutPreset.compact.settings.portraitFolderColumns, 3);
+    expect(GalleryLayoutPreset.standard.settings.portraitFolderColumns, 2);
+    expect(GalleryLayoutPreset.spacious.settings.portraitFolderColumns, 1);
+    expect(GalleryLayoutPreset.compact.settings.folderHeight, 240);
+    expect(GalleryLayoutPreset.standard.settings.folderHeight, 320);
+    expect(GalleryLayoutPreset.spacious.settings.folderHeight, 400);
   });
 }

@@ -150,6 +150,7 @@ class _AppShellState extends State<AppShell> {
   bool _loadingMoreEntities = false;
   bool _sidebarCollapsed = false;
   bool _miniPlayerCollapsed = false;
+  bool _restoreExpandedMiniPlayerAfterSelection = false;
   late final SelectionController _selection;
   final Set<String> _regeneratingThumbnailIds = <String>{};
   Timer? _thumbnailRefreshTimer;
@@ -162,6 +163,7 @@ class _AppShellState extends State<AppShell> {
   Map<String, IndexNodePreview> _nodePreviews = const {};
   Entity? _detail;
   EntityViewerPage? _mediaOverlay;
+  EntityType? _mediaOverlayEntityType;
   bool _mediaOverlayRequiresLibraryRefresh = false;
   late final AppLifecycleListener _lifecycleListener;
 
@@ -1645,7 +1647,14 @@ class _AppShellState extends State<AppShell> {
           onEntityOpened: (opened) async {
             (await repository.markOpened(opened.id));
             final detail = await repository.getEntity(opened.id);
-            if (mounted) setState(() => _detail = detail);
+            if (mounted) {
+              setState(() {
+                _detail = detail;
+                if (_mediaOverlay != null) {
+                  _mediaOverlayEntityType = opened.entityType;
+                }
+              });
+            }
           },
           onShowDetails: (opened) => _showEntityDetail(opened),
           onOpenDirectoryRoot: _openDirectoryRootForEntity,
@@ -1674,6 +1683,7 @@ class _AppShellState extends State<AppShell> {
     if (libraryOverlay) {
       setState(() {
         _mediaOverlayRequiresLibraryRefresh = false;
+        _mediaOverlayEntityType = entity.entityType;
         _mediaOverlay = buildViewer();
       });
       return;
@@ -1697,6 +1707,7 @@ class _AppShellState extends State<AppShell> {
     final requiresRefresh = _mediaOverlayRequiresLibraryRefresh;
     setState(() {
       _mediaOverlay = null;
+      _mediaOverlayEntityType = null;
       _mediaOverlayRequiresLibraryRefresh = false;
     });
     if (!requiresRefresh) return;
@@ -1814,6 +1825,14 @@ class _AppShellState extends State<AppShell> {
 
   void _toggleSelectionMode() {
     setState(() {
+      final entering = !_selection.enabled;
+      if (entering) {
+        _restoreExpandedMiniPlayerAfterSelection = !_miniPlayerCollapsed;
+        _miniPlayerCollapsed = true;
+      } else if (_restoreExpandedMiniPlayerAfterSelection) {
+        _miniPlayerCollapsed = false;
+        _restoreExpandedMiniPlayerAfterSelection = false;
+      }
       _selection.toggleMode();
       if (_selection.enabled) {
         _browserState = _browserState.copyWith(
@@ -1825,6 +1844,10 @@ class _AppShellState extends State<AppShell> {
 
   void _startEntitySelection(EntityListItem entity) {
     setState(() {
+      if (!_selection.enabled) {
+        _restoreExpandedMiniPlayerAfterSelection = !_miniPlayerCollapsed;
+        _miniPlayerCollapsed = true;
+      }
       _browserState = _browserState.copyWith(
         displayMode: BrowserDisplayMode.grid,
       );
@@ -1834,6 +1857,10 @@ class _AppShellState extends State<AppShell> {
 
   void _startNodeSelection(IndexNode node) {
     setState(() {
+      if (!_selection.enabled) {
+        _restoreExpandedMiniPlayerAfterSelection = !_miniPlayerCollapsed;
+        _miniPlayerCollapsed = true;
+      }
       _selection.startNode(node.id);
     });
   }
@@ -2731,10 +2758,9 @@ class _AppShellState extends State<AppShell> {
       AppSection.settings => SettingsPage(
           onOpenDiagnostics: () => _navigateToSection(AppSection.logs),
           themeChoice: widget.preferences.value.themeChoice,
-          layoutSettings: widget.preferences.value.layout,
+          layoutPreset: widget.preferences.value.layoutPreset,
           onThemeChanged: widget.preferences.setTheme,
-          onLayoutChanged: widget.preferences.setLayout,
-          onResetLayout: widget.preferences.resetLayout,
+          onLayoutPresetChanged: widget.preferences.setLayoutPreset,
         ),
       AppSection.logs => DiagnosticsPage(
           database: _database!,
@@ -2801,9 +2827,15 @@ class _AppShellState extends State<AppShell> {
                     controller: audioController,
                     onOpen: _openNowPlaying,
                     collapsed: _miniPlayerCollapsed,
-                    onToggleCollapsed: () => setState(
-                      () => _miniPlayerCollapsed = !_miniPlayerCollapsed,
-                    ),
+                    onToggleCollapsed: () {
+                      if (_selectionMode) {
+                        _openNowPlaying();
+                        return;
+                      }
+                      setState(
+                        () => _miniPlayerCollapsed = !_miniPlayerCollapsed,
+                      );
+                    },
                   )
                 : const SizedBox.shrink(),
           );
@@ -2829,6 +2861,8 @@ class _AppShellState extends State<AppShell> {
             builder: (context, constraints) {
               final isPortrait = constraints.maxHeight > constraints.maxWidth;
               final hasMediaOverlay = _mediaOverlay != null;
+              final showMiniPlayer = !hasMediaOverlay ||
+                  _mediaOverlayEntityType == EntityType.video;
               final navigationLayout = isPortrait
                   ? AppNavigationLayout.bottom
                   : AppNavigationLayout.rail;
@@ -2894,19 +2928,21 @@ class _AppShellState extends State<AppShell> {
                         ),
                       ),
                     ),
-                  if (!hasMediaOverlay)
-                    Positioned(
-                      right: AppNavigation.outerMargin,
-                      bottom: isPortrait
-                          ? AppNavigation.outerMargin +
-                              safeBottom +
-                              AppNavigation.bottomBarHeight +
-                              AppNavigation.miniPlayerGap
-                          : AppNavigation.outerMargin + safeBottom,
-                      child: miniPlayer,
-                    ),
                   if (_mediaOverlay case final overlay?)
                     Positioned.fill(child: overlay),
+                  if (showMiniPlayer)
+                    Positioned(
+                      right: AppNavigation.outerMargin,
+                      bottom: hasMediaOverlay
+                          ? AppNavigation.outerMargin + safeBottom
+                          : isPortrait
+                              ? AppNavigation.outerMargin +
+                                  safeBottom +
+                                  AppNavigation.bottomBarHeight +
+                                  AppNavigation.miniPlayerGap
+                              : AppNavigation.outerMargin + safeBottom,
+                      child: miniPlayer,
+                    ),
                 ],
               );
             },

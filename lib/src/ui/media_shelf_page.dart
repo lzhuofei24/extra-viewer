@@ -121,70 +121,79 @@ class _MediaShelfPageState extends State<MediaShelfPage> {
   @override
   Widget build(BuildContext context) {
     final items = _sortedItems;
-    return Padding(
-      padding: AppNavigationObstruction.of(context),
-      child: Stack(
-        children: [
-          CustomScrollView(
-            slivers: [
-              if (!_immersive)
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(12, 16, 12, 10),
-                  sliver: SliverToBoxAdapter(
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: BrowserToolbar(
-                            leading: Text(_title,
-                                style: Theme.of(context).textTheme.titleLarge),
-                            browserState: widget.browserState,
-                            onSortChanged: widget.onSortChanged,
-                            onDisplayModeChanged: widget.onDisplayModeChanged,
-                            onGridLayoutChanged: widget.onGridLayoutChanged,
-                            onToggleImmersive:
-                                _supportsImmersive ? _toggleImmersive : null,
-                          ),
-                        ),
-                      ],
+    final obstruction = AppNavigationObstruction.of(context);
+    final toolbarHeight =
+        MediaQuery.sizeOf(context).width - obstruction.left < 600
+            ? 108.0
+            : 64.0;
+    return Stack(
+      children: [
+        Padding(
+          padding: EdgeInsets.only(left: obstruction.left),
+          child: Stack(
+            children: [
+              CustomScrollView(
+                slivers: [
+                  if (!_immersive)
+                    SliverToBoxAdapter(
+                        child: SizedBox(height: toolbarHeight + 16)),
+                  if (items.isEmpty)
+                    SliverFillRemaining(
+                      child: Center(child: Text('暂无$_title内容')),
+                    )
+                  else ...[
+                    _ShelfContentSliver(
+                      items: items,
+                      browserState: widget.browserState,
+                      layoutSettings: widget.layoutSettings,
+                      immersive: _immersive,
+                      onOpenEntity: widget.onOpenEntity,
+                      onThumbnailNeeded: widget.onThumbnailNeeded,
+                    ),
+                    SliverPadding(
+                      padding: EdgeInsets.only(bottom: 92 + obstruction.bottom),
+                    ),
+                  ],
+                ],
+              ),
+              if (_immersive)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Material(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surface
+                        .withValues(alpha: .72),
+                    borderRadius: BorderRadius.circular(16),
+                    child: IconButton(
+                      tooltip: '退出沉浸式浏览',
+                      onPressed: _toggleImmersive,
+                      icon: const Icon(Icons.fullscreen_exit_rounded),
                     ),
                   ),
                 ),
-              if (items.isEmpty)
-                SliverFillRemaining(
-                  child: Center(child: Text('暂无$_title内容')),
-                )
-              else ...[
-                _ShelfContentSliver(
-                  items: items,
-                  browserState: widget.browserState,
-                  layoutSettings: widget.layoutSettings,
-                  immersive: _immersive,
-                  onOpenEntity: widget.onOpenEntity,
-                  onThumbnailNeeded: widget.onThumbnailNeeded,
-                ),
-                const SliverPadding(padding: EdgeInsets.only(bottom: 92)),
-              ],
             ],
           ),
-          if (_immersive)
-            Positioned(
-              top: 8,
-              right: 8,
-              child: Material(
-                color: Theme.of(context)
-                    .colorScheme
-                    .surface
-                    .withValues(alpha: .72),
-                borderRadius: BorderRadius.circular(16),
-                child: IconButton(
-                  tooltip: '退出沉浸式浏览',
-                  onPressed: _toggleImmersive,
-                  icon: const Icon(Icons.fullscreen_exit_rounded),
-                ),
+        ),
+        if (!_immersive)
+          Positioned(
+            top: 8,
+            left: obstruction.left + 12,
+            right: 12,
+            child: BrowserToolbar(
+              leading: Text(
+                _title,
+                style: Theme.of(context).textTheme.titleLarge,
               ),
+              browserState: widget.browserState,
+              onSortChanged: widget.onSortChanged,
+              onDisplayModeChanged: widget.onDisplayModeChanged,
+              onGridLayoutChanged: widget.onGridLayoutChanged,
+              onToggleImmersive: _supportsImmersive ? _toggleImmersive : null,
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 }

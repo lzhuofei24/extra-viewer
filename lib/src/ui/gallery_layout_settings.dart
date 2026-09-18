@@ -1,5 +1,43 @@
 import 'package:flutter/foundation.dart';
 
+enum GalleryLayoutPreset {
+  compact('紧凑'),
+  standard('默认'),
+  spacious('宽阔');
+
+  const GalleryLayoutPreset(this.label);
+
+  final String label;
+
+  GalleryLayoutSettings get settings => switch (this) {
+        GalleryLayoutPreset.compact => const GalleryLayoutSettings(
+            pageMargin: 4,
+            cardGap: 4,
+            cardRadius: 8,
+            portraitEqualWidthColumns: 3,
+            landscapeEqualWidthColumns: 6,
+            portraitSquareColumns: 3,
+            landscapeSquareColumns: 5,
+            equalHeightTarget: 300,
+            folderHeight: 240,
+            portraitFolderColumns: 3,
+          ),
+        GalleryLayoutPreset.standard => const GalleryLayoutSettings(),
+        GalleryLayoutPreset.spacious => const GalleryLayoutSettings(
+            pageMargin: 16,
+            cardGap: 16,
+            cardRadius: 24,
+            portraitEqualWidthColumns: 1,
+            landscapeEqualWidthColumns: 3,
+            portraitSquareColumns: 2,
+            landscapeSquareColumns: 2,
+            equalHeightTarget: 500,
+            folderHeight: 400,
+            portraitFolderColumns: 1,
+          ),
+      };
+}
+
 @immutable
 class GalleryLayoutSettings {
   const GalleryLayoutSettings({
@@ -12,6 +50,7 @@ class GalleryLayoutSettings {
     this.landscapeSquareColumns = defaultLandscapeSquareColumns,
     this.equalHeightTarget = defaultEqualHeightTarget,
     this.folderHeight = defaultFolderHeight,
+    this.portraitFolderColumns = defaultPortraitFolderColumns,
   });
 
   static const double defaultPageMargin = 8;
@@ -23,6 +62,7 @@ class GalleryLayoutSettings {
   static const int defaultLandscapeSquareColumns = 3;
   static const double defaultEqualHeightTarget = 400;
   static const double defaultFolderHeight = 320;
+  static const int defaultPortraitFolderColumns = 2;
 
   static const double immersiveMargin = 2;
   static const double immersiveGap = 1;
@@ -37,6 +77,7 @@ class GalleryLayoutSettings {
   final int landscapeSquareColumns;
   final double equalHeightTarget;
   final double folderHeight;
+  final int portraitFolderColumns;
 
   int equalWidthColumns({required bool isPortrait}) =>
       isPortrait ? portraitEqualWidthColumns : landscapeEqualWidthColumns;
@@ -54,6 +95,7 @@ class GalleryLayoutSettings {
     int? landscapeSquareColumns,
     double? equalHeightTarget,
     double? folderHeight,
+    int? portraitFolderColumns,
   }) =>
       GalleryLayoutSettings(
         pageMargin: pageMargin ?? this.pageMargin,
@@ -69,6 +111,8 @@ class GalleryLayoutSettings {
             landscapeSquareColumns ?? this.landscapeSquareColumns,
         equalHeightTarget: equalHeightTarget ?? this.equalHeightTarget,
         folderHeight: folderHeight ?? this.folderHeight,
+        portraitFolderColumns:
+            portraitFolderColumns ?? this.portraitFolderColumns,
       );
 
   GalleryLayoutSettings normalized() => GalleryLayoutSettings(
@@ -81,6 +125,7 @@ class GalleryLayoutSettings {
         landscapeSquareColumns: landscapeSquareColumns.clamp(1, 8),
         equalHeightTarget: equalHeightTarget.clamp(160, 600),
         folderHeight: folderHeight.clamp(140, 480),
+        portraitFolderColumns: portraitFolderColumns.clamp(1, 8),
       );
 
   @override
@@ -94,7 +139,8 @@ class GalleryLayoutSettings {
       other.portraitSquareColumns == portraitSquareColumns &&
       other.landscapeSquareColumns == landscapeSquareColumns &&
       other.equalHeightTarget == equalHeightTarget &&
-      other.folderHeight == folderHeight;
+      other.folderHeight == folderHeight &&
+      other.portraitFolderColumns == portraitFolderColumns;
 
   @override
   int get hashCode => Object.hash(
@@ -106,5 +152,6 @@ class GalleryLayoutSettings {
       portraitSquareColumns,
       landscapeSquareColumns,
       equalHeightTarget,
-      folderHeight);
+      folderHeight,
+      portraitFolderColumns);
 }

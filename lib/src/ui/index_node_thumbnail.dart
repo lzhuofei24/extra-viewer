@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../core/domain/models.dart';
+import '../core/thumbnails/thumbnail_store.dart';
 
 double indexNodePreviewAspectRatio(IndexNodePreview? preview) {
   if (preview == null) return 1;
@@ -41,12 +42,16 @@ class IndexNodeThumbnail extends StatelessWidget {
     required this.nodeName,
     required this.hasContent,
     this.borderRadius = 16,
+    this.portrait = false,
+    this.internalGap = 0,
   });
 
   final IndexNodePreview? preview;
   final String nodeName;
   final bool hasContent;
   final double borderRadius;
+  final bool portrait;
+  final double internalGap;
 
   @override
   Widget build(BuildContext context) {
@@ -68,7 +73,18 @@ class IndexNodeThumbnail extends StatelessWidget {
           IndexNodePreviewKind.singleVisual ||
           IndexNodePreviewKind.visualGrid =>
             _VisualNodeAsset(
-              path: data.visualAssetPath,
+              path: portrait && data.visualAssetPath != null
+                  ? portraitNodePreviewPathFromLandscape(data.visualAssetPath!)
+                  : data.visualAssetPath,
+              fallbackPath: portrait ? data.visualAssetPath : null,
+              portraitTileCount: portrait
+                  ? data.tiles
+                      .where((tile) =>
+                          tile.kind == IndexNodePreviewTileKind.visual)
+                      .length
+                      .clamp(1, 4)
+                  : 0,
+              internalGap: internalGap,
               fallback: data.customOrderTopToBottom
                   ? _BookStack(
                       tiles: data.tiles,
@@ -112,10 +128,19 @@ class IndexNodeThumbnail extends StatelessWidget {
 }
 
 class _VisualNodeAsset extends StatelessWidget {
-  const _VisualNodeAsset({this.path, this.fallback});
+  const _VisualNodeAsset({
+    this.path,
+    this.fallbackPath,
+    this.fallback,
+    this.portraitTileCount = 0,
+    this.internalGap = 0,
+  });
 
   final String? path;
+  final String? fallbackPath;
   final Widget? fallback;
+  final int portraitTileCount;
+  final double internalGap;
 
   @override
   Widget build(BuildContext context) {
@@ -125,16 +150,99 @@ class _VisualNodeAsset extends StatelessWidget {
       // a multi-image layout while scrolling when the asset is unavailable.
       return fallback ?? const SizedBox.expand();
     }
-    return Image.file(
-      File(value),
-      // Node preview WebPs have a fixed height but intentionally variable
-      // width. Cover may trim an edge when constraints change; fill would
-      // distort every cover's aspect ratio.
-      fit: BoxFit.cover,
-      filterQuality: FilterQuality.medium,
-      errorBuilder: (_, __, ___) => fallback ?? const SizedBox.expand(),
+    final fallbackWidget = fallbackPath == null
+        ? fallback ?? const SizedBox.expand()
+        : Image.file(
+            File(fallbackPath!),
+            fit: BoxFit.cover,
+            filterQuality: FilterQuality.medium,
+            errorBuilder: (_, __, ___) => fallback ?? const SizedBox.expand(),
+          );
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Image.file(
+          File(value),
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.medium,
+          errorBuilder: (_, __, ___) => fallbackWidget,
+        ),
+        if (portraitTileCount > 1 && internalGap > 0)
+          _PortraitPreviewSeparators(
+            tileCount: portraitTileCount,
+            thickness: internalGap,
+          ),
+      ],
     );
   }
+}
+
+class _PortraitPreviewSeparators extends StatelessWidget {
+  const _PortraitPreviewSeparators({
+    required this.tileCount,
+    required this.thickness,
+  });
+
+  final int tileCount;
+  final double thickness;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).scaffoldBackgroundColor;
+    return Stack(
+      children: [
+        Positioned(
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: 0,
+          child: CustomPaint(
+            painter: _PortraitSeparatorPainter(
+              tileCount: tileCount,
+              thickness: thickness,
+              color: color,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PortraitSeparatorPainter extends CustomPainter {
+  const _PortraitSeparatorPainter({
+    required this.tileCount,
+    required this.thickness,
+    required this.color,
+  });
+
+  final int tileCount;
+  final double thickness;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = thickness;
+    final halfWidth = size.width / 2;
+    final halfHeight = size.height / 2;
+    canvas.drawLine(
+        Offset(halfWidth, 0), Offset(halfWidth, size.height), paint);
+    if (tileCount == 3) {
+      canvas.drawLine(
+          Offset(0, halfHeight), Offset(halfWidth, halfHeight), paint);
+    } else if (tileCount >= 4) {
+      canvas.drawLine(
+          Offset(0, halfHeight), Offset(size.width, halfHeight), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _PortraitSeparatorPainter oldDelegate) =>
+      oldDelegate.tileCount != tileCount ||
+      oldDelegate.thickness != thickness ||
+      oldDelegate.color != color;
 }
 
 class _BookStack extends StatelessWidget {

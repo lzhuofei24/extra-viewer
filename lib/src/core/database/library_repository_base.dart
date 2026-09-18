@@ -52,6 +52,16 @@ class LibraryRepositoryBase {
         if (file.existsSync()) file.deleteSync();
         final partial = File('${file.path}.tmp');
         if (partial.existsSync()) partial.deleteSync();
+        if (kind == 'node') {
+          final portrait = File(portraitNodePreviewAssetPathFor(
+            storageDirectoryPath,
+            key,
+            format,
+          ));
+          if (portrait.existsSync()) portrait.deleteSync();
+          final portraitPartial = File('${portrait.path}.tmp');
+          if (portraitPartial.existsSync()) portraitPartial.deleteSync();
+        }
       } on FileSystemException {
         continue;
       }

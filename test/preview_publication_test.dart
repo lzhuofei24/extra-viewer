@@ -111,6 +111,25 @@ void main() {
     final result = await NodePreviewCompositeService(library)
         .rebuildNodesAsync([child.id, root.id]);
     expect(result.values.every((item) => item.succeeded), isTrue);
+    for (final outcome in result.values) {
+      final key = outcome.assetKey!;
+      expect(
+        File(nodePreviewAssetPathFor(
+          database.storageDirectoryPath,
+          key,
+          'webp',
+        )).existsSync(),
+        isTrue,
+      );
+      expect(
+        File(portraitNodePreviewAssetPathFor(
+          database.storageDirectoryPath,
+          key,
+          'webp',
+        )).existsSync(),
+        isTrue,
+      );
+    }
   });
 
   test(
@@ -167,8 +186,14 @@ void main() {
     library.markIndexNodePreviewDirty(root.id);
     final current = library.prepareNodePreviewBuilds([root.id]).single.ticket;
     final file = File(library.nodePreviewAssetPath(current.assetKey, 'webp'));
+    final portraitFile = File(portraitNodePreviewAssetPathFor(
+      database.storageDirectoryPath,
+      current.assetKey,
+      'webp',
+    ));
     await file.parent.create(recursive: true);
     await file.writeAsBytes([1, 2, 3]);
+    await portraitFile.writeAsBytes([1, 2, 3]);
     expect(
         library.publishNodePreview(current,
             signature: 'current', width: 3, height: 1),

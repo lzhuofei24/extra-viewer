@@ -135,12 +135,227 @@ class CollectionBrowserPage extends StatelessWidget {
     final hasEntities = entities.isNotEmpty;
     final listMode = !immersiveBrowsing &&
         browserState.displayMode == BrowserDisplayMode.list;
-    return Padding(
-      padding: AppNavigationObstruction.of(context),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    final obstruction = AppNavigationObstruction.of(context);
+    final toolbarHeight =
+        MediaQuery.sizeOf(context).width - obstruction.left < 600
+            ? 108.0
+            : 64.0;
+    return Stack(
+      children: [
+        Padding(
+          padding: EdgeInsets.only(left: obstruction.left),
+          child: Column(
+            children: [
+              if (!immersiveBrowsing) SizedBox(height: toolbarHeight + 8),
+              Expanded(
+                child: _BrowserScrollShell(
+                  preloadScopeKey:
+                      '${currentNode?.id ?? ''}:${immersiveBrowsing ? 'recursive' : 'direct'}',
+                  entities: entities,
+                  hasMore: hasMoreEntities,
+                  onLoadMore: onLoadMoreEntities,
+                  selectionMode: selectionMode,
+                  onSelectEntitiesByDrag: onSelectEntitiesByDrag,
+                  child: (controller, selectionRegistry) => CustomScrollView(
+                    controller: controller,
+                    scrollCacheExtent: const ScrollCacheExtent.pixels(0),
+                    slivers: [
+                      if (hasNodes && currentNode == null)
+                        (listMode
+                            ? _NodeListSliver(
+                                nodes: visibleNodes,
+                                summaries: nodeSummaries,
+                                onOpenNode: onOpenNode,
+                                selectedNodeIds: selectedNodeIds,
+                                selectionMode: selectionMode,
+                                onToggleNodeSelection: onToggleNodeSelection,
+                                onStartNodeSelection: onStartNodeSelection,
+                                horizontalPadding: layoutSettings.pageMargin,
+                              )
+                            : _NodeGridSliver(
+                                nodes: visibleNodes,
+                                summaries: nodeSummaries,
+                                previews: nodePreviews,
+                                onOpenNode: onOpenNode,
+                                onThumbnailEntityNeeded:
+                                    onThumbnailEntityNeeded,
+                                selectedNodeIds: selectedNodeIds,
+                                selectionMode: selectionMode,
+                                onToggleNodeSelection: onToggleNodeSelection,
+                                onStartNodeSelection: onStartNodeSelection,
+                                layoutSettings: layoutSettings,
+                              )),
+                      if (hasNodes && currentNode != null)
+                        listMode
+                            ? _NodeListSliver(
+                                nodes: childNodes,
+                                summaries: nodeSummaries,
+                                onOpenNode: onOpenNode,
+                                selectedNodeIds: selectedNodeIds,
+                                selectionMode: selectionMode,
+                                onToggleNodeSelection: onToggleNodeSelection,
+                                onStartNodeSelection: onStartNodeSelection,
+                                horizontalPadding: layoutSettings.pageMargin,
+                              )
+                            : _NodeGridSliver(
+                                nodes: childNodes,
+                                summaries: nodeSummaries,
+                                previews: nodePreviews,
+                                onOpenNode: onOpenNode,
+                                onThumbnailEntityNeeded:
+                                    onThumbnailEntityNeeded,
+                                selectedNodeIds: selectedNodeIds,
+                                selectionMode: selectionMode,
+                                onToggleNodeSelection: onToggleNodeSelection,
+                                onStartNodeSelection: onStartNodeSelection,
+                                layoutSettings: layoutSettings,
+                              ),
+                      if (!hasNodes && !hasEntities)
+                        SliverPadding(
+                          padding: const EdgeInsets.all(20),
+                          sliver: SliverToBoxAdapter(
+                            child: EmptyStateCard(
+                              title: immersiveBrowsing
+                                  ? '沉浸式浏览为空'
+                                  : currentNode == null
+                                      ? '${browserState.rootTab.label}中暂无内容'
+                                      : '当前分组为空',
+                              message: immersiveBrowsing
+                                  ? '当前分组及其下级分组中没有可展示的文件。'
+                                  : '可从“管理”页面重新检查，或返回首页继续浏览。',
+                            ),
+                          ),
+                        ),
+                      if (hasNodes && hasEntities)
+                        SliverPadding(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: layoutSettings.pageMargin),
+                          sliver: SliverToBoxAdapter(
+                            child: Divider(
+                                height: 1,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .outlineVariant),
+                          ),
+                        ),
+                      if (hasEntities)
+                        immersiveBrowsing ||
+                                browserState.displayMode ==
+                                    BrowserDisplayMode.grid
+                            ? switch (browserState.gridLayout) {
+                                BrowserGridLayout.equalHeight =>
+                                  _EntityGridSliver(
+                                    entities: entities,
+                                    immersive: immersiveBrowsing,
+                                    selectedEntityIds: selectedEntityIds,
+                                    selectionMode: selectionMode,
+                                    selectionRegistry: selectionRegistry,
+                                    onOpenEntity: onOpenEntity,
+                                    onShowEntityMenu: onShowEntityMenu,
+                                    onThumbnailNeeded: onThumbnailNeeded,
+                                    onToggleEntitySelection:
+                                        onToggleEntitySelection,
+                                    onStartEntitySelection:
+                                        onStartEntitySelection,
+                                    layoutSettings: layoutSettings,
+                                  ),
+                                BrowserGridLayout.equalWidth =>
+                                  _EntityMasonryGridSliver(
+                                    entities: entities,
+                                    immersive: immersiveBrowsing,
+                                    selectedEntityIds: selectedEntityIds,
+                                    selectionMode: selectionMode,
+                                    selectionRegistry: selectionRegistry,
+                                    onOpenEntity: onOpenEntity,
+                                    onShowEntityMenu: onShowEntityMenu,
+                                    onThumbnailNeeded: onThumbnailNeeded,
+                                    onToggleEntitySelection:
+                                        onToggleEntitySelection,
+                                    onStartEntitySelection:
+                                        onStartEntitySelection,
+                                    layoutSettings: layoutSettings,
+                                  ),
+                                BrowserGridLayout.adaptive =>
+                                  _SpanningEntityGridSliver(
+                                      entities: entities,
+                                      immersive: immersiveBrowsing,
+                                      selectionMode: selectionMode,
+                                      selectionRegistry: selectionRegistry,
+                                      onOpenEntity: onOpenEntity,
+                                      onShowEntityMenu: onShowEntityMenu,
+                                      onThumbnailNeeded: onThumbnailNeeded,
+                                      selectedEntityIds: selectedEntityIds,
+                                      onToggleEntitySelection:
+                                          onToggleEntitySelection,
+                                      onStartEntitySelection:
+                                          onStartEntitySelection,
+                                      layoutSettings: layoutSettings),
+                                BrowserGridLayout.square =>
+                                  _SquareEntityGridSliver(
+                                      entities: entities,
+                                      immersive: immersiveBrowsing,
+                                      selectionMode: selectionMode,
+                                      selectionRegistry: selectionRegistry,
+                                      onOpenEntity: onOpenEntity,
+                                      onShowEntityMenu: onShowEntityMenu,
+                                      onThumbnailNeeded: onThumbnailNeeded,
+                                      selectedEntityIds: selectedEntityIds,
+                                      onToggleEntitySelection:
+                                          onToggleEntitySelection,
+                                      onStartEntitySelection:
+                                          onStartEntitySelection,
+                                      layoutSettings: layoutSettings),
+                              }
+                            : _EntityListSliver(
+                                entities: entities,
+                                selectedEntityIds: selectedEntityIds,
+                                selectionMode: selectionMode,
+                                onOpenEntity: onOpenEntity,
+                                onShowEntityMenu: onShowEntityMenu,
+                                onThumbnailNeeded: onThumbnailNeeded,
+                                onToggleEntitySelection:
+                                    onToggleEntitySelection,
+                                onStartEntitySelection: onStartEntitySelection,
+                                horizontalPadding: layoutSettings.pageMargin,
+                              ),
+                      if (hasMoreEntities)
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 20),
+                            child: Center(
+                              child: loadingMoreEntities
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    )
+                                  : TextButton(
+                                      onPressed: onLoadMoreEntities,
+                                      child: const Text('加载更多'),
+                                    ),
+                            ),
+                          ),
+                        ),
+                      SliverToBoxAdapter(
+                        child: SizedBox(
+                          height: 28 +
+                              obstruction.bottom +
+                              (selectionMode ? 80 : 0),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (!immersiveBrowsing)
+          Positioned(
+            top: 4,
+            left: obstruction.left + 8,
+            right: 8,
             child: _PathBar(
               onSearchNodes: onSearchNodes,
               currentNode: currentNode,
@@ -164,212 +379,37 @@ class CollectionBrowserPage extends StatelessWidget {
               onCreateNode: onCreateCollection,
             ),
           ),
-          if (selectionMode)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
-              child: _SelectionActionBar(
-                entityCount: selectedEntityIds.length,
-                nodeCount: selectedNodeIds.length,
-                onExit: onToggleSelectionMode,
-                onSelectAll: onSelectAllVisible,
-                onInvert: onInvertVisibleSelection,
-                onSelectRange: onSelectRange,
-                onAddToCollection: onAddToCollection,
-                canRemoveFromCurrentNode: canRemoveFromCurrentNode,
-                onRemoveFromCurrentNode: onRemoveFromCurrentNode,
-                onRebuildSelectedNodePreview: onRebuildSelectedNodePreview,
-                onCustomizeSelectedNodePreview: onCustomizeSelectedNodePreview,
-                onClearSelectedNodePreviewOverride:
-                    onClearSelectedNodePreviewOverride,
-              ),
-            ),
-          Expanded(
-            child: _BrowserScrollShell(
-              preloadScopeKey:
-                  '${currentNode?.id ?? ''}:${immersiveBrowsing ? 'recursive' : 'direct'}',
-              entities: entities,
-              hasMore: hasMoreEntities,
-              onLoadMore: onLoadMoreEntities,
-              selectionMode: selectionMode,
-              onSelectEntitiesByDrag: onSelectEntitiesByDrag,
-              child: (controller, selectionRegistry) => CustomScrollView(
-                controller: controller,
-                scrollCacheExtent: const ScrollCacheExtent.pixels(0),
-                slivers: [
-                  if (hasNodes && currentNode == null)
-                    (listMode
-                        ? _NodeListSliver(
-                            nodes: visibleNodes,
-                            summaries: nodeSummaries,
-                            onOpenNode: onOpenNode,
-                            selectedNodeIds: selectedNodeIds,
-                            selectionMode: selectionMode,
-                            onToggleNodeSelection: onToggleNodeSelection,
-                            onStartNodeSelection: onStartNodeSelection,
-                            horizontalPadding: layoutSettings.pageMargin,
-                          )
-                        : _NodeGridSliver(
-                            nodes: visibleNodes,
-                            summaries: nodeSummaries,
-                            previews: nodePreviews,
-                            onOpenNode: onOpenNode,
-                            onThumbnailEntityNeeded: onThumbnailEntityNeeded,
-                            selectedNodeIds: selectedNodeIds,
-                            selectionMode: selectionMode,
-                            onToggleNodeSelection: onToggleNodeSelection,
-                            onStartNodeSelection: onStartNodeSelection,
-                            layoutSettings: layoutSettings,
-                          )),
-                  if (hasNodes && currentNode != null)
-                    listMode
-                        ? _NodeListSliver(
-                            nodes: childNodes,
-                            summaries: nodeSummaries,
-                            onOpenNode: onOpenNode,
-                            selectedNodeIds: selectedNodeIds,
-                            selectionMode: selectionMode,
-                            onToggleNodeSelection: onToggleNodeSelection,
-                            onStartNodeSelection: onStartNodeSelection,
-                            horizontalPadding: layoutSettings.pageMargin,
-                          )
-                        : _NodeGridSliver(
-                            nodes: childNodes,
-                            summaries: nodeSummaries,
-                            previews: nodePreviews,
-                            onOpenNode: onOpenNode,
-                            onThumbnailEntityNeeded: onThumbnailEntityNeeded,
-                            selectedNodeIds: selectedNodeIds,
-                            selectionMode: selectionMode,
-                            onToggleNodeSelection: onToggleNodeSelection,
-                            onStartNodeSelection: onStartNodeSelection,
-                            layoutSettings: layoutSettings,
-                          ),
-                  if (!hasNodes && !hasEntities)
-                    SliverPadding(
-                      padding: const EdgeInsets.all(20),
-                      sliver: SliverToBoxAdapter(
-                        child: EmptyStateCard(
-                          title: immersiveBrowsing
-                              ? '沉浸式浏览为空'
-                              : currentNode == null
-                                  ? '${browserState.rootTab.label}中暂无内容'
-                                  : '当前分组为空',
-                          message: immersiveBrowsing
-                              ? '当前分组及其下级分组中没有可展示的文件。'
-                              : '可从“管理”页面重新检查，或返回首页继续浏览。',
-                        ),
-                      ),
-                    ),
-                  if (hasNodes && hasEntities)
-                    SliverPadding(
-                      padding: EdgeInsets.symmetric(
-                          horizontal: layoutSettings.pageMargin),
-                      sliver: SliverToBoxAdapter(
-                        child: Divider(
-                            height: 1,
-                            color:
-                                Theme.of(context).colorScheme.outlineVariant),
-                      ),
-                    ),
-                  if (hasEntities)
-                    immersiveBrowsing ||
-                            browserState.displayMode == BrowserDisplayMode.grid
-                        ? switch (browserState.gridLayout) {
-                            BrowserGridLayout.equalHeight => _EntityGridSliver(
-                                entities: entities,
-                                immersive: immersiveBrowsing,
-                                selectedEntityIds: selectedEntityIds,
-                                selectionMode: selectionMode,
-                                selectionRegistry: selectionRegistry,
-                                onOpenEntity: onOpenEntity,
-                                onShowEntityMenu: onShowEntityMenu,
-                                onThumbnailNeeded: onThumbnailNeeded,
-                                onToggleEntitySelection:
-                                    onToggleEntitySelection,
-                                onStartEntitySelection: onStartEntitySelection,
-                                layoutSettings: layoutSettings,
-                              ),
-                            BrowserGridLayout.equalWidth =>
-                              _EntityMasonryGridSliver(
-                                entities: entities,
-                                immersive: immersiveBrowsing,
-                                selectedEntityIds: selectedEntityIds,
-                                selectionMode: selectionMode,
-                                selectionRegistry: selectionRegistry,
-                                onOpenEntity: onOpenEntity,
-                                onShowEntityMenu: onShowEntityMenu,
-                                onThumbnailNeeded: onThumbnailNeeded,
-                                onToggleEntitySelection:
-                                    onToggleEntitySelection,
-                                onStartEntitySelection: onStartEntitySelection,
-                                layoutSettings: layoutSettings,
-                              ),
-                            BrowserGridLayout.adaptive =>
-                              _SpanningEntityGridSliver(
-                                  entities: entities,
-                                  immersive: immersiveBrowsing,
-                                  selectionMode: selectionMode,
-                                  selectionRegistry: selectionRegistry,
-                                  onOpenEntity: onOpenEntity,
-                                  onShowEntityMenu: onShowEntityMenu,
-                                  onThumbnailNeeded: onThumbnailNeeded,
-                                  selectedEntityIds: selectedEntityIds,
-                                  onToggleEntitySelection:
-                                      onToggleEntitySelection,
-                                  onStartEntitySelection:
-                                      onStartEntitySelection,
-                                  layoutSettings: layoutSettings),
-                            BrowserGridLayout.square => _SquareEntityGridSliver(
-                                entities: entities,
-                                immersive: immersiveBrowsing,
-                                selectionMode: selectionMode,
-                                selectionRegistry: selectionRegistry,
-                                onOpenEntity: onOpenEntity,
-                                onShowEntityMenu: onShowEntityMenu,
-                                onThumbnailNeeded: onThumbnailNeeded,
-                                selectedEntityIds: selectedEntityIds,
-                                onToggleEntitySelection:
-                                    onToggleEntitySelection,
-                                onStartEntitySelection: onStartEntitySelection,
-                                layoutSettings: layoutSettings),
-                          }
-                        : _EntityListSliver(
-                            entities: entities,
-                            selectedEntityIds: selectedEntityIds,
-                            selectionMode: selectionMode,
-                            onOpenEntity: onOpenEntity,
-                            onShowEntityMenu: onShowEntityMenu,
-                            onThumbnailNeeded: onThumbnailNeeded,
-                            onToggleEntitySelection: onToggleEntitySelection,
-                            onStartEntitySelection: onStartEntitySelection,
-                            horizontalPadding: layoutSettings.pageMargin,
-                          ),
-                  if (hasMoreEntities)
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 20),
-                        child: Center(
-                          child: loadingMoreEntities
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2),
-                                )
-                              : TextButton(
-                                  onPressed: onLoadMoreEntities,
-                                  child: const Text('加载更多'),
-                                ),
-                        ),
-                      ),
-                    ),
-                  const SliverToBoxAdapter(child: SizedBox(height: 28)),
-                ],
+        if (selectionMode)
+          Positioned(
+            left: obstruction.left + 12,
+            right: 12,
+            bottom: obstruction.bottom + 8,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 960),
+                child: FloatingGlassSurface(
+                  borderRadius: 28,
+                  child: _SelectionActionBar(
+                    entityCount: selectedEntityIds.length,
+                    nodeCount: selectedNodeIds.length,
+                    onExit: onToggleSelectionMode,
+                    onSelectAll: onSelectAllVisible,
+                    onInvert: onInvertVisibleSelection,
+                    onSelectRange: onSelectRange,
+                    onAddToCollection: onAddToCollection,
+                    canRemoveFromCurrentNode: canRemoveFromCurrentNode,
+                    onRemoveFromCurrentNode: onRemoveFromCurrentNode,
+                    onRebuildSelectedNodePreview: onRebuildSelectedNodePreview,
+                    onCustomizeSelectedNodePreview:
+                        onCustomizeSelectedNodePreview,
+                    onClearSelectedNodePreviewOverride:
+                        onClearSelectedNodePreviewOverride,
+                  ),
+                ),
               ),
             ),
           ),
-        ],
-      ),
+      ],
     );
   }
 }
@@ -1155,56 +1195,110 @@ class _SelectionActionBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Theme.of(context).colorScheme.surfaceContainerHigh,
+      color: Colors.transparent,
       borderRadius: BorderRadius.circular(AppTokens.radiusMd),
       child: Padding(
         padding: const EdgeInsets.all(10),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Text('已选 $entityCount 个文件 | $nodeCount 个分组'),
-            TextButton(onPressed: onExit, child: const Text('退出')),
-            TextButton(onPressed: onSelectAll, child: const Text('全选')),
-            TextButton(onPressed: onInvert, child: const Text('反选')),
-            TextButton(onPressed: onSelectRange, child: const Text('区间选择')),
-            if (entityCount == 0 && nodeCount == 1)
-              MenuAnchor(
-                menuChildren: [
-                  MenuItemButton(
-                    onPressed: onRebuildSelectedNodePreview,
-                    child: const Text('重新生成预览'),
-                  ),
-                  MenuItemButton(
-                    onPressed: onCustomizeSelectedNodePreview,
-                    child: const Text('自定义生成预览'),
-                  ),
-                  MenuItemButton(
-                    onPressed: onClearSelectedNodePreviewOverride,
-                    child: const Text('恢复自动预览'),
-                  ),
-                ],
-                builder: (context, controller, child) => TextButton(
-                  onPressed: () => controller.isOpen
-                      ? controller.close()
-                      : controller.open(),
-                  child: const Text('预览'),
-                ),
-              ),
-            OutlinedButton(
-              onPressed:
-                  entityCount == 0 && nodeCount == 0 ? null : onAddToCollection,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final hasSelection = entityCount > 0 || nodeCount > 0;
+            final previewOnly = entityCount == 0 && nodeCount == 1;
+            final count = Text('已选 $entityCount 个文件 | $nodeCount 个分组');
+            final add = OutlinedButton(
+              onPressed: hasSelection ? onAddToCollection : null,
               child: const Text('加入分类'),
-            ),
-            if (canRemoveFromCurrentNode)
-              OutlinedButton(
-                onPressed: entityCount == 0 && nodeCount == 0
-                    ? null
-                    : onRemoveFromCurrentNode,
-                child: Text(nodeCount > 0 && entityCount == 0 ? '删除分组' : '删除'),
-              ),
-          ],
+            );
+            final remove = canRemoveFromCurrentNode
+                ? OutlinedButton(
+                    onPressed: hasSelection ? onRemoveFromCurrentNode : null,
+                    child: Text(
+                      nodeCount > 0 && entityCount == 0 ? '删除分组' : '删除',
+                    ),
+                  )
+                : null;
+            if (constraints.maxWidth < 700) {
+              return Row(
+                children: [
+                  Expanded(child: count),
+                  TextButton(onPressed: onExit, child: const Text('退出')),
+                  MenuAnchor(
+                    menuChildren: [
+                      MenuItemButton(
+                          onPressed: onSelectAll, child: const Text('全选')),
+                      MenuItemButton(
+                          onPressed: onInvert, child: const Text('反选')),
+                      MenuItemButton(
+                        onPressed: onSelectRange,
+                        child: const Text('区间选择'),
+                      ),
+                      if (previewOnly) ...[
+                        MenuItemButton(
+                          onPressed: onRebuildSelectedNodePreview,
+                          child: const Text('重新生成预览'),
+                        ),
+                        MenuItemButton(
+                          onPressed: onCustomizeSelectedNodePreview,
+                          child: const Text('自定义生成预览'),
+                        ),
+                        MenuItemButton(
+                          onPressed: onClearSelectedNodePreviewOverride,
+                          child: const Text('恢复自动预览'),
+                        ),
+                      ],
+                    ],
+                    builder: (context, controller, child) => TextButton(
+                      onPressed: () => controller.isOpen
+                          ? controller.close()
+                          : controller.open(),
+                      child: const Text('更多'),
+                    ),
+                  ),
+                  add,
+                  if (remove != null) remove,
+                ],
+              );
+            }
+            return Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                count,
+                TextButton(onPressed: onExit, child: const Text('退出')),
+                TextButton(onPressed: onSelectAll, child: const Text('全选')),
+                TextButton(onPressed: onInvert, child: const Text('反选')),
+                TextButton(
+                  onPressed: onSelectRange,
+                  child: const Text('区间选择'),
+                ),
+                if (previewOnly)
+                  MenuAnchor(
+                    menuChildren: [
+                      MenuItemButton(
+                        onPressed: onRebuildSelectedNodePreview,
+                        child: const Text('重新生成预览'),
+                      ),
+                      MenuItemButton(
+                        onPressed: onCustomizeSelectedNodePreview,
+                        child: const Text('自定义生成预览'),
+                      ),
+                      MenuItemButton(
+                        onPressed: onClearSelectedNodePreviewOverride,
+                        child: const Text('恢复自动预览'),
+                      ),
+                    ],
+                    builder: (context, controller, child) => TextButton(
+                      onPressed: () => controller.isOpen
+                          ? controller.close()
+                          : controller.open(),
+                      child: const Text('预览'),
+                    ),
+                  ),
+                add,
+                if (remove != null) remove,
+              ],
+            );
+          },
         ),
       ),
     );
@@ -1471,6 +1565,24 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
     final gap = layoutSettings.cardGap;
     final margin = layoutSettings.pageMargin;
     final targetHeight = layoutSettings.folderHeight;
+    final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
+    if (portrait) {
+      return SliverPadding(
+        padding: EdgeInsets.fromLTRB(margin, 0, margin, margin),
+        sliver: SliverGrid.builder(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: layoutSettings.portraitFolderColumns,
+            mainAxisSpacing: gap,
+            crossAxisSpacing: gap,
+          ),
+          itemCount: nodes.length,
+          itemBuilder: (context, index) => _nodeCard(
+            nodes[index],
+            portrait: true,
+          ),
+        ),
+      );
+    }
     return SliverLayoutBuilder(
       builder: (context, constraints) {
         final rows = _FixedHeightNodeRows.calculate(
@@ -1517,7 +1629,7 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
     );
   }
 
-  Widget _nodeCard(IndexNode node) {
+  Widget _nodeCard(IndexNode node, {bool portrait = false}) {
     return IndexNodePreviewCard(
       node: node,
       preview: previews[node.id],
@@ -1529,6 +1641,8 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
       onLongPress: () => onStartNodeSelection(node),
       onThumbnailEntityNeeded: onThumbnailEntityNeeded,
       cardRadius: layoutSettings.cardRadius,
+      portrait: portrait,
+      internalGap: layoutSettings.cardGap,
     );
   }
 }
@@ -1594,6 +1708,8 @@ class IndexNodePreviewCard extends StatelessWidget {
     this.selected = false,
     this.onLongPress,
     this.cardRadius = 16,
+    this.portrait = false,
+    this.internalGap = 0,
   });
 
   final IndexNode node;
@@ -1604,6 +1720,8 @@ class IndexNodePreviewCard extends StatelessWidget {
   final bool selected;
   final VoidCallback? onLongPress;
   final double cardRadius;
+  final bool portrait;
+  final double internalGap;
 
   @override
   Widget build(BuildContext context) {
@@ -1619,7 +1737,7 @@ class IndexNodePreviewCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             AspectRatio(
-              aspectRatio: indexNodePreviewAspectRatio(preview),
+              aspectRatio: portrait ? 1 : indexNodePreviewAspectRatio(preview),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(cardRadius),
                 child: Stack(
@@ -1631,6 +1749,8 @@ class IndexNodePreviewCard extends StatelessWidget {
                       hasContent: (summary?.childNodeCount ?? 0) > 0 ||
                           (summary?.directEntityCount ?? 0) > 0,
                       borderRadius: cardRadius,
+                      portrait: portrait,
+                      internalGap: internalGap,
                     ),
                     Positioned(
                       top: 6,

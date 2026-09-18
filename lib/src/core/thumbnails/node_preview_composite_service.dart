@@ -7,6 +7,7 @@ import 'package:image/image.dart' as img;
 import '../../modules/library/library_access.dart';
 import '../domain/models.dart';
 import 'lossy_webp_encoder.dart';
+import 'thumbnail_store.dart';
 import 'thumbnail_cancellation.dart';
 import 'cancellable_thumbnail_task.dart';
 
@@ -109,14 +110,16 @@ class NodePreviewCompositeService {
       // Android and Windows: a process interruption can never remove the
       // asset currently referenced by SQLite.
       final assetKey = input.ticket.assetKey;
+      final outputPath = await repository.nodePreviewAssetPath(
+        assetKey,
+        'webp',
+      );
       requests.add(<String, Object?>{
         'nodeId': preview.nodeId,
         'signature': signature,
         'assetKey': assetKey,
-        'outputPath': (await repository.nodePreviewAssetPath(
-          assetKey,
-          'webp',
-        )),
+        'outputPath': outputPath,
+        'portraitOutputPath': portraitNodePreviewPathFromLandscape(outputPath),
         'height': Platform.isAndroid ? 640 : 440,
         'tiles': tiles,
       });
@@ -139,7 +142,9 @@ class NodePreviewCompositeService {
           continue;
         }
         final rawPixels = result['pixels'];
-        if (rawPixels is! TransferableTypedData) {
+        final portraitRawPixels = result['portraitPixels'];
+        if (rawPixels is! TransferableTypedData ||
+            portraitRawPixels is! TransferableTypedData) {
           outcomes[nodeId] = NodePreviewCompositeOutcome.failed(
             '节点预览像素数据未生成',
           );
@@ -153,6 +158,18 @@ class NodePreviewCompositeService {
             height: result['height']! as int,
             outputPath: result['outputPath']! as String,
           );
+          try {
+            await encodeRgbaCanvasToWebp(
+              pixels: portraitRawPixels.materialize().asUint8List(),
+              width: result['portraitWidth']! as int,
+              height: result['portraitHeight']! as int,
+              outputPath: result['portraitOutputPath']! as String,
+            );
+          } catch (_) {
+            final landscape = File(result['outputPath']! as String);
+            if (landscape.existsSync()) landscape.deleteSync();
+            rethrow;
+          }
           outcomes[nodeId] = NodePreviewCompositeOutcome.written(
             signature: result['signature']! as String,
             assetKey: result['assetKey']! as String,
@@ -294,14 +311,20 @@ Map<String, Object?> _composeRequest(Map<String, Object?> request) {
       }
       left += tileWidth;
     }
+    final portrait = _composePortrait(tiles, height);
     return <String, Object?>{
       'nodeId': nodeId,
       'signature': request['signature'],
       'assetKey': request['assetKey'],
       'outputPath': request['outputPath'],
+      'portraitOutputPath': request['portraitOutputPath'],
       'width': width,
       'height': height,
       'pixels': TransferableTypedData.fromList(<Uint8List>[_rgba(canvas)]),
+      'portraitWidth': portrait.width,
+      'portraitHeight': portrait.height,
+      'portraitPixels':
+          TransferableTypedData.fromList(<Uint8List>[_rgba(portrait)]),
     };
   } catch (error) {
     return <String, Object?>{
@@ -309,6 +332,50 @@ Map<String, Object?> _composeRequest(Map<String, Object?> request) {
       'error': '$error',
     };
   }
+}
+
+img.Image _composePortrait(
+  List<({String path, double aspectRatio})> sourceTiles,
+  int size,
+) {
+  final tiles = sourceTiles.take(4).toList(growable: false);
+  final canvas = img.Image(width: size, height: size, numChannels: 4);
+  img.fill(canvas, color: img.ColorRgba8(31, 38, 33, 255));
+  final frames = switch (tiles.length) {
+    1 => [(x: 0, y: 0, width: size, height: size)],
+    2 => [
+        (x: 0, y: 0, width: size ~/ 2, height: size),
+        (x: size ~/ 2, y: 0, width: size - size ~/ 2, height: size),
+      ],
+    3 => [
+        (x: 0, y: 0, width: size ~/ 2, height: size ~/ 2),
+        (x: 0, y: size ~/ 2, width: size ~/ 2, height: size - size ~/ 2),
+        (x: size ~/ 2, y: 0, width: size - size ~/ 2, height: size),
+      ],
+    _ => [
+        (x: 0, y: 0, width: size ~/ 2, height: size ~/ 2),
+        (x: size ~/ 2, y: 0, width: size - size ~/ 2, height: size ~/ 2),
+        (x: 0, y: size ~/ 2, width: size ~/ 2, height: size - size ~/ 2),
+        (
+          x: size ~/ 2,
+          y: size ~/ 2,
+          width: size - size ~/ 2,
+          height: size - size ~/ 2,
+        ),
+      ],
+  };
+  for (var index = 0; index < tiles.length; index++) {
+    final source = img.decodeImage(File(tiles[index].path).readAsBytesSync());
+    if (source == null) throw StateError('节点竖屏封面的缩略图无法解码');
+    final frame = frames[index];
+    img.compositeImage(
+      canvas,
+      _cover(source, frame.width, frame.height),
+      dstX: frame.x,
+      dstY: frame.y,
+    );
+  }
+  return canvas;
 }
 
 Uint8List _rgba(img.Image image) {

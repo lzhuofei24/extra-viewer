@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/domain/models.dart';
 import 'browser_state.dart';
+import 'app_sidebar.dart';
 
 class BrowserToolbarAction {
   const BrowserToolbarAction({
@@ -44,40 +45,80 @@ class BrowserToolbar extends StatelessWidget {
   final List<BrowserToolbarAction> moreActions;
 
   @override
-  Widget build(BuildContext context) => Row(
-        children: [
-          Expanded(child: leading),
-          if (onSearch != null)
-            IconButton(
-              tooltip: '搜索目录或分类',
-              onPressed: onSearch,
-              icon: const Icon(Icons.search),
+  Widget build(BuildContext context) => LayoutBuilder(
+        builder: (context, constraints) {
+          final actions = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (onSearch != null)
+                IconButton(
+                  tooltip: '搜索目录或分类',
+                  onPressed: onSearch,
+                  icon: const Icon(Icons.search),
+                ),
+              if (onToggleImmersive != null)
+                IconButton(
+                  tooltip: immersive ? '退出沉浸式浏览' : '沉浸式浏览',
+                  onPressed: onToggleImmersive,
+                  icon: Icon(immersive
+                      ? Icons.fullscreen_exit_rounded
+                      : Icons.fullscreen_rounded),
+                ),
+              if (onToggleSelection != null)
+                IconButton(
+                  tooltip: selectionMode ? '退出选择模式' : '选择模式',
+                  onPressed: onToggleSelection,
+                  icon: Icon(selectionMode
+                      ? Icons.checklist_rounded
+                      : Icons.checklist_outlined),
+                ),
+              const SizedBox(width: 4),
+              _BrowserOptionsMenu(
+                browserState: browserState,
+                onSortChanged: onSortChanged,
+                onDisplayModeChanged: onDisplayModeChanged,
+                onGridLayoutChanged: onGridLayoutChanged,
+              ),
+              if (moreActions.isNotEmpty)
+                _MoreActionsMenu(actions: moreActions),
+            ],
+          );
+          if (constraints.maxWidth < 600) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  height: 44,
+                  width: double.infinity,
+                  child: FloatingGlassSurface(
+                    borderRadius: 22,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    child: leading,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FloatingGlassSurface(
+                    borderRadius: 22,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: actions,
+                  ),
+                ),
+              ],
+            );
+          }
+          return FloatingGlassSurface(
+            borderRadius: 24,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              children: [
+                Expanded(child: leading),
+                actions,
+              ],
             ),
-          if (onToggleImmersive != null)
-            IconButton(
-              tooltip: immersive ? '退出沉浸式浏览' : '沉浸式浏览',
-              onPressed: onToggleImmersive,
-              icon: Icon(immersive
-                  ? Icons.fullscreen_exit_rounded
-                  : Icons.fullscreen_rounded),
-            ),
-          if (onToggleSelection != null)
-            IconButton(
-              tooltip: selectionMode ? '退出选择模式' : '选择模式',
-              onPressed: onToggleSelection,
-              icon: Icon(selectionMode
-                  ? Icons.checklist_rounded
-                  : Icons.checklist_outlined),
-            ),
-          const SizedBox(width: 4),
-          _BrowserOptionsMenu(
-            browserState: browserState,
-            onSortChanged: onSortChanged,
-            onDisplayModeChanged: onDisplayModeChanged,
-            onGridLayoutChanged: onGridLayoutChanged,
-          ),
-          if (moreActions.isNotEmpty) _MoreActionsMenu(actions: moreActions),
-        ],
+          );
+        },
       );
 }
 

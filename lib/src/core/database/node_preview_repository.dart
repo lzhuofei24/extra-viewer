@@ -241,6 +241,12 @@ mixin NodePreviewRepositoryMixin on LibraryRepositoryBase {
               (height ?? 0) <= 0 ||
               File(_nodePreviewAssetPath(ticket.assetKey, 'webp'))
                       .lengthSync() <=
+                  0 ||
+              File(portraitNodePreviewAssetPathFor(
+                    storageDirectoryPath,
+                    ticket.assetKey,
+                    'webp',
+                  )).lengthSync() <=
                   0) {
             throw StateError('Node preview file is not ready to publish');
           }

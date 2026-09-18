@@ -152,6 +152,39 @@ class AppNavigationObstruction extends InheritedWidget {
       oldWidget.insets != insets;
 }
 
+class FloatingGlassSurface extends StatelessWidget {
+  const FloatingGlassSurface({
+    super.key,
+    required this.child,
+    this.borderRadius = 24,
+    this.padding = EdgeInsets.zero,
+  });
+
+  final Widget child;
+  final double borderRadius;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return RepaintBoundary(
+      child: DecoratedBox(
+        decoration: _glassShadow(theme, borderRadius),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(borderRadius),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: DecoratedBox(
+              decoration: _glassSurface(theme, borderRadius),
+              child: Padding(padding: padding, child: child),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _NavigationDestination {
   const _NavigationDestination(
     this.section,

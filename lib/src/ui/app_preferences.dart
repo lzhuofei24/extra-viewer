@@ -15,28 +15,29 @@ class AppPreferencesData {
     this.sortMode = EntitySortMode.nameAsc,
     this.displayMode = BrowserDisplayMode.grid,
     this.gridLayout = BrowserGridLayout.equalHeight,
-    this.layout = const GalleryLayoutSettings(),
+    this.layoutPreset = GalleryLayoutPreset.standard,
   });
 
   final ViewerThemeChoice themeChoice;
   final EntitySortMode sortMode;
   final BrowserDisplayMode displayMode;
   final BrowserGridLayout gridLayout;
-  final GalleryLayoutSettings layout;
+  final GalleryLayoutPreset layoutPreset;
+  GalleryLayoutSettings get layout => layoutPreset.settings;
 
   AppPreferencesData copyWith({
     ViewerThemeChoice? themeChoice,
     EntitySortMode? sortMode,
     BrowserDisplayMode? displayMode,
     BrowserGridLayout? gridLayout,
-    GalleryLayoutSettings? layout,
+    GalleryLayoutPreset? layoutPreset,
   }) =>
       AppPreferencesData(
         themeChoice: themeChoice ?? this.themeChoice,
         sortMode: sortMode ?? this.sortMode,
         displayMode: displayMode ?? this.displayMode,
         gridLayout: gridLayout ?? this.gridLayout,
-        layout: layout ?? this.layout,
+        layoutPreset: layoutPreset ?? this.layoutPreset,
       );
 }
 
@@ -58,19 +59,7 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
   static const _sortKey = 'preferences.browser.sort';
   static const _displayKey = 'preferences.browser.display';
   static const _layoutKey = 'preferences.browser.layout';
-  static const _pageMarginKey = 'preferences.gallery.page_margin';
-  static const _cardGapKey = 'preferences.gallery.card_gap';
-  static const _cardRadiusKey = 'preferences.gallery.card_radius';
-  static const _portraitEqualWidthColumnsKey =
-      'preferences.gallery.portrait_equal_width_columns';
-  static const _landscapeEqualWidthColumnsKey =
-      'preferences.gallery.landscape_equal_width_columns';
-  static const _portraitSquareColumnsKey =
-      'preferences.gallery.portrait_square_columns';
-  static const _landscapeSquareColumnsKey =
-      'preferences.gallery.landscape_square_columns';
-  static const _equalHeightKey = 'preferences.gallery.equal_height';
-  static const _folderHeightKey = 'preferences.gallery.folder_height';
+  static const _galleryPresetKey = 'preferences.gallery.preset';
 
   @override
   Future<AppPreferencesData> load() async => AppPreferencesData(
@@ -94,56 +83,21 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
           _preferences.getString(_layoutKey),
           BrowserGridLayout.equalHeight,
         ),
-        layout: GalleryLayoutSettings(
-          pageMargin:
-              _number(_pageMarginKey, GalleryLayoutSettings.defaultPageMargin),
-          cardGap: _number(_cardGapKey, GalleryLayoutSettings.defaultCardGap),
-          cardRadius:
-              _number(_cardRadiusKey, GalleryLayoutSettings.defaultCardRadius),
-          portraitEqualWidthColumns: _integer(_portraitEqualWidthColumnsKey,
-              GalleryLayoutSettings.defaultPortraitEqualWidthColumns),
-          landscapeEqualWidthColumns: _integer(_landscapeEqualWidthColumnsKey,
-              GalleryLayoutSettings.defaultLandscapeEqualWidthColumns),
-          portraitSquareColumns: _integer(_portraitSquareColumnsKey,
-              GalleryLayoutSettings.defaultPortraitSquareColumns),
-          landscapeSquareColumns: _integer(_landscapeSquareColumnsKey,
-              GalleryLayoutSettings.defaultLandscapeSquareColumns),
-          equalHeightTarget: _number(
-              _equalHeightKey, GalleryLayoutSettings.defaultEqualHeightTarget),
-          folderHeight: _number(
-              _folderHeightKey, GalleryLayoutSettings.defaultFolderHeight),
-        ).normalized(),
+        layoutPreset: _enumValue(
+          GalleryLayoutPreset.values,
+          _preferences.getString(_galleryPresetKey),
+          GalleryLayoutPreset.standard,
+        ),
       );
-
-  double _number(String key, double fallback) {
-    final value = _preferences.getDouble(key);
-    return value == null || !value.isFinite ? fallback : value;
-  }
-
-  int _integer(String key, int fallback) =>
-      _preferences.getInt(key) ?? fallback;
 
   @override
   Future<void> save(AppPreferencesData value) async {
-    final layout = value.layout.normalized();
     await Future.wait([
       _preferences.setString(_themeKey, value.themeChoice.name),
       _preferences.setString(_sortKey, value.sortMode.name),
       _preferences.setString(_displayKey, value.displayMode.name),
       _preferences.setString(_layoutKey, value.gridLayout.name),
-      _preferences.setDouble(_pageMarginKey, layout.pageMargin),
-      _preferences.setDouble(_cardGapKey, layout.cardGap),
-      _preferences.setDouble(_cardRadiusKey, layout.cardRadius),
-      _preferences.setInt(
-          _portraitEqualWidthColumnsKey, layout.portraitEqualWidthColumns),
-      _preferences.setInt(
-          _landscapeEqualWidthColumnsKey, layout.landscapeEqualWidthColumns),
-      _preferences.setInt(
-          _portraitSquareColumnsKey, layout.portraitSquareColumns),
-      _preferences.setInt(
-          _landscapeSquareColumnsKey, layout.landscapeSquareColumns),
-      _preferences.setDouble(_equalHeightKey, layout.equalHeightTarget),
-      _preferences.setDouble(_folderHeightKey, layout.folderHeight),
+      _preferences.setString(_galleryPresetKey, value.layoutPreset.name),
     ]);
   }
 }
@@ -193,10 +147,8 @@ class AppPreferencesController extends ChangeNotifier {
         gridLayout: gridLayout,
       ));
 
-  void setLayout(GalleryLayoutSettings value) =>
-      _update(_value.copyWith(layout: value.normalized()));
-
-  void resetLayout() => setLayout(const GalleryLayoutSettings());
+  void setLayoutPreset(GalleryLayoutPreset value) =>
+      _update(_value.copyWith(layoutPreset: value));
 
   Future<void> flush() => _pendingWrite;
 

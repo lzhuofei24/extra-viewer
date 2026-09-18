@@ -79,6 +79,21 @@ String nodePreviewAssetPathFor(String directory, String key, String format) =>
             directory, 'node_previews', key.substring(8, 10), '$key.$format')
         : p.join(directory, 'node_previews', '$key.$format');
 
+String portraitNodePreviewAssetPathFor(
+  String directory,
+  String key,
+  String format,
+) {
+  final landscape = nodePreviewAssetPathFor(directory, key, format);
+  return p.setExtension(landscape, '.portrait.$format');
+}
+
+String portraitNodePreviewPathFromLandscape(String landscapePath) {
+  final extension = p.extension(landscapePath);
+  if (extension.isEmpty) return '$landscapePath.portrait';
+  return p.setExtension(landscapePath, '.portrait$extension');
+}
+
 String thumbnailCacheKeyFor({
   required String fingerprint,
   int version = 6,
