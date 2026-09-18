@@ -136,6 +136,8 @@ class CollectionBrowserPage extends StatelessWidget {
     final listMode = !immersiveBrowsing &&
         browserState.displayMode == BrowserDisplayMode.list;
     final obstruction = AppNavigationObstruction.of(context);
+    final topChromeInset =
+        MediaQuery.sizeOf(context).width < 600 ? 116.0 : 76.0;
     return Stack(
       children: [
         Padding(
@@ -155,6 +157,10 @@ class CollectionBrowserPage extends StatelessWidget {
                     controller: controller,
                     scrollCacheExtent: const ScrollCacheExtent.pixels(0),
                     slivers: [
+                      if (!immersiveBrowsing)
+                        SliverToBoxAdapter(
+                          child: SizedBox(height: topChromeInset),
+                        ),
                       if (hasNodes && currentNode == null)
                         (listMode
                             ? _NodeListSliver(

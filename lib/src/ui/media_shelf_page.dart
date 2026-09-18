@@ -115,12 +115,18 @@ class _MediaShelfPageState extends State<MediaShelfPage> {
   Widget build(BuildContext context) {
     final items = _sortedItems;
     final obstruction = AppNavigationObstruction.of(context);
+    final topChromeInset =
+        MediaQuery.sizeOf(context).width < 600 ? 116.0 : 76.0;
     return Stack(
       children: [
         Stack(
           children: [
             CustomScrollView(
               slivers: [
+                if (!_immersive)
+                  SliverToBoxAdapter(
+                    child: SizedBox(height: topChromeInset),
+                  ),
                 if (items.isEmpty)
                   const SliverFillRemaining(
                     child: Center(child: Text('暂无最近内容')),

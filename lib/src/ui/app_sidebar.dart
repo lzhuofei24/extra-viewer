@@ -141,8 +141,8 @@ class FloatingGlassSurface extends StatelessWidget {
   final EdgeInsetsGeometry padding;
 
   static const double blurSigma = 18;
-  static const double darkSurfaceAlpha = 0.66;
-  static const double lightSurfaceAlpha = 0.74;
+  static const double darkSurfaceAlpha = 0.54;
+  static const double lightSurfaceAlpha = 0.62;
 
   @override
   Widget build(BuildContext context) {

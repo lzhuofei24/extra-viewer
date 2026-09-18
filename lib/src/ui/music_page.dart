@@ -31,13 +31,15 @@ class MusicPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final activeId = controller.session?.id;
     final obstruction = AppNavigationObstruction.of(context);
+    final topChromeInset =
+        MediaQuery.sizeOf(context).width < 600 ? 116.0 : 76.0;
     return Stack(
       children: [
         SafeArea(
           child: ListView(
             padding: EdgeInsets.fromLTRB(
               28,
-              8,
+              8 + topChromeInset,
               28,
               40 + obstruction.bottom,
             ),
