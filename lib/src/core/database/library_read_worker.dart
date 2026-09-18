@@ -9,6 +9,8 @@ import '../thumbnails/thumbnail_store.dart';
 import '../../modules/library/library_queries.dart';
 import 'node_search_query.dart';
 
+enum RecursiveReadScope { node, directoryHome, collectionHome }
+
 /// A dedicated read-only SQLite isolate for non-interactive page warming.
 /// It keeps lookahead queries from blocking scroll and navigation frames.
 class LibraryReadWorker implements LibraryQueries {
@@ -121,13 +123,15 @@ class LibraryReadWorker implements LibraryQueries {
   }
 
   Future<LibraryReadPage> loadRecursivePage({
-    required String nodeId,
+    String? nodeId,
+    RecursiveReadScope scope = RecursiveReadScope.node,
     required EntitySortMode sortMode,
     RecursiveEntityPageCursor? after,
     int? limit,
   }) async {
     final message = await _request(<String, Object?>{
       'type': 'recursivePage',
+      'scope': scope.name,
       'nodeId': nodeId,
       'sortMode': sortMode.name,
       'hierarchyPath': after?.hierarchyPath,
@@ -827,13 +831,23 @@ _RawReadPage _loadRecursivePage(
   String storageDirectoryPath,
   Map<Object?, Object?> request,
 ) {
-  final nodeId = request['nodeId']! as String;
+  final scope = request['scope'] as String? ?? 'node';
+  final nodeId = request['nodeId'] as String?;
+  if (scope == 'node' && nodeId == null) {
+    throw ArgumentError('Node scope requires nodeId');
+  }
+  final seed = switch (scope) {
+    'node' => 'id = ?',
+    'directoryHome' => "node_type = 'directory_index_root'",
+    'collectionHome' => "node_type = 'category_index_root'",
+    _ => throw ArgumentError('Invalid recursive scope'),
+  };
   final sortName = request['sortMode']! as String;
   final hierarchyPath = request['hierarchyPath'] as String?;
   final cursor = _workerCursorCondition(request, sortName);
   final limit = request['limit'] as int?;
   final parameters = <Object>[
-    nodeId,
+    if (scope == 'node') nodeId!,
     if (hierarchyPath != null && cursor != null) ...[
       hierarchyPath,
       hierarchyPath,
@@ -849,7 +863,7 @@ _RawReadPage _loadRecursivePage(
              printf('%010d', sort_order) || char(31) ||
              lower(name) || char(31) || id
       FROM index_nodes
-      WHERE id = ?
+      WHERE ($seed) AND is_staging = 0
       UNION ALL
       SELECT node.id,
              parent.hierarchy_path || char(30) ||
@@ -857,6 +871,7 @@ _RawReadPage _loadRecursivePage(
              lower(node.name) || char(31) || node.id
       FROM index_nodes node
       JOIN subtree parent ON node.parent_id = parent.id
+      WHERE node.is_staging = 0
     ), entity_nodes AS (
       SELECT link.entity_id, MIN(subtree.hierarchy_path) AS hierarchy_path
       FROM index_node_entities link

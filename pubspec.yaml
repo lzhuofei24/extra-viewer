@@ -7,6 +7,7 @@ environment:
   sdk: ">=3.4.0 <4.0.0"
 
 dependencies:
+  liquid_glass_widgets: 1.6.1
   flutter:
     sdk: flutter
   archive: ^4.0.9

@@ -70,6 +70,29 @@ void main() {
     );
     expect(nextPage.entities.single.title, 'beta.jpg');
     expect(nextPage.hasMore, isFalse);
+    final collection = repository.ensureCollectionIndexRoot('Collection');
+    final entities = page.entities.followedBy(nextPage.entities).toList();
+    for (final entity in entities) {
+      repository.linkEntityToIndexNode(
+          entityId: entity.id, indexNodeId: collection.id);
+      repository.linkEntityToIndexNode(
+          entityId: entity.id, indexNodeId: child.id);
+    }
+    for (final scope in [
+      RecursiveReadScope.directoryHome,
+      RecursiveReadScope.collectionHome
+    ]) {
+      final first = await worker.loadRecursivePage(
+          scope: scope, sortMode: EntitySortMode.nameAsc, limit: 1);
+      final second = await worker.loadRecursivePage(
+          scope: scope,
+          sortMode: EntitySortMode.nameAsc,
+          limit: 1,
+          after: first.recursiveCursor);
+      expect(first.entities.single.title, 'alpha.jpg');
+      expect(second.entities.single.title, 'beta.jpg');
+      expect(second.hasMore, isFalse);
+    }
   });
 
   test('read worker loads persisted node previews without filesystem probes',

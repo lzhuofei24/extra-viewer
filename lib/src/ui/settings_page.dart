@@ -13,6 +13,8 @@ class SettingsPage extends StatelessWidget {
     required this.onThemeChanged,
     required this.onLayoutPresetChanged,
     this.onOpenDiagnostics,
+    this.glassTransparency = 40,
+    this.onGlassTransparencyChanged,
   });
 
   final ViewerThemeChoice themeChoice;
@@ -20,6 +22,8 @@ class SettingsPage extends StatelessWidget {
   final ValueChanged<ViewerThemeChoice> onThemeChanged;
   final ValueChanged<GalleryLayoutPreset> onLayoutPresetChanged;
   final VoidCallback? onOpenDiagnostics;
+  final int glassTransparency;
+  final ValueChanged<int>? onGlassTransparencyChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -85,6 +89,27 @@ class SettingsPage extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 18),
+        ListTile(
+          title: const Text('悬浮透明度'),
+          subtitle: const Text('数值越高，背景越通透'),
+          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+            IconButton(
+                tooltip: '降低透明度',
+                onPressed: glassTransparency <= 0
+                    ? null
+                    : () => onGlassTransparencyChanged
+                        ?.call((glassTransparency - 5).clamp(0, 90)),
+                icon: const Icon(Icons.remove)),
+            Text('$glassTransparency%'),
+            IconButton(
+                tooltip: '提高透明度',
+                onPressed: glassTransparency >= 90
+                    ? null
+                    : () => onGlassTransparencyChanged
+                        ?.call((glassTransparency + 5).clamp(0, 90)),
+                icon: const Icon(Icons.add)),
+          ]),
+        ),
         ListTile(
           title: const Text('诊断与日志'),
           subtitle: const Text('错误、接口调用与任务历史'),

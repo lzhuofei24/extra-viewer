@@ -148,6 +148,8 @@ class CollectionBrowserPage extends StatelessWidget {
             children: [
               Expanded(
                 child: _BrowserScrollShell(
+                  key: ValueKey(
+                      '${browserState.rootTab.name}:${currentNode?.id ?? "home"}:$immersiveBrowsing'),
                   warmupEnabled: !listMode ||
                       browserState.listStyle != BrowserListStyle.text,
                   preloadScopeKey:
@@ -158,6 +160,8 @@ class CollectionBrowserPage extends StatelessWidget {
                   selectionMode: selectionMode,
                   onSelectEntitiesByDrag: onSelectEntitiesByDrag,
                   child: (controller, selectionRegistry) => CustomScrollView(
+                    key: PageStorageKey(
+                        '${browserState.rootTab.name}:${currentNode?.id ?? "home"}:$immersiveBrowsing'),
                     controller: controller,
                     scrollCacheExtent: const ScrollCacheExtent.pixels(0),
                     slivers: [
@@ -407,6 +411,32 @@ class CollectionBrowserPage extends StatelessWidget {
                 child: FloatingGlassSurface(
                   borderRadius: 28,
                   child: _SelectionActionBar(
+                    managementActions: [
+                      if (canUpdateDirectoryNode)
+                        BrowserToolbarAction(
+                          label: '更新当前文件夹',
+                          icon: Icons.refresh_rounded,
+                          onPressed: onUpdateDirectoryNode,
+                        ),
+                      if (currentNode != null)
+                        BrowserToolbarAction(
+                          label: '复制结构到分类',
+                          icon: Icons.account_tree_outlined,
+                          onPressed: onCloneCurrentNodeTree,
+                        ),
+                      if (canManageCurrentCustomIndex)
+                        BrowserToolbarAction(
+                          label: '新建分类',
+                          icon: Icons.create_new_folder_outlined,
+                          onPressed: onCreateCollection,
+                        ),
+                      if (canDeleteCurrentNode)
+                        BrowserToolbarAction(
+                          label: '删除当前分类',
+                          icon: Icons.delete_outline_rounded,
+                          onPressed: onDeleteCurrentNode,
+                        ),
+                    ],
                     entityCount: selectedEntityIds.length,
                     nodeCount: selectedNodeIds.length,
                     onExit: onToggleSelectionMode,
@@ -433,6 +463,7 @@ class CollectionBrowserPage extends StatelessWidget {
 
 class _BrowserScrollShell extends StatefulWidget {
   const _BrowserScrollShell({
+    super.key,
     required this.warmupEnabled,
     required this.preloadScopeKey,
     required this.entities,
@@ -738,35 +769,9 @@ class _PathBar extends StatelessWidget {
       onListStyleChanged: onListStyleChanged,
       onSearch: onSearchNodes,
       immersive: immersiveBrowsing,
-      onToggleImmersive: currentNode == null ? null : onToggleImmersiveBrowsing,
+      onToggleImmersive: onToggleImmersiveBrowsing,
       selectionMode: selectionMode,
       onToggleSelection: onToggleSelectionMode,
-      moreActions: [
-        if (canUpdateDirectoryNode)
-          BrowserToolbarAction(
-            label: '更新当前文件夹',
-            icon: Icons.refresh_rounded,
-            onPressed: onUpdateDirectoryNode,
-          ),
-        if (currentNode != null)
-          BrowserToolbarAction(
-            label: '复制结构到分类',
-            icon: Icons.account_tree_outlined,
-            onPressed: onCloneCurrentNodeTree,
-          ),
-        if (canCreateNode)
-          BrowserToolbarAction(
-            label: '新建分类',
-            icon: Icons.create_new_folder_outlined,
-            onPressed: onCreateNode,
-          ),
-        if (canDeleteCurrentNode)
-          BrowserToolbarAction(
-            label: '删除当前分类',
-            icon: Icons.delete_outline_rounded,
-            onPressed: onDeleteCurrentNode,
-          ),
-      ],
     );
   }
 }
@@ -1011,6 +1016,7 @@ class _EntityListSliver extends StatelessWidget {
 
 class _SelectionActionBar extends StatelessWidget {
   const _SelectionActionBar({
+    required this.managementActions,
     required this.entityCount,
     required this.nodeCount,
     required this.onExit,
@@ -1025,6 +1031,7 @@ class _SelectionActionBar extends StatelessWidget {
     required this.onClearSelectedNodePreviewOverride,
   });
 
+  final List<BrowserToolbarAction> managementActions;
   final int entityCount;
   final int nodeCount;
   final VoidCallback onExit;
@@ -1047,6 +1054,18 @@ class _SelectionActionBar extends StatelessWidget {
         padding: const EdgeInsets.all(10),
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final management = MenuAnchor(
+              menuChildren: [
+                for (final action in managementActions)
+                  MenuItemButton(
+                      onPressed: action.onPressed, child: Text(action.label))
+              ],
+              builder: (context, controller, _) => TextButton(
+                  onPressed: () => controller.isOpen
+                      ? controller.close()
+                      : controller.open(),
+                  child: const Text('管理')),
+            );
             final hasSelection = entityCount > 0 || nodeCount > 0;
             final previewOnly = entityCount == 0 && nodeCount == 1;
             final count = Text('已选 $entityCount 个文件 | $nodeCount 个分组');
@@ -1099,6 +1118,7 @@ class _SelectionActionBar extends StatelessWidget {
                       child: const Text('更多'),
                     ),
                   ),
+                  if (managementActions.isNotEmpty) management,
                   add,
                   if (remove != null) remove,
                 ],
@@ -1110,6 +1130,7 @@ class _SelectionActionBar extends StatelessWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 count,
+                if (managementActions.isNotEmpty) management,
                 TextButton(onPressed: onExit, child: const Text('退出')),
                 TextButton(onPressed: onSelectAll, child: const Text('全选')),
                 TextButton(onPressed: onInvert, child: const Text('反选')),
@@ -1590,7 +1611,8 @@ class _HorizontalNodeRail extends StatelessWidget {
       height: 42,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
-        reverse: true,
+        key: ValueKey(children.map((entry) => entry.label).join('/')),
+        reverse: false,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [

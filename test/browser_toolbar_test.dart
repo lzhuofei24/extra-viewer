@@ -18,13 +18,6 @@ void main() {
           onSearch: () {},
           onToggleImmersive: () {},
           onToggleSelection: () {},
-          moreActions: [
-            BrowserToolbarAction(
-              label: '新建分类',
-              icon: Icons.create_new_folder_outlined,
-              onPressed: () {},
-            ),
-          ],
         ),
       ),
     ));
@@ -35,9 +28,8 @@ void main() {
     expect(find.text('新建分类'), findsNothing);
     await tester.tap(find.byTooltip('浏览选项'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('更多'));
-    await tester.pumpAndSettle();
-    expect(find.text('新建分类'), findsOneWidget);
+    expect(find.byIcon(Icons.more_vert_rounded), findsNothing);
+    expect(find.byTooltip('选择模式'), findsOneWidget);
     expect(find.text('排序'), findsNothing);
   });
 

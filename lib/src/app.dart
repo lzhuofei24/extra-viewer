@@ -80,6 +80,8 @@ class _BestViewerAppState extends State<BestViewerApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Extra Viewer',
+      builder: (context, child) => FloatingGlassPreference(
+          transparency: _preferences.value.glassTransparency, child: child!),
       debugShowCheckedModeBanner: false,
       theme: AppTokens.themeFor(ViewerThemeChoice.galleryLight),
       darkTheme: AppTokens.themeFor(ViewerThemeChoice.galleryDark),
@@ -717,10 +719,11 @@ class _AppShellState extends State<AppShell> {
       EntityPage? uncachedPage;
       if (recursiveBrowsing) {
         childNodes = const <IndexNode>[];
-        if (selectedRoot != null && currentNode != null && cached == null) {
+        if (cached == null) {
           final page = await _read(
             (worker) => worker.loadRecursivePage(
-              nodeId: currentNode.id,
+              nodeId: currentNode?.id,
+              scope: _recursiveScope(currentNode),
               sortMode: _browserState.sortMode,
               limit: _entityPageSize,
             ),
@@ -1006,8 +1009,10 @@ class _AppShellState extends State<AppShell> {
   Future<void> _loadMoreEntities() async {
     final root = _selectedIndexRoot;
     final node = _currentIndexNode;
-    if (root == null ||
-        node == null ||
+    final generation = _reloadGeneration;
+    final scope = _recursiveScope(node);
+    if ((node == null &&
+            _browserState.contentScope != BrowserContentScope.recursive) ||
         !_entitiesHasMore ||
         _loadingMoreEntities) {
       return;
@@ -1024,7 +1029,8 @@ class _AppShellState extends State<AppShell> {
       if (recursiveBrowsing) {
         final result = await _read(
           (worker) => worker.loadRecursivePage(
-            nodeId: node.id,
+            nodeId: node?.id,
+            scope: scope,
             sortMode: sortMode,
             after: _recursiveEntityCursor,
             limit: _entityPageSize,
@@ -1038,7 +1044,7 @@ class _AppShellState extends State<AppShell> {
       } else {
         final result = await _read(
           (worker) => worker.loadDirectPage(
-            parentNodeId: node.id,
+            parentNodeId: node!.id,
             sortMode: sortMode,
             after: after,
             limit: _entityPageSize,
@@ -1047,7 +1053,8 @@ class _AppShellState extends State<AppShell> {
         page = EntityPage(items: result.entities, hasMore: result.hasMore);
       }
       if (!mounted ||
-          node.id != _currentIndexNode?.id ||
+          generation != _reloadGeneration ||
+          node?.id != _currentIndexNode?.id ||
           sortMode != _browserState.sortMode ||
           recursiveBrowsing !=
               (_browserState.contentScope == BrowserContentScope.recursive)) {
@@ -1055,14 +1062,16 @@ class _AppShellState extends State<AppShell> {
       }
       final combined =
           List<EntityListItem>.unmodifiable([..._entities, ...page.items]);
-      final key = BrowserNodeCacheKey(
-        indexRootId: root.id,
-        nodeId: node.id,
-        sortMode: sortMode,
-        recursive: recursiveBrowsing,
-      );
-      final existing = _browserNodeCache.get(key);
-      if (existing != null) {
+      final key = root == null || node == null
+          ? null
+          : BrowserNodeCacheKey(
+              indexRootId: root.id,
+              nodeId: node.id,
+              sortMode: sortMode,
+              recursive: recursiveBrowsing,
+            );
+      final existing = key == null ? null : _browserNodeCache.get(key);
+      if (existing != null && key != null) {
         _browserNodeCache.put(
           key,
           EntityPageSnapshot(
@@ -1267,8 +1276,13 @@ class _AppShellState extends State<AppShell> {
     return true;
   }
 
+  RecursiveReadScope _recursiveScope(IndexNode? node) => node != null
+      ? RecursiveReadScope.node
+      : _browserState.rootTab == BrowserRootTab.directory
+          ? RecursiveReadScope.directoryHome
+          : RecursiveReadScope.collectionHome;
+
   void _toggleImmersiveBrowsing() {
-    if (_currentIndexNode == null) return;
     final enteringImmersive =
         _browserState.contentScope != BrowserContentScope.recursive;
     setState(() {
@@ -1833,11 +1847,6 @@ class _AppShellState extends State<AppShell> {
         _restoreExpandedMiniPlayerAfterSelection = false;
       }
       _selection.toggleMode();
-      if (_selection.enabled) {
-        _browserState = _browserState.copyWith(
-          displayMode: BrowserDisplayMode.grid,
-        );
-      }
     });
   }
 
@@ -1847,9 +1856,6 @@ class _AppShellState extends State<AppShell> {
         _restoreExpandedMiniPlayerAfterSelection = !_miniPlayerCollapsed;
         _miniPlayerCollapsed = true;
       }
-      _browserState = _browserState.copyWith(
-        displayMode: BrowserDisplayMode.grid,
-      );
       _selection.startEntity(entity.id);
     });
   }
@@ -1868,9 +1874,6 @@ class _AppShellState extends State<AppShell> {
     final items = entities.toList(growable: false);
     if (items.isEmpty) return;
     setState(() {
-      _browserState = _browserState.copyWith(
-        displayMode: BrowserDisplayMode.grid,
-      );
       _selection.addDraggedEntities(items.map((entity) => entity.id));
     });
   }
@@ -2765,6 +2768,8 @@ class _AppShellState extends State<AppShell> {
           ),
         ),
       AppSection.settings => SettingsPage(
+          glassTransparency: widget.preferences.value.glassTransparency,
+          onGlassTransparencyChanged: widget.preferences.setGlassTransparency,
           onOpenDiagnostics: () => _navigateToSection(AppSection.logs),
           themeChoice: widget.preferences.value.themeChoice,
           layoutPreset: widget.preferences.value.layoutPreset,

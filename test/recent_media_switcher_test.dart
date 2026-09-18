@@ -20,7 +20,7 @@ void main() {
     for (final label in ['图片', '视频', '阅读', '音乐']) {
       expect(find.text(label), findsOneWidget);
     }
-    expect(find.byType(BackdropFilter), findsOneWidget);
+    expect(find.byType(FloatingGlassSurface), findsOneWidget);
 
     await tester.tap(find.text('音乐'));
     expect(selected, AppSection.music);

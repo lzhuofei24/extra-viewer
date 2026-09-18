@@ -37,7 +37,7 @@ void main() {
       expect(selectedRootTab, entry.value);
     }
     expect(find.byTooltip('收起功能栏'), findsNothing);
-    expect(find.byType(BackdropFilter), findsOneWidget);
+    expect(find.byType(FloatingGlassSurface), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -67,7 +67,7 @@ void main() {
     for (final label in ['目录', '分类', '最近', '管理', '设置']) {
       expect(find.text(label), findsOneWidget);
     }
-    expect(find.byType(BackdropFilter), findsOneWidget);
+    expect(find.byType(FloatingGlassSurface), findsOneWidget);
     expect(find.byTooltip('收起功能栏'), findsNothing);
 
     await tester.tap(find.text('设置'));

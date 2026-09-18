@@ -11,6 +11,7 @@ import 'gallery_layout_settings.dart';
 @immutable
 class AppPreferencesData {
   const AppPreferencesData({
+    this.glassTransparency = 40,
     this.themeChoice = ViewerThemeChoice.system,
     this.sortMode = EntitySortMode.nameAsc,
     this.displayMode = BrowserDisplayMode.grid,
@@ -19,6 +20,7 @@ class AppPreferencesData {
     this.layoutPreset = GalleryLayoutPreset.standard,
   });
 
+  final int glassTransparency;
   final ViewerThemeChoice themeChoice;
   final EntitySortMode sortMode;
   final BrowserDisplayMode displayMode;
@@ -28,6 +30,7 @@ class AppPreferencesData {
   GalleryLayoutSettings get layout => layoutPreset.settings;
 
   AppPreferencesData copyWith({
+    int? glassTransparency,
     ViewerThemeChoice? themeChoice,
     EntitySortMode? sortMode,
     BrowserDisplayMode? displayMode,
@@ -36,6 +39,8 @@ class AppPreferencesData {
     GalleryLayoutPreset? layoutPreset,
   }) =>
       AppPreferencesData(
+        glassTransparency:
+            (glassTransparency ?? this.glassTransparency).clamp(0, 90),
         themeChoice: themeChoice ?? this.themeChoice,
         sortMode: sortMode ?? this.sortMode,
         displayMode: displayMode ?? this.displayMode,
@@ -68,6 +73,9 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
 
   @override
   Future<AppPreferencesData> load() async => AppPreferencesData(
+        glassTransparency:
+            (_preferences.getInt('preferences.glassTransparency') ?? 40)
+                .clamp(0, 90),
         themeChoice: _enumValue(
           ViewerThemeChoice.values,
           _preferences.getString(_themeKey),
@@ -100,6 +108,8 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
   @override
   Future<void> save(AppPreferencesData value) async {
     await Future.wait([
+      _preferences.setInt(
+          'preferences.glassTransparency', value.glassTransparency),
       _preferences.setString(_themeKey, value.themeChoice.name),
       _preferences.setString(_sortKey, value.sortMode.name),
       _preferences.setString(_displayKey, value.displayMode.name),
@@ -140,6 +150,9 @@ class AppPreferencesController extends ChangeNotifier {
   Future<void> _pendingWrite = Future<void>.value();
 
   AppPreferencesData get value => _value;
+
+  void setGlassTransparency(int value) =>
+      _update(_value.copyWith(glassTransparency: value));
 
   void setTheme(ViewerThemeChoice value) =>
       _update(_value.copyWith(themeChoice: value));

@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import 'package:flutter/material.dart';
 
@@ -128,6 +129,22 @@ class AppNavigationObstruction extends InheritedWidget {
       oldWidget.bottom != bottom;
 }
 
+class FloatingGlassPreference extends InheritedWidget {
+  const FloatingGlassPreference(
+      {super.key, required this.transparency, required super.child});
+  final int transparency;
+  static double opacityOf(BuildContext context) =>
+      1 -
+      (context
+                  .dependOnInheritedWidgetOfExactType<FloatingGlassPreference>()
+                  ?.transparency ??
+              40) /
+          100;
+  @override
+  bool updateShouldNotify(FloatingGlassPreference oldWidget) =>
+      oldWidget.transparency != transparency;
+}
+
 class FloatingGlassSurface extends StatelessWidget {
   const FloatingGlassSurface({
     super.key,
@@ -146,23 +163,24 @@ class FloatingGlassSurface extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final colors = Theme.of(context).colorScheme;
+    final opacity = FloatingGlassPreference.opacityOf(context);
     return RepaintBoundary(
-      child: DecoratedBox(
-        decoration: _glassShadow(theme, borderRadius),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(borderRadius),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(
-              sigmaX: blurSigma,
-              sigmaY: blurSigma,
-            ),
-            child: DecoratedBox(
-              decoration: _glassSurface(theme, borderRadius),
-              child: Padding(padding: padding, child: child),
-            ),
-          ),
+      child: GlassContainer(
+        useOwnLayer: true,
+        quality: ImageFilter.isShaderFilterSupported
+            ? GlassQuality.premium
+            : GlassQuality.minimal,
+        shape: LiquidRoundedSuperellipse(borderRadius: borderRadius),
+        settings: LiquidGlassSettings(
+          glassColor: colors.surface.withValues(alpha: opacity * .45),
+          blur: 8,
+          thickness: 20,
+          saturation: 1.2,
+          lightIntensity: .5,
+          chromaticAberration: .01,
         ),
+        child: Padding(padding: padding, child: child),
       ),
     );
   }
@@ -218,36 +236,6 @@ class _BottomNavigation extends StatelessWidget {
         ),
       );
 }
-
-BoxDecoration _glassSurface(ThemeData theme, double radius) {
-  final isDark = theme.brightness == Brightness.dark;
-  return BoxDecoration(
-    color: theme.colorScheme.surface.withValues(
-      alpha: isDark
-          ? FloatingGlassSurface.darkSurfaceAlpha
-          : FloatingGlassSurface.lightSurfaceAlpha,
-    ),
-    borderRadius: BorderRadius.circular(radius),
-    border: Border.all(
-      color: theme.colorScheme.outlineVariant
-          .withValues(alpha: isDark ? 0.4 : 0.55),
-      width: 0.7,
-    ),
-  );
-}
-
-BoxDecoration _glassShadow(ThemeData theme, double radius) => BoxDecoration(
-      borderRadius: BorderRadius.circular(radius),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withValues(
-            alpha: theme.brightness == Brightness.dark ? 0.28 : 0.16,
-          ),
-          blurRadius: 24,
-          offset: const Offset(0, 8),
-        ),
-      ],
-    );
 
 class _BottomDestinationButton extends StatelessWidget {
   const _BottomDestinationButton({

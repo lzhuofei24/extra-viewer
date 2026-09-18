@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'src/app.dart';
@@ -42,6 +43,7 @@ Future<void> main() async {
         return true;
       };
       MediaKit.ensureInitialized();
+      await LiquidGlassWidgets.initialize();
       AppDiagnosticLog.instance.info('media_kit_initialized');
       late final AppPreferencesController preferences;
       try {
@@ -56,7 +58,9 @@ Future<void> main() async {
         );
         preferences = AppPreferencesController.memory();
       }
-      runApp(BestViewerApp(preferences: preferences));
+      runApp(LiquidGlassWidgets.wrap(
+          brightnessResolver: Theme.maybeBrightnessOf,
+          child: BestViewerApp(preferences: preferences)));
     },
     (error, stackTrace) {
       AppDiagnosticLog.instance.error('uncaught_zone_error', error, stackTrace);
