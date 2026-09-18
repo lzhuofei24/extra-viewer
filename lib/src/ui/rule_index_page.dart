@@ -230,6 +230,10 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
         layoutPreset: widget.preferences.value.layoutPreset,
         onLayoutPresetChanged: widget.preferences.setLayoutPreset,
         onSearch: widget.onSearch,
+        onFolderCoverChanged: rule == null
+            ? (value) => widget.onBrowserStateChanged(
+                widget.browserState.copyWith(folderCoverStyle: value))
+            : null,
         onAdd: rule == null ? widget.onCreateRule : null,
         addLabel: '新建规则',
         onToggleImmersive:
@@ -267,6 +271,7 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
     }
     final rules = {for (final rule in _controller.rules) rule.node.id: rule};
     return BrowserNodeGridSliver(
+      folderCoverStyle: widget.browserState.folderCoverStyle,
       nodes: _controller.rules.map((r) => r.node).toList(),
       summaries: const {},
       previews: const {},

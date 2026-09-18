@@ -34,6 +34,7 @@ class BrowserToolbar extends StatelessWidget {
     required this.onThemeChanged,
     required this.layoutPreset,
     required this.onLayoutPresetChanged,
+    this.onFolderCoverChanged,
     this.onSearch,
     this.onAdd,
     this.addLabel = '添加',
@@ -58,6 +59,7 @@ class BrowserToolbar extends StatelessWidget {
   final ValueChanged<ViewerThemeChoice> onThemeChanged;
   final GalleryLayoutPreset layoutPreset;
   final ValueChanged<GalleryLayoutPreset> onLayoutPresetChanged;
+  final ValueChanged<FolderCoverStyle>? onFolderCoverChanged;
   final VoidCallback? onSearch;
   final VoidCallback? onAdd;
   final String addLabel;
@@ -101,6 +103,7 @@ class BrowserToolbar extends StatelessWidget {
                 ),
               const SizedBox(width: 4),
               _BrowserOptionsMenu(
+                onFolderCoverChanged: onFolderCoverChanged,
                 allowSorting: allowSorting,
                 allowGridStyle: allowGridStyle,
                 sortDescription: sortDescription,
@@ -157,6 +160,7 @@ class BrowserToolbar extends StatelessWidget {
 
 class _BrowserOptionsMenu extends StatelessWidget {
   const _BrowserOptionsMenu({
+    this.onFolderCoverChanged,
     required this.allowSorting,
     required this.allowGridStyle,
     this.sortDescription,
@@ -172,6 +176,7 @@ class _BrowserOptionsMenu extends StatelessWidget {
   });
 
   final bool allowSorting, allowGridStyle;
+  final ValueChanged<FolderCoverStyle>? onFolderCoverChanged;
   final String? sortDescription;
   final BrowserState browserState;
   final ValueChanged<EntitySortMode> onSortChanged;
@@ -277,6 +282,18 @@ class _BrowserOptionsMenu extends StatelessWidget {
                         selected: browserState.listStyle,
                         onSelected: onListStyleChanged,
                       ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (browserState.displayMode == BrowserDisplayMode.grid &&
+                      onFolderCoverChanged != null) ...[
+                    Text('文件夹封面', style: labelStyle),
+                    const SizedBox(height: 6),
+                    _GlassOptionSelector<FolderCoverStyle>(
+                      values: FolderCoverStyle.values,
+                      labels: const ['自动', '方形', '叠加'],
+                      selected: browserState.folderCoverStyle,
+                      onSelected: onFolderCoverChanged!,
+                    ),
                     const SizedBox(height: 12),
                   ],
                   Text('主题', style: labelStyle),

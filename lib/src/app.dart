@@ -238,6 +238,7 @@ class _AppShellState extends State<AppShell> {
       displayMode: preferences.displayMode,
       gridLayout: preferences.gridLayout,
       listStyle: preferences.listStyle,
+      folderCoverStyle: preferences.folderCoverStyle,
     );
     _registerRuntimeResources();
     _indexPathController = TextEditingController();
@@ -1529,6 +1530,7 @@ class _AppShellState extends State<AppShell> {
       displayMode: value.displayMode,
       gridLayout: value.gridLayout,
       listStyle: value.listStyle,
+      folderCoverStyle: value.folderCoverStyle,
     );
   }
 
@@ -2963,6 +2965,11 @@ class _AppShellState extends State<AppShell> {
 
     final pageBody = switch (_section) {
       AppSection.data => CollectionBrowserPage(
+          onFolderCoverChanged: (value) {
+            setState(() => _browserState =
+                _browserState.copyWith(folderCoverStyle: value));
+            widget.preferences.setBrowser(folderCoverStyle: value);
+          },
           onSearchNodes: _searchNodes,
           currentNode: _currentIndexNode,
           loading: _navigationLoading,

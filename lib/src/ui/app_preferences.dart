@@ -15,6 +15,7 @@ class AppPreferencesData {
     this.sortMode = EntitySortMode.nameAsc,
     this.displayMode = BrowserDisplayMode.grid,
     this.gridLayout = BrowserGridLayout.equalHeight,
+    this.folderCoverStyle = FolderCoverStyle.automatic,
     this.listStyle = BrowserListStyle.normal,
     this.layoutPreset = GalleryLayoutPreset.standard,
   });
@@ -23,6 +24,7 @@ class AppPreferencesData {
   final EntitySortMode sortMode;
   final BrowserDisplayMode displayMode;
   final BrowserGridLayout gridLayout;
+  final FolderCoverStyle folderCoverStyle;
   final BrowserListStyle listStyle;
   final GalleryLayoutPreset layoutPreset;
   GalleryLayoutSettings get layout => layoutPreset.settings;
@@ -33,6 +35,7 @@ class AppPreferencesData {
     BrowserDisplayMode? displayMode,
     BrowserGridLayout? gridLayout,
     BrowserListStyle? listStyle,
+    FolderCoverStyle? folderCoverStyle,
     GalleryLayoutPreset? layoutPreset,
   }) =>
       AppPreferencesData(
@@ -40,6 +43,7 @@ class AppPreferencesData {
         sortMode: sortMode ?? this.sortMode,
         displayMode: displayMode ?? this.displayMode,
         gridLayout: gridLayout ?? this.gridLayout,
+        folderCoverStyle: folderCoverStyle ?? this.folderCoverStyle,
         listStyle: listStyle ?? this.listStyle,
         layoutPreset: layoutPreset ?? this.layoutPreset,
       );
@@ -63,6 +67,7 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
   static const _sortKey = 'preferences.browser.sort';
   static const _displayKey = 'preferences.browser.display';
   static const _layoutKey = 'preferences.browser.layout';
+  static const _folderCoverKey = 'preferences.browser.folderCover';
   static const _listStyleKey = 'preferences.browser.listStyle';
   static const _galleryPresetKey = 'preferences.gallery.preset';
 
@@ -88,6 +93,10 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
           _preferences.getString(_layoutKey),
           BrowserGridLayout.equalHeight,
         ),
+        folderCoverStyle: _enumValue(
+            FolderCoverStyle.values,
+            _preferences.getString(_folderCoverKey),
+            FolderCoverStyle.automatic),
         listStyle: _enumValue(BrowserListStyle.values,
             _preferences.getString(_listStyleKey), BrowserListStyle.normal),
         layoutPreset: _enumValue(
@@ -104,6 +113,7 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
       _preferences.setString(_sortKey, value.sortMode.name),
       _preferences.setString(_displayKey, value.displayMode.name),
       _preferences.setString(_layoutKey, value.gridLayout.name),
+      _preferences.setString(_folderCoverKey, value.folderCoverStyle.name),
       _preferences.setString(_listStyleKey, value.listStyle.name),
       _preferences.setString(_galleryPresetKey, value.layoutPreset.name),
     ]);
@@ -149,12 +159,14 @@ class AppPreferencesController extends ChangeNotifier {
     BrowserDisplayMode? displayMode,
     BrowserGridLayout? gridLayout,
     BrowserListStyle? listStyle,
+    FolderCoverStyle? folderCoverStyle,
   }) =>
       _update(_value.copyWith(
         sortMode: sortMode,
         displayMode: displayMode,
         gridLayout: gridLayout,
         listStyle: listStyle,
+        folderCoverStyle: folderCoverStyle,
       ));
 
   void setLayoutPreset(GalleryLayoutPreset value) =>

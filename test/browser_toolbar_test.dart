@@ -19,6 +19,7 @@ void main() {
           onDisplayModeChanged: (_) {},
           onGridLayoutChanged: (_) {},
           onListStyleChanged: (_) {},
+          onFolderCoverChanged: (_) {},
           themeChoice: ViewerThemeChoice.system,
           onThemeChanged: (_) {},
           layoutPreset: GalleryLayoutPreset.standard,
@@ -47,6 +48,9 @@ void main() {
     expect(anchor.clipBehavior, Clip.none);
     expect(anchor.style!.backgroundColor!.resolve({}), Colors.transparent);
     expect(find.text('样式'), findsOneWidget);
+    expect(find.text('文件夹封面'), findsOneWidget);
+    expect(find.text('自动'), findsOneWidget);
+    expect(find.text('叠加'), findsOneWidget);
     expect(find.text('主题'), findsOneWidget);
     expect(find.text('布局'), findsOneWidget);
     expect(find.text('新建分类'), findsNothing);
@@ -64,6 +68,7 @@ void main() {
           leading: const Text('位置'),
           browserState:
               const BrowserState(displayMode: BrowserDisplayMode.list),
+          onFolderCoverChanged: (_) {},
           onSortChanged: (_) {},
           onDisplayModeChanged: (_) {},
           onGridLayoutChanged: (_) {},
@@ -78,6 +83,7 @@ void main() {
     await tester.tap(find.byTooltip('浏览选项'));
     await tester.pumpAndSettle();
     expect(find.text('显示'), findsOneWidget);
+    expect(find.text('文件夹封面'), findsNothing);
     expect(find.text('文本'), findsOneWidget);
     expect(find.text('紧凑'), findsNWidgets(2));
     expect(find.text('正常'), findsOneWidget);

@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import '../core/domain/models.dart';
 import 'gallery_layout_settings.dart';
+import 'browser_state.dart';
 import 'index_node_thumbnail.dart';
 
 class BrowserNodeGridSliver extends StatelessWidget {
   const BrowserNodeGridSliver({
     super.key,
+    this.folderCoverStyle = FolderCoverStyle.automatic,
     this.coverBuilder,
     this.coverAspectRatio,
     this.countLabel,
@@ -22,6 +24,7 @@ class BrowserNodeGridSliver extends StatelessWidget {
     required this.layoutSettings,
   });
 
+  final FolderCoverStyle folderCoverStyle;
   final Widget Function(IndexNode, bool)? coverBuilder;
   final double Function(IndexNode)? coverAspectRatio;
   final String Function(IndexNode)? countLabel, description;
@@ -38,6 +41,7 @@ class BrowserNodeGridSliver extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => _JustifiedNodeGridSliver(
+        folderCoverStyle: folderCoverStyle,
         coverBuilder: coverBuilder,
         coverAspectRatio: coverAspectRatio,
         countLabel: countLabel,
@@ -57,6 +61,7 @@ class BrowserNodeGridSliver extends StatelessWidget {
 
 class _JustifiedNodeGridSliver extends StatelessWidget {
   const _JustifiedNodeGridSliver({
+    this.folderCoverStyle = FolderCoverStyle.automatic,
     this.coverBuilder,
     this.coverAspectRatio,
     this.countLabel,
@@ -73,6 +78,7 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
     required this.layoutSettings,
   });
 
+  final FolderCoverStyle folderCoverStyle;
   final Widget Function(IndexNode, bool)? coverBuilder;
   final double Function(IndexNode)? coverAspectRatio;
   final String Function(IndexNode)? countLabel, description;
@@ -93,12 +99,16 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
     final margin = layoutSettings.pageMargin;
     final targetHeight = layoutSettings.folderHeight;
     final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
-    if (portrait) {
+    final square = folderCoverStyle == FolderCoverStyle.square ||
+        (folderCoverStyle == FolderCoverStyle.automatic && portrait);
+    if (square) {
       return SliverPadding(
         padding: EdgeInsets.fromLTRB(margin, 0, margin, margin),
         sliver: SliverGrid.builder(
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: layoutSettings.portraitFolderColumns,
+            crossAxisCount: portrait
+                ? layoutSettings.portraitFolderColumns
+                : layoutSettings.landscapeSquareColumns,
             mainAxisSpacing: gap,
             crossAxisSpacing: gap,
           ),

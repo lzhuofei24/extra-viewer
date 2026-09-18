@@ -23,6 +23,7 @@ class CollectionBrowserPage extends StatelessWidget {
     this.loadError,
     this.onRetry,
     this.onSearchNodes,
+    this.onFolderCoverChanged,
     this.onAdd,
     this.addLabel = '添加',
     required this.currentNode,
@@ -86,6 +87,7 @@ class CollectionBrowserPage extends StatelessWidget {
   final VoidCallback? onRetry;
   final IndexNode? currentNode;
   final VoidCallback? onSearchNodes;
+  final ValueChanged<FolderCoverStyle>? onFolderCoverChanged;
   final VoidCallback? onAdd;
   final String addLabel;
   final List<IndexNode> nodePath;
@@ -202,6 +204,7 @@ class CollectionBrowserPage extends StatelessWidget {
                               horizontalPadding: layoutSettings.pageMargin,
                             )
                           : BrowserNodeGridSliver(
+                              folderCoverStyle: browserState.folderCoverStyle,
                               nodes: visibleNodes,
                               summaries: nodeSummaries,
                               previews: nodePreviews,
@@ -228,6 +231,7 @@ class CollectionBrowserPage extends StatelessWidget {
                               horizontalPadding: layoutSettings.pageMargin,
                             )
                           : BrowserNodeGridSliver(
+                              folderCoverStyle: browserState.folderCoverStyle,
                               nodes: childNodes,
                               summaries: nodeSummaries,
                               previews: nodePreviews,
@@ -323,6 +327,7 @@ class CollectionBrowserPage extends StatelessWidget {
       ),
       toolbar: _PathBar(
         onAdd: onAdd,
+        onFolderCoverChanged: onFolderCoverChanged,
         addLabel: addLabel,
         onSearchNodes: onSearchNodes,
         currentNode: currentNode,
@@ -402,6 +407,7 @@ class CollectionBrowserPage extends StatelessWidget {
 class _PathBar extends StatelessWidget {
   const _PathBar({
     this.onSearchNodes,
+    this.onFolderCoverChanged,
     this.onAdd,
     this.addLabel = '添加',
     required this.currentNode,
@@ -433,6 +439,7 @@ class _PathBar extends StatelessWidget {
   final IndexNode? currentNode;
   final List<IndexNode> path;
   final VoidCallback? onSearchNodes;
+  final ValueChanged<FolderCoverStyle>? onFolderCoverChanged;
   final VoidCallback? onAdd;
   final String addLabel;
   final VoidCallback onOpenRootIndex;
@@ -478,6 +485,7 @@ class _PathBar extends StatelessWidget {
       onLayoutPresetChanged: onLayoutPresetChanged,
       onSearch: onSearchNodes,
       onAdd: onAdd,
+      onFolderCoverChanged: onFolderCoverChanged,
       addLabel: addLabel,
       immersive: immersiveBrowsing,
       onToggleImmersive: onToggleImmersiveBrowsing,

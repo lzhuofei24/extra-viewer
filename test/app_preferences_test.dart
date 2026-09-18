@@ -20,6 +20,7 @@ void main() {
     expect(initial.displayMode, BrowserDisplayMode.grid);
     expect(initial.gridLayout, BrowserGridLayout.equalHeight);
     expect(initial.layoutPreset, GalleryLayoutPreset.standard);
+    expect(initial.folderCoverStyle, FolderCoverStyle.automatic);
     expect(initial.layout, const GalleryLayoutSettings());
 
     await store.save(initial.copyWith(
@@ -28,6 +29,7 @@ void main() {
       displayMode: BrowserDisplayMode.list,
       gridLayout: BrowserGridLayout.square,
       listStyle: BrowserListStyle.compact,
+      folderCoverStyle: FolderCoverStyle.stacked,
       layoutPreset: GalleryLayoutPreset.compact,
     ));
     final restored = await store.load();
@@ -36,6 +38,7 @@ void main() {
     expect(restored.displayMode, BrowserDisplayMode.list);
     expect(restored.gridLayout, BrowserGridLayout.square);
     expect(restored.listStyle, BrowserListStyle.compact);
+    expect(restored.folderCoverStyle, FolderCoverStyle.stacked);
     expect(restored.layoutPreset, GalleryLayoutPreset.compact);
     expect(restored.layout.portraitFolderColumns, 4);
   });
