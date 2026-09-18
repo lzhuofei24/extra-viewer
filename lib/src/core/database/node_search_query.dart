@@ -15,13 +15,10 @@ NodeSearchPage queryNodes(Database database, NodeSearchQuery query) {
         'directory_index_root',
         'folder',
         'category_index_root',
-        'category',
-        'graph_index_root',
-        'graph_node'
+        'category'
       ],
     NodeSearchScope.directory => const ['directory_index_root', 'folder'],
     NodeSearchScope.collection => const ['category_index_root', 'category'],
-    NodeSearchScope.graph => const ['graph_index_root', 'graph_node'],
   };
   final fts = text.runes.length >= 3;
   // Rank and page before loading breadcrumbs; only one page crosses the isolate.

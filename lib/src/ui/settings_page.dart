@@ -114,12 +114,12 @@ class SettingsPage extends StatelessWidget {
         ),
         const SizedBox(height: 18),
         _SettingsCard(
-          title: '本地索引数据',
+          title: '本地资料数据',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '重置会删除本应用的索引、构建任务、缩略图和播放缓存。真实资料文件不会被删除或修改。',
+                '清除后会删除本应用保存的目录、分类、预览图和播放缓存。原始文件不会被删除或修改。',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
@@ -131,7 +131,7 @@ class SettingsPage extends StatelessWidget {
                   foregroundColor: theme.colorScheme.error,
                 ),
                 icon: const Icon(Icons.delete_sweep_outlined),
-                label: const Text('重置本地索引数据'),
+                label: const Text('清除本地资料数据'),
               ),
             ],
           ),

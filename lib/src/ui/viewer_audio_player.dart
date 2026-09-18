@@ -270,7 +270,7 @@ class _AudioPlaybackDeckState extends State<AudioPlaybackDeck> {
                   icon: Icons.replay_10_rounded,
                 ),
                 _compactIconButton(
-                  tooltip: '上一个实体',
+                  tooltip: '上一首',
                   onPressed: widget.onPrevious,
                   icon: Icons.skip_previous_rounded,
                 ),
@@ -287,7 +287,7 @@ class _AudioPlaybackDeckState extends State<AudioPlaybackDeck> {
                   ),
                 ),
                 _compactIconButton(
-                  tooltip: '下一个实体',
+                  tooltip: '下一首',
                   onPressed: widget.onNext,
                   icon: Icons.skip_next_rounded,
                 ),
@@ -886,4 +886,3 @@ class _WaveformBar {
   final double top;
   final double bottom;
 }
-

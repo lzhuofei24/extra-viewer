@@ -61,4 +61,3 @@ class _LibraryOverlayCenterStage extends StatelessWidget {
     );
   }
 }
-

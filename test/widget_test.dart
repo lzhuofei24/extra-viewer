@@ -13,7 +13,7 @@ void main() {
     // Database startup uses real isolate messages, which fake timer pumps do
     // not advance. Give the worker a bounded real-time startup window.
     for (var attempt = 0;
-        attempt < 100 && find.text('目录索引').evaluate().isEmpty;
+        attempt < 100 && find.text('目录').evaluate().isEmpty;
         attempt++) {
       await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 50)));
@@ -21,9 +21,8 @@ void main() {
     }
 
     await tester.pump(const Duration(seconds: 1));
-    expect(find.text('目录索引'), findsWidgets);
-    expect(find.text('树索引'), findsOneWidget);
-    expect(find.text('图索引'), findsOneWidget);
+    expect(find.text('目录'), findsWidgets);
+    expect(find.text('分类'), findsOneWidget);
     expect(find.text('最近'), findsOneWidget);
     expect(find.text('管理'), findsOneWidget);
     expect(find.text('宠物'), findsNothing);

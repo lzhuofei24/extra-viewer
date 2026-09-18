@@ -528,17 +528,6 @@ String _nodePreviewAudioTitle(EntityListItem entity) {
   return extension.isEmpty ? title : p.basenameWithoutExtension(title);
 }
 
-IndexNodeEdge _edgeFromRow(Row row) {
-  return IndexNodeEdge(
-    id: row['id'] as String,
-    fromNodeId: row['from_node_id'] as String,
-    toNodeId: row['to_node_id'] as String,
-    edgeType: row['edge_type'] as String,
-    label: row['label'] as String?,
-    sortOrder: row['sort_order'] as int,
-  );
-}
-
 EntityListItem _listItemFromRow(Row row, ThumbnailStore thumbnailStore) {
   final entity = _entityFromRow(row, thumbnailStore);
   return EntityListItem(
@@ -651,8 +640,7 @@ bool _pathsOverlap(String left, String right) {
 }
 
 bool _isTopLevelIndexRootType(NodeType nodeType) {
-  return nodeType == NodeType.customIndexRoot ||
-      nodeType == NodeType.graphIndexRoot;
+  return nodeType == NodeType.customIndexRoot;
 }
 
 String _indexNameForRoot(String rootPath, {String? displayName}) {
@@ -716,18 +704,6 @@ void _validateNonNegativeInt(int value, String argumentName) {
       'Entity $argumentName cannot be negative',
     );
   }
-}
-
-String _normalizeEdgeType(String edgeType) {
-  final normalized = edgeType.trim();
-  if (normalized.isEmpty) {
-    throw ArgumentError.value(
-      edgeType,
-      'edgeType',
-      'Index node edge type cannot be empty',
-    );
-  }
-  return normalized;
 }
 
 String? _normalizeOptionalText(String? value) {

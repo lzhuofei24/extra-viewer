@@ -30,12 +30,12 @@ class MusicPage extends StatelessWidget {
         children: [
           Text('音乐', style: Theme.of(context).textTheme.headlineMedium),
           const SizedBox(height: 6),
-          Text('当前播放与保留的节点歌单', style: Theme.of(context).textTheme.bodyMedium),
+          Text('当前播放与保存的歌单', style: Theme.of(context).textTheme.bodyMedium),
           const SizedBox(height: 22),
           if (sessions.isEmpty)
             const Padding(
               padding: EdgeInsets.only(top: 70),
-              child: Center(child: Text('从任意索引节点打开一首音频后，歌单会保留在这里。')),
+              child: Center(child: Text('从目录或分类中打开一首音频后，歌单会保留在这里。')),
             ),
           for (final session in sessions)
             Padding(

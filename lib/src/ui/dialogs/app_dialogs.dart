@@ -110,7 +110,7 @@ class _DirectoryIndexDialogState extends State<DirectoryIndexDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('新建目录索引'),
+      title: const Text('添加目录'),
       content: SizedBox(
         width: 460,
         child: Column(
@@ -128,7 +128,7 @@ class _DirectoryIndexDialogState extends State<DirectoryIndexDialog> {
               controller: _controller,
               autofocus: true,
               decoration: const InputDecoration(
-                labelText: '索引名称（可选）',
+                labelText: '显示名称（可选）',
                 hintText: '默认使用目录最后一级名称',
               ),
               onSubmitted: (_) => _submit(),
@@ -141,7 +141,7 @@ class _DirectoryIndexDialogState extends State<DirectoryIndexDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
-        FilledButton(onPressed: _submit, child: const Text('建立索引')),
+        FilledButton(onPressed: _submit, child: const Text('开始扫描')),
       ],
     );
   }

@@ -28,7 +28,7 @@ part 'audio_playback_repository.dart';
 /// This class is a thin facade that combines domain-specific mixins:
 /// - [EntityRepositoryMixin] — entity CRUD and lookup
 /// - [ThumbnailRepositoryMixin] — thumbnail status and asset lifecycle
-/// - [IndexNodeRepositoryMixin] — index node CRUD, graph, tree traversal
+/// - [IndexNodeRepositoryMixin] — index node CRUD and tree traversal
 /// - [IndexBuildMixin] — directory index scan lifecycle
 /// - [NodePreviewRepositoryMixin] — node preview cache and overrides
 /// - [IndexStatsRepositoryMixin] — aggregated entity counts

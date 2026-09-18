@@ -9,7 +9,7 @@ void main() {
     final database = AppDatabase.openInMemory();
     addTearDown(database.close);
     final repository = LibraryRepository(database);
-    final directory = await repository.ensureDirectoryIndexRoot('/media');
+    final directory = repository.ensureDirectoryIndexRoot('/media');
     final child = await repository.ensureDirectoryFolderAsync(
       parentId: directory.id,
       name: '银狼资料',
@@ -21,17 +21,21 @@ void main() {
     expect(result.items.single.breadcrumb.map((node) => node.name),
         ['media', '银狼资料']);
 
-    final graph = await repository.ensureGraphIndexRoot('图谱');
-    await repository.ensureGraphNode(parentId: graph.id, name: '银狼资料');
+    final collection = repository.ensureCollectionIndexRoot('游戏资料');
+    repository.createCustomNode(parentId: collection.id, name: '银狼资料');
     expect(
-      queryNodes(database.db,
-              const NodeSearchQuery(text: '银狼资', scope: NodeSearchScope.graph))
-          .items,
+      queryNodes(
+        database.db,
+        const NodeSearchQuery(
+          text: '银狼资',
+          scope: NodeSearchScope.collection,
+        ),
+      ).items,
       hasLength(1),
     );
     final staging =
-        await repository.ensureDirectoryIndexRoot('/staging', staging: true);
-    await repository.ensureIndexNode(
+        repository.ensureDirectoryIndexRoot('/staging', staging: true);
+    repository.ensureIndexNode(
       parentId: staging.id,
       name: '银狼资料',
       nodeType: NodeType.folder,

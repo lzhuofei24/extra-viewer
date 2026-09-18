@@ -43,9 +43,7 @@ class IndexManagementPage extends StatelessWidget {
   ValueChanged<IndexNode> get onRebuildNodePreviews =>
       actions.onRebuildNodePreviews;
   VoidCallback get onCreateCollection => actions.onCreateCollection;
-  VoidCallback get onCreateGraph => actions.onCreateGraph;
   ValueChanged<IndexNode> get onCreateNodeAtRoot => actions.onCreateNodeAtRoot;
-  ValueChanged<IndexNode> get onOpenRoot => actions.onOpenRoot;
 
   @override
   Widget build(BuildContext context) {
@@ -54,12 +52,12 @@ class IndexManagementPage extends StatelessWidget {
       padding: AppTokens.pagePadding,
       children: [
         const SectionHeader(
-          title: '索引管理',
-          subtitle: '建立和维护数据入口；不会复制或修改源文件。',
+          title: '管理',
+          subtitle: '添加资料目录，或建立分类来整理文件。',
         ),
         const SizedBox(height: 18),
         _IndexCard(
-          title: '新增索引',
+          title: '添加资料',
           child: Wrap(
             spacing: 10,
             runSpacing: 10,
@@ -67,17 +65,12 @@ class IndexManagementPage extends StatelessWidget {
               FilledButton.icon(
                 onPressed: scanning ? null : onCreateDirectoryIndex,
                 icon: const Icon(Icons.folder_copy_outlined),
-                label: const Text('目录索引'),
+                label: const Text('添加目录'),
               ),
               OutlinedButton.icon(
                 onPressed: scanning ? null : onCreateCollection,
                 icon: const Icon(Icons.collections_bookmark_outlined),
-                label: const Text('树索引'),
-              ),
-              OutlinedButton.icon(
-                onPressed: scanning ? null : onCreateGraph,
-                icon: const Icon(Icons.hub_outlined),
-                label: const Text('图索引'),
+                label: const Text('新建分类'),
               ),
             ],
           ),
@@ -124,12 +117,12 @@ class IndexManagementPage extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 24),
-        Text('索引管理', style: theme.textTheme.titleLarge),
+        Text('已有资料', style: theme.textTheme.titleLarge),
         const SizedBox(height: 12),
         if (roots.isEmpty)
           const EmptyStateCard(
-            title: '还没有建立索引',
-            message: '输入一个本地目录路径，建立第一个索引。',
+            title: '还没有添加资料',
+            message: '添加一个目录，或新建分类来开始整理文件。',
           )
         else ...[
           _IndexRootSection(
@@ -152,18 +145,6 @@ class IndexManagementPage extends StatelessWidget {
             rootCounts: rootCounts,
             scanning: scanning,
             onPrimaryAction: onCreateNodeAtRoot,
-            onRename: onRename,
-            onDelete: onDelete,
-            onRebuildPreviews: onRebuildNodePreviews,
-          ),
-          _IndexRootSection(
-            presentation: IndexRootPresentation.graph,
-            roots: roots
-                .where((node) => node.nodeType == NodeType.graphIndexRoot)
-                .toList(growable: false),
-            rootCounts: rootCounts,
-            scanning: scanning,
-            onPrimaryAction: onOpenRoot,
             onRename: onRename,
             onDelete: onDelete,
             onRebuildPreviews: onRebuildNodePreviews,
@@ -192,9 +173,7 @@ class IndexManagementActions {
     required this.onUpdateDirectoryIndex,
     required this.onRebuildNodePreviews,
     required this.onCreateCollection,
-    required this.onCreateGraph,
     required this.onCreateNodeAtRoot,
-    required this.onOpenRoot,
   });
 
   final VoidCallback onCreateDirectoryIndex;
@@ -209,9 +188,7 @@ class IndexManagementActions {
   final ValueChanged<IndexNode> onUpdateDirectoryIndex;
   final ValueChanged<IndexNode> onRebuildNodePreviews;
   final VoidCallback onCreateCollection;
-  final VoidCallback onCreateGraph;
   final ValueChanged<IndexNode> onCreateNodeAtRoot;
-  final ValueChanged<IndexNode> onOpenRoot;
 }
 
 class _IndexRootSection extends StatelessWidget {
@@ -328,7 +305,7 @@ class _IndexRootGridCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '$entityCount 个实体',
+                    '$entityCount 个文件',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.labelSmall,
@@ -392,7 +369,7 @@ class _RootActionsMenu extends StatelessWidget {
         itemBuilder: (context) => const [
           PopupMenuItem(
             value: 'rebuildPreviews',
-            child: Text('重新生成节点预览'),
+            child: Text('重新生成封面'),
           ),
           PopupMenuItem(value: 'rename', child: Text('重命名')),
           PopupMenuItem(value: 'delete', child: Text('删除')),
@@ -408,19 +385,14 @@ class IndexRootPresentation {
   });
 
   static const directory = IndexRootPresentation._(
-    title: '目录索引',
+    title: '目录',
     icon: Icons.folder_copy_outlined,
     primaryActionLabel: '更新',
   );
   static const collection = IndexRootPresentation._(
-    title: '树索引',
+    title: '分类',
     icon: Icons.collections_bookmark_outlined,
-    primaryActionLabel: '新建节点',
-  );
-  static const graph = IndexRootPresentation._(
-    title: '图索引',
-    icon: Icons.hub_outlined,
-    primaryActionLabel: '打开画布',
+    primaryActionLabel: '新建分类',
   );
 
   final String title;
@@ -518,13 +490,13 @@ class _IndexTaskCard extends StatelessWidget {
     };
     final details = <String>[
       assetOnlyFailure
-          ? '索引已可用 · 预览待重试 · $progress'
+          ? '资料已可用 · 预览待重试 · $progress'
           : '${_buildStatusLabel(value.status)} · ${_buildStageLabel(value.stage)} · $progress',
-      if (value.entityPreviewFailed > 0) '实体失败 ${value.entityPreviewFailed}',
-      if (value.nodePreviewFailed > 0) '节点失败 ${value.nodePreviewFailed}',
+      if (value.entityPreviewFailed > 0) '文件预览失败 ${value.entityPreviewFailed}',
+      if (value.nodePreviewFailed > 0) '目录封面失败 ${value.nodePreviewFailed}',
     ];
     return _IndexCard(
-      title: isPartial ? '部分更新任务' : '目录索引任务',
+      title: isPartial ? '文件夹更新' : '目录扫描',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -793,11 +765,11 @@ String _buildStatusLabel(LibraryBuildStatus status) => switch (status) {
     };
 
 String _buildStageLabel(LibraryBuildStage stage) => switch (stage) {
-      LibraryBuildStage.manifest => '建立清单',
-      LibraryBuildStage.indexWrite => '写入索引',
-      LibraryBuildStage.finalize => '整理并提交',
-      LibraryBuildStage.documentPreviews => '解析文档预览',
-      LibraryBuildStage.entityPreviews => '构建实体预览',
-      LibraryBuildStage.nodePreviews => '构建节点预览',
+      LibraryBuildStage.manifest => '读取目录',
+      LibraryBuildStage.indexWrite => '保存文件',
+      LibraryBuildStage.finalize => '完成更新',
+      LibraryBuildStage.documentPreviews => '读取文档',
+      LibraryBuildStage.entityPreviews => '生成文件预览',
+      LibraryBuildStage.nodePreviews => '生成目录封面',
       LibraryBuildStage.completed => '完成',
     };

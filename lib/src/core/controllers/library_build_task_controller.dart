@@ -322,7 +322,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
       (await builds.abandon(job.id));
       return null;
     } catch (error) {
-      _error = '索引构建失败：$error';
+      _error = '目录扫描失败：$error';
       (await builds.fail(job.id, _error!));
       return null;
     } finally {
@@ -411,7 +411,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
         ? null
         : (await library.getIndexNode(job.targetNodeId!));
     if (job.targetNodeId != null && target == null) {
-      throw StateError('目录节点已不存在');
+      throw StateError('目录或文件夹已不存在');
     }
     final existingRoot = target == null
         ? (await library.directoryIndexRootForSource(job.sourcePath))
@@ -508,13 +508,13 @@ class LibraryBuildTaskController extends ChangeNotifier {
           job.entityPreviewDone,
           job.entityPreviewTotal,
           job.entityPreviewFailed,
-          '正在构建实体预览'
+          '正在生成文件预览'
         ),
       LibraryBuildStage.nodePreviews => (
           job.nodePreviewDone,
           job.nodePreviewTotal,
           job.nodePreviewFailed,
-          '正在构建节点预览'
+          '正在生成目录封面'
         ),
       _ => (0, 0, 0, ''),
     };
@@ -550,7 +550,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
         await _forEachConcurrent(entityIds, 2, (id) async {
           final entity = entities[id];
           if (entity == null) {
-            results[id] = (state: LibraryBuildWorkState.failed, error: '实体不存在');
+            results[id] = (state: LibraryBuildWorkState.failed, error: '文件不存在');
             return;
           }
           try {
@@ -593,7 +593,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
       );
     }
     final rootId = job.indexRootId;
-    if (rootId == null) throw StateError('索引根节点缺失');
+    if (rootId == null) throw StateError('目录已不存在');
     (await builds.prepareEntityPreviewWork(job.id, job.targetNodeId ?? rootId));
     final refreshed = (await builds.get(job.id))!;
     (await builds.checkpointStage(
@@ -642,7 +642,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
           if (recorded.contains(id)) continue;
           results.putIfAbsent(
             id,
-            () => (state: LibraryBuildWorkState.failed, error: '实体不存在或类型不支持'),
+            () => (state: LibraryBuildWorkState.failed, error: '文件不存在或类型不支持'),
           );
         }
       } finally {
@@ -653,12 +653,12 @@ class LibraryBuildTaskController extends ChangeNotifier {
         current,
         current.entityPreviewDone + current.entityPreviewFailed,
         current.entityPreviewTotal,
-        '正在构建实体预览：${current.entityPreviewDone}/${current.entityPreviewTotal}',
+        '正在生成文件预览：${current.entityPreviewDone}/${current.entityPreviewTotal}',
         failed: current.entityPreviewFailed,
       );
     }
     final rootId = job.indexRootId;
-    if (rootId == null) throw StateError('索引根节点缺失');
+    if (rootId == null) throw StateError('目录已不存在');
     (await builds.prepareNodePreviewWork(
       job.id,
       scopeNodeId: job.targetNodeId ?? rootId,
@@ -728,8 +728,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
 
   Future<void> _buildNodePreviews(LibraryBuildJob job) async {
     final rootId = job.indexRootId;
-    if (rootId == null) throw StateError('索引根节点缺失');
-    _report(job, job.nodePreviewDone, job.nodePreviewTotal, '正在自底向上更新节点预览');
+    if (rootId == null) throw StateError('目录已不存在');
+    _report(job, job.nodePreviewDone, job.nodePreviewTotal, '正在更新目录封面');
     final compositor = NodePreviewCompositeService(library);
     while (true) {
       _control!.check();
@@ -742,7 +742,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
       void record(String nodeId, NodePreviewCompositeOutcome? outcome) {
         received.add(nodeId);
         if (outcome == null) {
-          const message = '节点预览任务未返回结果';
+          const message = '目录封面任务未返回结果';
           AppDiagnosticLog.instance.error(
             'node_preview_build_missing_result',
             StateError(message),
@@ -797,7 +797,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
         current,
         current.nodePreviewDone + current.nodePreviewFailed,
         current.nodePreviewTotal,
-        '正在构建节点预览：${current.nodePreviewDone}/${current.nodePreviewTotal}',
+        '正在生成目录封面：${current.nodePreviewDone}/${current.nodePreviewTotal}',
         failed: current.nodePreviewFailed,
       );
       // The bounded background batch has returned; yield before the next

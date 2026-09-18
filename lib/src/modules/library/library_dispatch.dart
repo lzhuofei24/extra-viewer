@@ -143,13 +143,6 @@ Future<Object?> dispatchLibrary(LibraryRepository repository, String method,
       return repository.ensureCategoryIndexRoot(args['name'] as String);
     case 'ensureCollectionIndexRoot':
       return repository.ensureCollectionIndexRoot(args['name'] as String);
-    case 'ensureGraphIndexRoot':
-      return repository.ensureGraphIndexRoot(args['name'] as String);
-    case 'ensureGraphNode':
-      return repository.ensureGraphNode(
-          parentId: args['parentId'] as String,
-          name: args['name'] as String,
-          sortOrder: (args['sortOrder'] as int?) ?? 0);
     case 'ensureIndexNode':
       return repository.ensureIndexNode(
           name: args['name'] as String,
@@ -199,29 +192,6 @@ Future<Object?> dispatchLibrary(LibraryRepository repository, String method,
       return repository.cloneIndexNodeTree(
           sourceNodeId: args['sourceNodeId'] as String,
           targetParentId: args['targetParentId'] as String);
-    case 'linkIndexNodes':
-      return repository.linkIndexNodes(
-          fromNodeId: args['fromNodeId'] as String,
-          toNodeId: args['toNodeId'] as String,
-          edgeType: (args['edgeType'] as String?) ?? 'related',
-          label: args['label'] as String?,
-          sortOrder: (args['sortOrder'] as int?) ?? 0);
-    case 'listOutgoingEdges':
-      return repository.listOutgoingEdges(args['fromNodeId'] as String);
-    case 'listIncomingEdges':
-      return repository.listIncomingEdges(args['toNodeId'] as String);
-    case 'listGraphEdges':
-      return repository.listGraphEdges(args['graphRootId'] as String);
-    case 'listGraphNodes':
-      return repository.listGraphNodes(args['graphRootId'] as String);
-    case 'listGraphNodePositions':
-      return repository.listGraphNodePositions(args['graphRootId'] as String);
-    case 'setGraphNodePosition':
-      repository.setGraphNodePosition(
-          nodeId: args['nodeId'] as String,
-          x: args['x'] as double,
-          y: args['y'] as double);
-      return null;
     case 'listIndexRoots':
       return repository.listIndexRoots(
           sortMode:

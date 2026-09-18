@@ -242,11 +242,11 @@ class CollectionBrowserPage extends StatelessWidget {
                         title: immersiveBrowsing
                             ? '沉浸式浏览为空'
                             : currentNode == null
-                                ? '${browserState.rootTab.label}页暂无索引'
-                                : '当前索引节点为空',
+                                ? '${browserState.rootTab.label}中暂无内容'
+                                : '当前分组为空',
                         message: immersiveBrowsing
-                            ? '当前节点及其下级节点中没有可展示的实体。'
-                            : '可从“管理”页面重新检查，或返回索引首页继续浏览。',
+                            ? '当前分组及其下级分组中没有可展示的文件。'
+                            : '可从“管理”页面重新检查，或返回首页继续浏览。',
                       ),
                     ),
                   ),
@@ -652,7 +652,7 @@ class _PathBar extends StatelessWidget {
           ),
         ),
         IconButton(
-          tooltip: '搜索节点',
+          tooltip: '搜索目录或分类',
           onPressed: onSearchNodes,
           icon: const Icon(Icons.search),
         ),
@@ -674,7 +674,7 @@ class _PathBar extends StatelessWidget {
         ),
         if (canUpdateDirectoryNode)
           IconButton(
-            tooltip: '递归更新当前目录节点',
+            tooltip: '更新当前文件夹及其内容',
             onPressed: onUpdateDirectoryNode,
             icon: const Icon(Icons.refresh_rounded),
           ),
@@ -684,17 +684,17 @@ class _PathBar extends StatelessWidget {
             if (currentNode != null)
               MenuItemButton(
                 onPressed: onCloneCurrentNodeTree,
-                child: const Text('复制节点树到树索引'),
+                child: const Text('复制结构到分类'),
               ),
             if (canCreateNode)
               MenuItemButton(
                 onPressed: onCreateNode,
-                child: const Text('新建索引节点'),
+                child: const Text('新建分类'),
               ),
             if (canDeleteCurrentNode)
               MenuItemButton(
                 onPressed: onDeleteCurrentNode,
-                child: const Text('从当前节点树删除'),
+                child: const Text('删除当前分类'),
               ),
             if (currentNode != null && (canCreateNode || canDeleteCurrentNode))
               const Divider(height: 1),
@@ -1257,7 +1257,7 @@ class _SelectionActionBar extends StatelessWidget {
           runSpacing: 8,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            Text('已选 $entityCount 个实体 | $nodeCount 个节点'),
+            Text('已选 $entityCount 个文件 | $nodeCount 个分组'),
             TextButton(onPressed: onExit, child: const Text('退出')),
             TextButton(onPressed: onSelectAll, child: const Text('全选')),
             TextButton(onPressed: onInvert, child: const Text('反选')),
@@ -1288,14 +1288,14 @@ class _SelectionActionBar extends StatelessWidget {
             OutlinedButton(
               onPressed:
                   entityCount == 0 && nodeCount == 0 ? null : onAddToCollection,
-              child: const Text('添加到索引'),
+              child: const Text('加入分类'),
             ),
             if (canRemoveFromCurrentNode)
               OutlinedButton(
                 onPressed: entityCount == 0 && nodeCount == 0
                     ? null
                     : onRemoveFromCurrentNode,
-                child: Text(nodeCount > 0 && entityCount == 0 ? '删除节点' : '删除'),
+                child: Text(nodeCount > 0 && entityCount == 0 ? '删除分组' : '删除'),
               ),
           ],
         ),
@@ -1327,7 +1327,7 @@ class _IndexPathRail extends StatelessWidget {
     return _HorizontalNodeRail(
       children: [
         _NodeRailEntry(
-          label: '索引首页',
+          label: '首页',
           selected: currentNode == null,
           onTap: onOpenRootIndex,
         ),
@@ -1346,7 +1346,6 @@ bool _rootTabMatchesNode(BrowserRootTab tab, IndexNode node) {
   return switch (tab) {
     BrowserRootTab.directory => node.nodeType == NodeType.directoryIndexRoot,
     BrowserRootTab.tree => node.nodeType == NodeType.customIndexRoot,
-    BrowserRootTab.graph => node.nodeType == NodeType.graphIndexRoot,
   };
 }
 
@@ -1444,7 +1443,6 @@ class _NodeListCard extends StatelessWidget {
     final icon = switch (node.nodeType) {
       NodeType.directoryIndexRoot => Icons.folder_copy_outlined,
       NodeType.customIndexRoot => Icons.account_tree_outlined,
-      NodeType.graphIndexRoot || NodeType.graphNode => Icons.hub_outlined,
       _ => Icons.folder_outlined,
     };
     return Material(
@@ -1471,8 +1469,8 @@ class _NodeListCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '${summary?.childNodeCount ?? 0} 个节点 · '
-                      '${summary?.directEntityCount ?? 0} 个实体',
+                      '${summary?.childNodeCount ?? 0} 个分组 · '
+                      '${summary?.directEntityCount ?? 0} 个文件',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.labelSmall,

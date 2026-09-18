@@ -63,7 +63,8 @@ class _NodePreviewPickerState extends State<NodePreviewPicker> {
     await Future<void>.delayed(Duration.zero);
     final childNodes = loadMore
         ? existing!.nodes
-        : (await widget.repository.listChildNodes(widget.nodeId, parentId: nodeId));
+        : (await widget.repository
+            .listChildNodes(widget.nodeId, parentId: nodeId));
     final page = (await widget.repository.listEntityPageDirectlyUnderNode(
       nodeId,
       after: loadMore && existing!.entities.isNotEmpty
@@ -174,9 +175,9 @@ class _NodePreviewPickerState extends State<NodePreviewPicker> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('自定义节点预览', style: Theme.of(context).textTheme.titleLarge),
+          Text('自定义封面', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 4),
-          Text('展开节点以选择任意下级节点或实体，最多 4 项。',
+          Text('展开分组，按顺序选择最多 4 个下级分组或文件。',
               style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 10),
           Expanded(
@@ -195,7 +196,7 @@ class _NodePreviewPickerState extends State<NodePreviewPicker> {
                               loadMore: true,
                             ),
                             icon: const Icon(Icons.expand_more_rounded),
-                            label: const Text('加载更多实体'),
+                            label: const Text('加载更多文件'),
                           ),
                         );
                       }
@@ -214,7 +215,7 @@ class _NodePreviewPickerState extends State<NodePreviewPicker> {
                           children: [
                             if (node != null)
                               IconButton(
-                                tooltip: isExpanded ? '收起节点' : '展开节点',
+                                tooltip: isExpanded ? '收起分组' : '展开分组',
                                 onPressed: () => _toggleExpanded(node),
                                 icon: isLoading
                                     ? const SizedBox(
@@ -369,5 +370,5 @@ String _candidateKindLabel(IndexNodePreviewTileKind kind) => switch (kind) {
       IndexNodePreviewTileKind.audio => '音频',
       IndexNodePreviewTileKind.document => '文档',
       IndexNodePreviewTileKind.mixedData => '数据',
-      IndexNodePreviewTileKind.node => '下级节点',
+      IndexNodePreviewTileKind.node => '下级分组',
     };

@@ -420,7 +420,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
       ), index_roots(node_id, root_id) AS (
         SELECT id, id
         FROM index_nodes
-        WHERE node_type IN ('directory_index_root', 'category_index_root', 'graph_index_root')
+        WHERE node_type IN ('directory_index_root', 'category_index_root')
         UNION ALL
         SELECT child.id, index_roots.root_id
         FROM index_nodes child
@@ -442,7 +442,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
         SELECT child.id FROM index_nodes child JOIN subtree ON child.parent_id = subtree.id
       ), index_roots(node_id, root_id) AS (
         SELECT id, id FROM index_nodes
-        WHERE node_type IN ('directory_index_root', 'category_index_root', 'graph_index_root')
+        WHERE node_type IN ('directory_index_root', 'category_index_root')
         UNION ALL
         SELECT child.id, index_roots.root_id
         FROM index_nodes child JOIN index_roots ON child.parent_id = index_roots.node_id
@@ -558,7 +558,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
   /// Reconciles a completed incremental directory scan. Existing results stay
   /// visible while scanning; only after the full source has been observed are
   /// missing paths unlinked from this directory tree. Entities referenced by a
-  /// custom or graph index remain intact.
+  /// custom classifications remain intact.
   void reconcileDirectoryScan(
       {required String jobId, required String rootId, required String nodeId}) {
     writeTransaction(() {

@@ -34,14 +34,12 @@ class AppSidebar extends StatelessWidget {
   final VoidCallback onToggleCollapsed;
 
   static const _primaryItems = [
-    _SidebarItem(AppSection.data, '目录索引', Icons.folder_copy_outlined,
+    _SidebarItem(AppSection.data, '目录', Icons.folder_copy_outlined,
         Icons.folder_copy_rounded,
         dataTab: BrowserRootTab.directory),
-    _SidebarItem(AppSection.data, '树索引', Icons.account_tree_outlined,
+    _SidebarItem(AppSection.data, '分类', Icons.account_tree_outlined,
         Icons.account_tree_rounded,
         dataTab: BrowserRootTab.tree),
-    _SidebarItem(AppSection.data, '图索引', Icons.hub_outlined, Icons.hub_rounded,
-        dataTab: BrowserRootTab.graph),
     _SidebarItem(
         AppSection.gallery, '最近', Icons.history_outlined, Icons.history),
   ];

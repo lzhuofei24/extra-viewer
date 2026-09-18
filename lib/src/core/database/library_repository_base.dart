@@ -214,37 +214,6 @@ class LibraryRepositoryBase {
     return current.nodeType == NodeType.root ? null : current;
   }
 
-  void _requireGraphEdgeNodes({
-    required IndexNode fromNode,
-    required IndexNode toNode,
-  }) {
-    if (fromNode.nodeType != NodeType.graphNode) {
-      throw ArgumentError.value(
-        fromNode.id,
-        'fromNodeId',
-        'Graph edges must start from graph_node nodes',
-      );
-    }
-    if (toNode.nodeType != NodeType.graphNode) {
-      throw ArgumentError.value(
-        toNode.id,
-        'toNodeId',
-        'Graph edges must target graph_node nodes',
-      );
-    }
-    final fromRoot = _owningIndexRoot(fromNode);
-    final toRoot = _owningIndexRoot(toNode);
-    if (fromRoot?.nodeType != NodeType.graphIndexRoot ||
-        toRoot?.nodeType != NodeType.graphIndexRoot ||
-        fromRoot?.id != toRoot?.id) {
-      throw ArgumentError.value(
-        toNode.id,
-        'toNodeId',
-        'Graph edges must stay inside the same graph index',
-      );
-    }
-  }
-
   void _requireValidParentForNodeType({
     required NodeType nodeType,
     required String? parentId,
@@ -252,7 +221,6 @@ class LibraryRepositoryBase {
     final requiredRootType = switch (nodeType) {
       NodeType.folder => NodeType.directoryIndexRoot,
       NodeType.customNode => NodeType.customIndexRoot,
-      NodeType.graphNode => NodeType.graphIndexRoot,
       _ => null,
     };
     if (requiredRootType == null) return;
@@ -290,7 +258,6 @@ class LibraryRepositoryBase {
       NodeType.folder ||
       NodeType.customNode =>
         ViewType.tree,
-      NodeType.graphIndexRoot || NodeType.graphNode => ViewType.graph,
       _ => null,
     };
     if (requiredViewType == null || viewType == requiredViewType) return;

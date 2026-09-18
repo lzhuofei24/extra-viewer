@@ -145,4 +145,3 @@ int _clampIndex(Object? value, List<Object> list) {
   if (index < 0 || index >= list.length) return 0;
   return index;
 }
-

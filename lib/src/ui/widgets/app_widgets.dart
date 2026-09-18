@@ -271,16 +271,16 @@ class DirectoryUpdateNodeTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final title = Text(
-      isRoot ? '${node.item.name}（整个索引）' : node.item.name,
+      isRoot ? '${node.item.name}（整个目录）' : node.item.name,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
-    final subtitle = Text('${node.entityCount} 个实体');
+    final subtitle = Text('${node.entityCount} 个文件');
     if (node.children.isEmpty) {
       return ListTile(
         dense: true,
         leading: IconButton(
-          tooltip: isRoot ? '更新整个索引' : '更新此节点',
+          tooltip: isRoot ? '更新整个目录' : '更新此文件夹',
           onPressed: () => onSelected(node.item),
           icon: const Icon(Icons.sync_rounded),
         ),
@@ -292,7 +292,7 @@ class DirectoryUpdateNodeTile extends StatelessWidget {
     return ExpansionTile(
       initiallyExpanded: initiallyExpanded,
       leading: IconButton(
-        tooltip: isRoot ? '更新整个索引' : '更新此节点',
+        tooltip: isRoot ? '更新整个目录' : '更新此文件夹',
         onPressed: () => onSelected(node.item),
         icon: const Icon(Icons.sync_rounded),
       ),
@@ -333,7 +333,7 @@ class CollectionTargetNodeTile extends StatelessWidget {
     final node = treeNode.item;
     final selected = selectedIds.contains(node.id);
     final title = Text(node.name, maxLines: 1, overflow: TextOverflow.ellipsis);
-    final subtitle = Text('${treeNode.entityCount} 个实体');
+    final subtitle = Text('${treeNode.entityCount} 个文件');
     if (treeNode.children.isEmpty) {
       return CheckboxListTile(
         key: PageStorageKey('collection-target-${node.id}'),

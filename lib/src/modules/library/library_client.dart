@@ -304,24 +304,6 @@ class LibraryClient implements LibraryAccess {
   }
 
   @override
-  Future<IndexNode> ensureGraphIndexRoot(String name) async {
-    return (await host.call('library', 'ensureGraphIndexRoot', {'name': name}))
-        as IndexNode;
-  }
-
-  @override
-  Future<IndexNode> ensureGraphNode(
-      {required String parentId,
-      required String name,
-      int sortOrder = 0}) async {
-    return (await host.call('library', 'ensureGraphNode', {
-      'parentId': parentId,
-      'name': name,
-      'sortOrder': sortOrder
-    })) as IndexNode;
-  }
-
-  @override
   Future<IndexNode> ensureIndexNode(
       {required String name,
       required NodeType nodeType,
@@ -422,65 +404,6 @@ class LibraryClient implements LibraryAccess {
       'sourceNodeId': sourceNodeId,
       'targetParentId': targetParentId
     })) as IndexNode;
-  }
-
-  @override
-  Future<IndexNodeEdge> linkIndexNodes(
-      {required String fromNodeId,
-      required String toNodeId,
-      String edgeType = 'related',
-      String? label,
-      int sortOrder = 0}) async {
-    return (await host.call('library', 'linkIndexNodes', {
-      'fromNodeId': fromNodeId,
-      'toNodeId': toNodeId,
-      'edgeType': edgeType,
-      'label': label,
-      'sortOrder': sortOrder
-    })) as IndexNodeEdge;
-  }
-
-  @override
-  Future<List<IndexNodeEdge>> listOutgoingEdges(String fromNodeId) async {
-    return (await host
-            .call('library', 'listOutgoingEdges', {'fromNodeId': fromNodeId}))
-        as List<IndexNodeEdge>;
-  }
-
-  @override
-  Future<List<IndexNodeEdge>> listIncomingEdges(String toNodeId) async {
-    return (await host
-            .call('library', 'listIncomingEdges', {'toNodeId': toNodeId}))
-        as List<IndexNodeEdge>;
-  }
-
-  @override
-  Future<List<IndexNodeEdge>> listGraphEdges(String graphRootId) async {
-    return (await host
-            .call('library', 'listGraphEdges', {'graphRootId': graphRootId}))
-        as List<IndexNodeEdge>;
-  }
-
-  @override
-  Future<List<IndexNode>> listGraphNodes(String graphRootId) async {
-    return (await host
-            .call('library', 'listGraphNodes', {'graphRootId': graphRootId}))
-        as List<IndexNode>;
-  }
-
-  @override
-  Future<Map<String, GraphNodePosition>> listGraphNodePositions(
-      String graphRootId) async {
-    return (await host.call(
-            'library', 'listGraphNodePositions', {'graphRootId': graphRootId}))
-        as Map<String, GraphNodePosition>;
-  }
-
-  @override
-  Future<void> setGraphNodePosition(
-      {required String nodeId, required double x, required double y}) async {
-    await host.call(
-        'library', 'setGraphNodePosition', {'nodeId': nodeId, 'x': x, 'y': y});
   }
 
   @override

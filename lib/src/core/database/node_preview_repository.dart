@@ -13,7 +13,7 @@ mixin NodePreviewRepositoryMixin on LibraryRepositoryBase {
       )
       SELECT ancestor_id AS root_id, GROUP_CONCAT(node_id || ':' || revision) AS signature
       FROM (SELECT a.* FROM ancestry a JOIN index_nodes root ON root.id = a.ancestor_id
-        WHERE root.node_type IN ('directory_index_root', 'category_index_root', 'graph_index_root')
+        WHERE root.node_type IN ('directory_index_root', 'category_index_root')
         AND NOT EXISTS (SELECT 1 FROM library_build_jobs job
           WHERE job.index_root_id = root.id AND job.status NOT IN ('completed', 'abandoned'))
         ORDER BY a.ancestor_id, a.node_id)

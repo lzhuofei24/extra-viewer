@@ -90,8 +90,8 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
     });
     _errorSubscription = _player.stream.error.listen((message) {
       if (!mounted || !_lifecycle.isCurrent(_activeGeneration)) return;
-      AppDiagnosticLog.instance.error('video_player_async_failed',
-          StateError(message), StackTrace.current,
+      AppDiagnosticLog.instance.error(
+          'video_player_async_failed', StateError(message), StackTrace.current,
           fields: {'entityId': widget.entity.id, 'path': widget.entity.path});
       setState(() => _loadError = message);
     });
@@ -393,13 +393,13 @@ class _PlaybackActionRow extends StatelessWidget {
       children: [
         if (onBack != null)
           _compactIconButton(
-            tooltip: '返回所在节点',
+            tooltip: '返回所在位置',
             onPressed: onBack,
             icon: Icons.arrow_back_rounded,
           ),
         if (onDirectoryRoot != null)
           _compactIconButton(
-            tooltip: '返回目录索引',
+            tooltip: '返回目录',
             onPressed: onDirectoryRoot,
             icon: Icons.account_tree_outlined,
           ),
@@ -423,13 +423,13 @@ class _PlaybackActionRow extends StatelessWidget {
         _PlaybackSpeedMenu(player: player),
         if (onPrevious != null)
           _compactIconButton(
-            tooltip: '上一个实体',
+            tooltip: '上一个文件',
             onPressed: onPrevious,
             icon: Icons.skip_previous_rounded,
           ),
         if (onNext != null)
           _compactIconButton(
-            tooltip: '下一个实体',
+            tooltip: '下一个文件',
             onPressed: onNext,
             icon: Icons.skip_next_rounded,
           ),
@@ -594,8 +594,7 @@ class _ViewerChrome extends StatelessWidget {
                     tool(
                         Icons.bookmark_add_outlined, '添加/移除当前位置书签', onBookmark),
                   if (onDirectoryRoot != null)
-                    tool(
-                        Icons.account_tree_outlined, '返回目录索引', onDirectoryRoot),
+                    tool(Icons.account_tree_outlined, '返回目录', onDirectoryRoot),
                   tool(Icons.info_outline_rounded, '详情', onDetails),
                 ],
               ),

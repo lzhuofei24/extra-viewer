@@ -4,13 +4,11 @@ enum BrowserDisplayMode { grid, list }
 
 enum BrowserRootTab {
   directory,
-  tree,
-  graph;
+  tree;
 
   String get label => switch (this) {
-        BrowserRootTab.directory => '目录索引',
-        BrowserRootTab.tree => '树索引',
-        BrowserRootTab.graph => '图索引',
+        BrowserRootTab.directory => '目录',
+        BrowserRootTab.tree => '分类',
       };
 }
 

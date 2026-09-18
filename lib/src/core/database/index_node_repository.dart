@@ -1,7 +1,7 @@
 part of 'library_repository.dart';
 
-/// Index node CRUD, graph edges, entity linking, tree traversal, and
-/// paginated entity listing under nodes.
+/// Index node CRUD, entity linking, tree traversal, and paginated entity
+/// listing under nodes.
 mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
   IndexNode ensureCategoryIndexRoot(String name) {
     return ensureCollectionIndexRoot(name);
@@ -16,40 +16,6 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
       name: name,
       nodeType: NodeType.customIndexRoot,
       viewType: ViewType.tree,
-    );
-    rebuildIndexNodeStats();
-    return node;
-  }
-
-  IndexNode ensureGraphIndexRoot(String name) {
-    final root = _ensureGlobalRoot();
-    final node = ensureIndexNode(
-      parentId: root.id,
-      name: name,
-      nodeType: NodeType.graphIndexRoot,
-      viewType: ViewType.graph,
-    );
-    rebuildIndexNodeStats();
-    return node;
-  }
-
-  IndexNode ensureGraphNode({
-    required String parentId,
-    required String name,
-    int sortOrder = 0,
-  }) {
-    final node = writeTransaction(
-      () {
-        final created = ensureIndexNode(
-          parentId: parentId,
-          name: name,
-          nodeType: NodeType.graphNode,
-          viewType: ViewType.graph,
-          sortOrder: sortOrder,
-        );
-        markIndexNodePreviewDirty(parentId, reason: 'graph_node_created');
-        return created;
-      },
     );
     rebuildIndexNodeStats();
     return node;
@@ -345,8 +311,7 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
   }
 
   /// Copies a tree's structure into a manual index while retaining references
-  /// to the same entities. Graph edges are intentionally not copied because
-  /// the destination is a tree. Source nodes and source files are unchanged.
+  /// to the same entities. Source nodes and source files are unchanged.
   IndexNode cloneIndexNodeTree({
     required String sourceNodeId,
     required String targetParentId,
@@ -483,185 +448,6 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
     });
     rebuildIndexNodeStatsForNode(targetParentId);
     return clonedRoot;
-  }
-
-  IndexNodeEdge linkIndexNodes({
-    required String fromNodeId,
-    required String toNodeId,
-    String edgeType = 'related',
-    String? label,
-    int sortOrder = 0,
-  }) {
-    final fromNode = _requireLinkableIndexNode(fromNodeId, 'fromNodeId');
-    final toNode = _requireLinkableIndexNode(toNodeId, 'toNodeId');
-    _requireGraphEdgeNodes(fromNode: fromNode, toNode: toNode);
-    final normalizedEdgeType = _normalizeEdgeType(edgeType);
-    final normalizedLabel = _normalizeOptionalText(label);
-    final existing = database.db.select(
-      '''
-      SELECT * FROM index_node_edges
-      WHERE from_node_id = ? AND to_node_id = ? AND edge_type = ?
-      LIMIT 1
-      ''',
-      [fromNodeId, toNodeId, normalizedEdgeType],
-    );
-    if (existing.isNotEmpty) return _edgeFromRow(existing.first);
-    final edge = IndexNodeEdge(
-      id: newId(),
-      fromNodeId: fromNodeId,
-      toNodeId: toNodeId,
-      edgeType: normalizedEdgeType,
-      label: normalizedLabel,
-      sortOrder: sortOrder,
-    );
-    database.db.execute(
-      '''
-      INSERT INTO index_node_edges
-      (id, from_node_id, to_node_id, edge_type, label, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ''',
-      [
-        edge.id,
-        edge.fromNodeId,
-        edge.toNodeId,
-        edge.edgeType,
-        edge.label,
-        edge.sortOrder,
-      ],
-    );
-    return edge;
-  }
-
-  List<IndexNodeEdge> listOutgoingEdges(String fromNodeId) {
-    final rows = database.db.select(
-      '''
-      SELECT * FROM index_node_edges
-      WHERE from_node_id = ?
-      ORDER BY sort_order, edge_type, label
-      ''',
-      [fromNodeId],
-    );
-    return rows.map(_edgeFromRow).toList();
-  }
-
-  List<IndexNodeEdge> listIncomingEdges(String toNodeId) {
-    final rows = database.db.select(
-      '''
-      SELECT * FROM index_node_edges
-      WHERE to_node_id = ?
-      ORDER BY sort_order, edge_type, label
-      ''',
-      [toNodeId],
-    );
-    return rows.map(_edgeFromRow).toList();
-  }
-
-  List<IndexNodeEdge> listGraphEdges(String graphRootId) {
-    final rows = database.db.select(
-      '''
-      WITH RECURSIVE graph_nodes(id) AS (
-        SELECT id FROM index_nodes
-        WHERE id = ? AND node_type = ?
-        UNION ALL
-        SELECT child.id
-        FROM index_nodes child
-        JOIN graph_nodes parent ON child.parent_id = parent.id
-        WHERE child.node_type = ?
-      )
-      SELECT edge.*
-      FROM index_node_edges edge
-      JOIN index_nodes source ON source.id = edge.from_node_id
-      WHERE source.id IN (SELECT id FROM graph_nodes)
-        AND source.node_type = ?
-      ORDER BY edge.sort_order, edge.edge_type, edge.label
-      ''',
-      [
-        graphRootId,
-        NodeType.graphIndexRoot.value,
-        NodeType.graphNode.value,
-        NodeType.graphNode.value,
-      ],
-    );
-    return rows.map(_edgeFromRow).toList();
-  }
-
-  List<IndexNode> listGraphNodes(String graphRootId) {
-    final rows = database.db.select(
-      '''
-      WITH RECURSIVE graph_nodes(id, depth) AS (
-        SELECT id, 0 FROM index_nodes
-        WHERE id = ? AND node_type = ?
-        UNION ALL
-        SELECT child.id, graph_nodes.depth + 1
-        FROM index_nodes child
-        JOIN graph_nodes ON child.parent_id = graph_nodes.id
-        WHERE child.node_type = ?
-      )
-      SELECT node.*
-      FROM index_nodes node
-      JOIN graph_nodes ON graph_nodes.id = node.id
-      WHERE node.node_type = ?
-      ORDER BY graph_nodes.depth, node.sort_order, node.name COLLATE NOCASE, node.id
-      ''',
-      [
-        graphRootId,
-        NodeType.graphIndexRoot.value,
-        NodeType.graphNode.value,
-        NodeType.graphNode.value,
-      ],
-    );
-    return rows.map(_nodeFromRow).toList(growable: false);
-  }
-
-  Map<String, GraphNodePosition> listGraphNodePositions(String graphRootId) {
-    final rows = database.db.select(
-      '''
-      WITH RECURSIVE graph_nodes(id) AS (
-        SELECT id FROM index_nodes
-        WHERE id = ? AND node_type = ?
-        UNION ALL
-        SELECT child.id
-        FROM index_nodes child
-        JOIN graph_nodes parent ON child.parent_id = parent.id
-        WHERE child.node_type = ?
-      )
-      SELECT position.node_id, position.x, position.y
-      FROM graph_node_positions position
-      JOIN index_nodes node ON node.id = position.node_id
-      WHERE node.id IN (SELECT id FROM graph_nodes)
-        AND node.node_type = ?
-      ''',
-      [
-        graphRootId,
-        NodeType.graphIndexRoot.value,
-        NodeType.graphNode.value,
-        NodeType.graphNode.value,
-      ],
-    );
-    return Map.unmodifiable({
-      for (final row in rows)
-        row['node_id'] as String: GraphNodePosition(
-          nodeId: row['node_id'] as String,
-          x: row['x'] as double,
-          y: row['y'] as double,
-        ),
-    });
-  }
-
-  void setGraphNodePosition({
-    required String nodeId,
-    required double x,
-    required double y,
-  }) {
-    database.db.execute(
-      '''
-      INSERT INTO graph_node_positions(node_id, x, y, updated_at)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(node_id) DO UPDATE SET x = excluded.x, y = excluded.y,
-        updated_at = excluded.updated_at
-      ''',
-      [nodeId, x, y, nowMillis()],
-    );
   }
 
   List<IndexNode> listIndexRoots({

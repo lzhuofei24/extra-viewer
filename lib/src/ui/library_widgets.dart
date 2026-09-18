@@ -746,10 +746,8 @@ IconData _indexNodeIcon(NodeType type) {
     NodeType.root => Icons.account_tree_outlined,
     NodeType.directoryIndexRoot => Icons.folder_special_outlined,
     NodeType.customIndexRoot => Icons.category_outlined,
-    NodeType.graphIndexRoot => Icons.hub_outlined,
     NodeType.folder => Icons.folder_outlined,
     NodeType.customNode => Icons.sell_outlined,
-    NodeType.graphNode => Icons.circle_outlined,
   };
 }
 
@@ -758,9 +756,7 @@ Color _indexNodeColor(NodeType type) {
     NodeType.root => const Color(0xFF475569),
     NodeType.directoryIndexRoot => const Color(0xFF4F7D52),
     NodeType.customIndexRoot => const Color(0xFF8A6A3D),
-    NodeType.graphIndexRoot => const Color(0xFF58708A),
     NodeType.folder => const Color(0xFF638459),
     NodeType.customNode => const Color(0xFFA27C49),
-    NodeType.graphNode => const Color(0xFF657A9A),
   };
 }

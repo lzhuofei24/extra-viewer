@@ -308,4 +308,3 @@ class _PlaybackTimelineLabels extends StatelessWidget {
     );
   }
 }
-

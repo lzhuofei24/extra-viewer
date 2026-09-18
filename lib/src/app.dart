@@ -36,7 +36,6 @@ import 'ui/builtin_media_page.dart';
 import 'ui/collection_browser_page.dart';
 import 'ui/design_tokens.dart';
 import 'ui/entity_detail_sheet.dart';
-import 'ui/graph_index_page.dart';
 import 'ui/node_search_page.dart';
 import 'ui/index_management_page.dart';
 import 'ui/music_page.dart';
@@ -126,7 +125,6 @@ class _AppShellState extends State<AppShell> {
   BrowserState _browserState = const BrowserState();
   IndexNode? _selectedIndexRoot;
   IndexNode? _selectedItem;
-  String? _graphSearchTarget;
   List<IndexNode> _indexRoots = const [];
   List<IndexNode> _childNodes = const [];
   List<IndexNode> _nodePath = const [];
@@ -412,7 +410,7 @@ class _AppShellState extends State<AppShell> {
       );
       if (!mounted) return;
       setState(() {
-        _indexError = '无法打开本地索引：$error';
+        _indexError = '无法打开本地资料：$error';
         _loading = false;
       });
       return;
@@ -585,13 +583,13 @@ class _AppShellState extends State<AppShell> {
     if (_resettingLocalIndex) return;
     if (_scanning) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先暂停或放弃正在进行的索引任务。')),
+        const SnackBar(content: Text('请先暂停或放弃正在进行的扫描任务。')),
       );
       return;
     }
     final confirmed = await _confirm(
-      title: '重置本地索引数据',
-      message: '将删除本应用保存的索引、任务、缩略图和播放缓存。不会删除、移动或修改任何真实资料文件。',
+      title: '清除本地资料数据',
+      message: '将删除本应用保存的目录、分类、预览图和播放缓存。不会删除、移动或修改原始文件。',
     );
     if (!confirmed || !mounted) return;
     await _dirtyPreviews?.close();
@@ -633,7 +631,7 @@ class _AppShellState extends State<AppShell> {
       );
       if (!mounted) return;
       setState(() {
-        _indexError = '重置本地索引失败：$error';
+        _indexError = '清除本地资料数据失败：$error';
         _loading = false;
         _resettingLocalIndex = false;
       });
@@ -1078,7 +1076,6 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _openIndexRoot(IndexNode root) {
-    _graphSearchTarget = null;
     _exitImmersiveBrowsing();
     _cancelPageWarmup();
     final cached = _browserNodeCache.get(
@@ -1121,7 +1118,6 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _openRootIndex() {
-    _graphSearchTarget = null;
     _exitImmersiveBrowsing();
     _cancelPageWarmup();
     setState(() {
@@ -1187,27 +1183,21 @@ class _AppShellState extends State<AppShell> {
       setState(() {
         _section = AppSection.data;
         _selectedIndexRoot = result.root;
-        _selectedItem = result.root.nodeType == NodeType.graphIndexRoot ||
-                result.node.id == result.root.id
-            ? null
-            : result.node;
-        _graphSearchTarget = result.root.nodeType == NodeType.graphIndexRoot
-            ? result.node.id
-            : null;
+        _selectedItem = result.node.id == result.root.id ? null : result.node;
         _detail = null;
       });
       _reload(indexNodeId: _currentIndexNode?.id);
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('无法打开节点搜索：$error')));
+            .showSnackBar(SnackBar(content: Text('无法打开搜索：$error')));
+      }
     }
   }
 
   bool _isIndexRoot(IndexNode node) {
     return node.nodeType == NodeType.directoryIndexRoot ||
-        node.nodeType == NodeType.customIndexRoot ||
-        node.nodeType == NodeType.graphIndexRoot;
+        node.nodeType == NodeType.customIndexRoot;
   }
 
   void _handlePathSelection(IndexNode node) {
@@ -1320,7 +1310,7 @@ class _AppShellState extends State<AppShell> {
       _reload(indexNodeId: createdIndex.id, invalidateBrowserCache: true);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('索引完成，实体与节点预览已写入应用存储。'),
+          content: Text('扫描完成，文件预览和目录封面已保存。'),
         ),
       );
     }
@@ -1392,8 +1382,8 @@ class _AppShellState extends State<AppShell> {
     final repository = _repository;
     if (repository == null || _scanning) return;
     final confirmed = await _confirm(
-      title: '重新生成节点预览',
-      message: '将重新生成“${root.name}”及全部下级节点的预览图描述。',
+      title: '重新生成封面',
+      message: '将重新生成“${root.name}”及全部下级文件夹或分类的封面。',
     );
     if (!confirmed) return;
     await _refreshNodePreview(
@@ -1404,7 +1394,7 @@ class _AppShellState extends State<AppShell> {
     _reload(invalidateBrowserCache: true);
     if (mounted) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('节点预览图已重新构建')));
+          .showSnackBar(const SnackBar(content: Text('封面已重新生成')));
     }
   }
 
@@ -1524,7 +1514,7 @@ class _AppShellState extends State<AppShell> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '重试已执行，但仍有失败项：实体 ${result!.entityPreviewFailed}，节点 ${result.nodePreviewFailed}。',
+            '重试已执行，但仍有失败项：文件预览 ${result!.entityPreviewFailed}，目录封面 ${result.nodePreviewFailed}。',
           ),
         ),
       );
@@ -1539,7 +1529,7 @@ class _AppShellState extends State<AppShell> {
     _reload(indexNodeId: targetNode?.id, invalidateBrowserCache: true);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(retryFailed ? '失败项重试完成。' : '索引任务完成。'),
+        content: Text(retryFailed ? '失败项重试完成。' : '扫描任务完成。'),
       ),
     );
   }
@@ -1954,8 +1944,8 @@ class _AppShellState extends State<AppShell> {
     final name = await showDialog<String>(
       context: context,
       builder: (_) => TextPromptDialog(
-        title: '新建索引节点',
-        label: '节点名称',
+        title: '新建分类',
+        label: '分类名称',
         confirmLabel: entityIds.isEmpty ? '创建' : '创建并加入',
       ),
     );
@@ -1982,7 +1972,7 @@ class _AppShellState extends State<AppShell> {
       }
       _openIndexNode(node);
     } on ArgumentError catch (error) {
-      if (mounted) setState(() => _indexError = '创建索引节点失败：${error.message}');
+      if (mounted) setState(() => _indexError = '新建分类失败：${error.message}');
     }
   }
 
@@ -1993,8 +1983,8 @@ class _AppShellState extends State<AppShell> {
     final name = await showDialog<String>(
       context: context,
       builder: (_) => TextPromptDialog(
-        title: '新建树索引',
-        label: '树索引名称',
+        title: '新建分类',
+        label: '分类名称',
         hintText: '例如：待读、银狼相关、睡前听',
         confirmLabel: entityIds.isEmpty ? '创建' : '创建并加入',
       ),
@@ -2016,25 +2006,8 @@ class _AppShellState extends State<AppShell> {
       _cacheWarmupGeneration++;
       _openIndexRoot(collection);
     } on ArgumentError catch (error) {
-      if (mounted) setState(() => _indexError = '创建树索引失败：${error.message}');
+      if (mounted) setState(() => _indexError = '新建分类失败：${error.message}');
     }
-  }
-
-  Future<void> _showCreateGraphIndex() async {
-    final repository = _repository;
-    if (repository == null) return;
-    final name = await showDialog<String>(
-      context: context,
-      builder: (_) => const TextPromptDialog(
-        title: '新建图索引',
-        label: '图索引名称',
-        confirmLabel: '创建',
-      ),
-    );
-    if (name == null || name.trim().isEmpty) return;
-    final graph = (await repository.ensureGraphIndexRoot(name.trim()));
-    _browserNodeCache.clear();
-    _openIndexRoot(graph);
   }
 
   Future<void> _showAddToCollection() async {
@@ -2048,8 +2021,8 @@ class _AppShellState extends State<AppShell> {
         .toList(growable: false);
     if (collections.isEmpty) {
       final name = await _askText(
-        title: '新建树索引',
-        label: '树索引名称',
+        title: '新建分类',
+        label: '分类名称',
         confirmLabel: '创建并加入',
         initialValue: '',
       );
@@ -2098,7 +2071,7 @@ class _AppShellState extends State<AppShell> {
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           return AlertDialog(
-            title: const Text('加入树索引'),
+            title: const Text('加入分类'),
             content: SizedBox(
               width: 460,
               height: 500,
@@ -2122,8 +2095,8 @@ class _AppShellState extends State<AppShell> {
                     ? null
                     : () async {
                         final name = await _askText(
-                          title: '新建索引节点',
-                          label: '节点名称',
+                          title: '新建分类',
+                          label: '分类名称',
                           confirmLabel: '创建并选择',
                           initialValue: '',
                         );
@@ -2139,7 +2112,7 @@ class _AppShellState extends State<AppShell> {
                         });
                       },
                 icon: const Icon(Icons.create_new_folder_outlined),
-                label: const Text('新建节点'),
+                label: const Text('新建分类'),
               ),
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
@@ -2150,7 +2123,7 @@ class _AppShellState extends State<AppShell> {
                     ? null
                     : () => Navigator.of(context).pop(selected),
                 child: Text(
-                  '加入 ${_selectedEntityIds.length} 个实体 | ${_selectedNodeIds.length} 个节点',
+                  '加入 ${_selectedEntityIds.length} 个文件 | ${_selectedNodeIds.length} 个分组',
                 ),
               ),
             ],
@@ -2187,7 +2160,7 @@ class _AppShellState extends State<AppShell> {
       }
       await Future.wait(previewRefreshes);
     } on ArgumentError catch (error) {
-      if (mounted) setState(() => _indexError = '添加到索引失败：${error.message}');
+      if (mounted) setState(() => _indexError = '加入分类失败：${error.message}');
       return;
     }
     _exitSelectionMode();
@@ -2223,13 +2196,13 @@ class _AppShellState extends State<AppShell> {
         .toList(growable: false);
     if (!mounted) return;
     if (targets.isEmpty) {
-      setState(() => _indexError = '请先创建一个树索引作为复制目标。');
+      setState(() => _indexError = '请先新建一个分类作为复制目标。');
       return;
     }
     final targetId = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('复制节点树到树索引'),
+        title: const Text('复制结构到分类'),
         content: SizedBox(
           width: 380,
           child: ListView(
@@ -2272,7 +2245,7 @@ class _AppShellState extends State<AppShell> {
                         child: CircularProgressIndicator(strokeWidth: 2.5),
                       ),
                       SizedBox(width: 14),
-                      Expanded(child: Text('正在复制节点树...')),
+                      Expanded(child: Text('正在复制结构...')),
                     ],
                   ),
                 ),
@@ -2301,7 +2274,7 @@ class _AppShellState extends State<AppShell> {
       _openIndexRoot(target);
       _openIndexNode(cloned);
     } on ArgumentError catch (error) {
-      if (mounted) setState(() => _indexError = '复制节点树失败：${error.message}');
+      if (mounted) setState(() => _indexError = '复制结构失败：${error.message}');
     } finally {
       overlay.remove();
     }
@@ -2319,11 +2292,11 @@ class _AppShellState extends State<AppShell> {
     final entityCount = _selectedEntityIds.length;
     final nodeCount = _selectedNodeIds.length;
     final confirmed = await _confirm(
-      title: '从当前节点移除',
+      title: '从当前分类移除',
       message: [
-        if (entityCount > 0) '将移除 $entityCount 项实体引用。',
-        if (nodeCount > 0) '将递归删除 $nodeCount 个节点及其下级节点、关联边和实体引用。',
-        '不会删除实体、源文件或缩略图。',
+        if (entityCount > 0) '将移除 $entityCount 个文件。',
+        if (nodeCount > 0) '将递归删除 $nodeCount 个分组及其下级内容。',
+        '不会删除原始文件或预览图。',
       ].join('\n'),
     );
     if (!confirmed) return;
@@ -2345,8 +2318,8 @@ class _AppShellState extends State<AppShell> {
     final newName = await showDialog<String>(
       context: context,
       builder: (_) => TextPromptDialog(
-        title: '重命名索引',
-        label: '索引名称',
+        title: '重命名',
+        label: '名称',
         confirmLabel: '保存',
         initialValue: index.name,
       ),
@@ -2389,9 +2362,9 @@ class _AppShellState extends State<AppShell> {
       index.id,
     ));
     final message = deletesEntities
-        ? '删除后会递归删除索引节点和索引关系；其中未被其它索引引用的实体数据库记录也会删除，不会删除真实源文件。确定删除“${index.name}”？'
-        : '只会删除索引节点和索引关系，不会删除实体数据库记录。确定删除“${index.name}”？';
-    final confirmed = await _confirm(title: '删除索引', message: message);
+        ? '删除后会移除该目录及应用内保存的文件记录和预览，不会删除原始文件。确定删除“${index.name}”？'
+        : '删除后会移除该分类及其中的整理关系，不会删除文件记录或原始文件。确定删除“${index.name}”？';
+    final confirmed = await _confirm(title: '删除', message: message);
     if (!confirmed) return;
     final fallbackParent = index.parentId == null
         ? null
@@ -2423,7 +2396,7 @@ class _AppShellState extends State<AppShell> {
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('删除目录索引'),
+        title: const Text('删除目录'),
         content: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520, maxHeight: 420),
           child: SingleChildScrollView(
@@ -2431,16 +2404,16 @@ class _AppShellState extends State<AppShell> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('“${report.root.name}”包含 ${report.entityCount} 个实体。'),
+                Text('“${report.root.name}”包含 ${report.entityCount} 个文件。'),
                 const SizedBox(height: 10),
                 const Text('不会删除、移动或修改硬盘中的真实源文件。'),
                 if (conflicts.isEmpty) ...[
                   const SizedBox(height: 10),
-                  const Text('将删除本应用中的目录索引、实体记录和衍生预览资源。'),
+                  const Text('将删除本应用中的目录记录和预览资源。'),
                 ] else ...[
                   const SizedBox(height: 10),
                   Text(
-                    '${report.conflictCount} 个实体仍被其它索引引用。普通删除已阻止；强制删除会同时移除下列引用。',
+                    '${report.conflictCount} 个文件仍在分类中使用。普通删除已阻止；强制删除会同时从这些分类中移除。',
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.error,
                     ),
@@ -2457,7 +2430,7 @@ class _AppShellState extends State<AppShell> {
                     ),
                   if (report.conflictCount > conflicts.length)
                     Text(
-                        '另有 ${report.conflictCount - conflicts.length} 个实体未展开。'),
+                        '另有 ${report.conflictCount - conflicts.length} 个文件未展开。'),
                 ],
               ],
             ),
@@ -2471,7 +2444,7 @@ class _AppShellState extends State<AppShell> {
           if (conflicts.isEmpty)
             FilledButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('删除索引'),
+              child: const Text('删除目录'),
             )
           else
             FilledButton(
@@ -2543,10 +2516,10 @@ class _AppShellState extends State<AppShell> {
                     color: theme.colorScheme.primary,
                   ),
                   const SizedBox(height: 18),
-                  Text('需要重置本地索引', style: theme.textTheme.headlineSmall),
+                  Text('需要清除本地资料数据', style: theme.textTheme.headlineSmall),
                   const SizedBox(height: 10),
                   Text(
-                    '当前本地索引的数据结构（版本 $incompatibleSchemaVersion）与当前版本不兼容，需要重新建立应用索引。',
+                    '当前本地数据结构（版本 $incompatibleSchemaVersion）与此版本不兼容，需要清除后重新扫描目录。',
                     style: theme.textTheme.bodyLarge,
                   ),
                   const SizedBox(height: 8),
@@ -2572,18 +2545,6 @@ class _AppShellState extends State<AppShell> {
     }
 
     final pageBody = switch (_section) {
-      AppSection.data
-          when _currentIndexNode?.nodeType == NodeType.graphIndexRoot =>
-        GraphIndexPage(
-          key: ValueKey('${_currentIndexNode!.id}:$_graphSearchTarget'),
-          initialNodeId: _graphSearchTarget,
-          repository: _repository!,
-          graphRoot: _currentIndexNode!,
-          onOpenNode: _openIndexNode,
-          onReturnToRootIndex: _openRootIndex,
-          onPreviewDirty: _refreshNodePreview,
-          onThumbnailEntityNeeded: _requestBrowseThumbnailById,
-        ),
       AppSection.data => CollectionBrowserPage(
           onSearchNodes: _searchNodes,
           currentNode: _currentIndexNode,
@@ -2707,10 +2668,8 @@ class _AppShellState extends State<AppShell> {
             onUpdateDirectoryIndex: _chooseDirectoryUpdateNode,
             onRebuildNodePreviews: _showRebuildNodePreviews,
             onCreateCollection: () => _showCreateCollection(),
-            onCreateGraph: _showCreateGraphIndex,
             onCreateNodeAtRoot: (root) =>
                 _showCreateCustomNode(parentOverride: root),
-            onOpenRoot: _openIndexRoot,
           ),
         ),
       AppSection.settings => SettingsPage(

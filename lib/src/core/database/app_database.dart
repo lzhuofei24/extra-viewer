@@ -6,12 +6,13 @@ import 'package:sqlite3/sqlite3.dart';
 
 import 'schema_v6.dart';
 import 'schema_v7.dart';
+import 'schema_v8.dart';
 
 /// SQLite storage and additive migrations, owned by database workers.
 class AppDatabase {
   AppDatabase._(this.db, this.storageDirectoryPath, this.databasePath);
 
-  static const currentSchemaVersion = 7;
+  static const currentSchemaVersion = 8;
 
   final Database db;
   final String storageDirectoryPath;
@@ -114,10 +115,11 @@ class AppDatabase {
     if (version == currentSchemaVersion) {
       db.execute(_schema);
       _ensurePreviewSchema();
+      _verifySchemaIntegrity();
       db.execute('PRAGMA optimize;');
       return;
     }
-    if (version == 5 || version == 6) {
+    if (version == 5 || version == 6 || version == 7) {
       final path = databasePath;
       if (path != null) {
         final backup = '$path.schema$version.backup';
@@ -128,8 +130,10 @@ class AppDatabase {
       db.execute('BEGIN IMMEDIATE');
       try {
         if (version == 5) db.execute(schemaV6Upgrade);
-        db.execute(schemaV7Upgrade);
+        if (version <= 6) db.execute(schemaV7Upgrade);
         _ensurePreviewSchema();
+        db.execute(schemaV8Upgrade);
+        _verifySchemaIntegrity();
         db.userVersion = currentSchemaVersion;
         db.execute('COMMIT');
       } catch (_) {
@@ -148,6 +152,8 @@ class AppDatabase {
       db.execute(schemaV6Upgrade);
       db.execute(schemaV7Upgrade);
       _ensurePreviewSchema();
+      db.execute(schemaV8Upgrade);
+      _verifySchemaIntegrity();
       db.userVersion = currentSchemaVersion;
       db.execute('COMMIT;');
       db.execute('PRAGMA optimize;');
@@ -163,6 +169,28 @@ class AppDatabase {
     if (!columns.any((row) => row['name'] == 'cover_revision')) {
       db.execute(
           'ALTER TABLE document_preview_versions ADD COLUMN cover_revision INTEGER');
+    }
+  }
+
+  void _verifySchemaIntegrity() {
+    if (db.select('PRAGMA foreign_key_check').isNotEmpty) {
+      throw StateError('Database migration left invalid foreign keys');
+    }
+    if (db.select('''
+      SELECT 1 FROM index_nodes
+      WHERE node_type IN ('graph_index_root', 'graph_node')
+      LIMIT 1
+    ''').isNotEmpty) {
+      throw StateError('Database migration left graph nodes behind');
+    }
+    final nodeCount = db
+        .select('SELECT COUNT(*) AS count FROM index_nodes')
+        .single['count'] as int;
+    final searchCount = db
+        .select('SELECT COUNT(*) AS count FROM index_node_search')
+        .single['count'] as int;
+    if (nodeCount != searchCount) {
+      throw StateError('Node search index is inconsistent');
     }
   }
 
@@ -243,17 +271,6 @@ CREATE TABLE IF NOT EXISTS index_node_entities (
   PRIMARY KEY(index_node_id, entity_id),
   FOREIGN KEY(index_node_id) REFERENCES index_nodes(id) ON DELETE CASCADE,
   FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS index_node_edges (
-  id TEXT PRIMARY KEY,
-  from_node_id TEXT NOT NULL,
-  to_node_id TEXT NOT NULL,
-  edge_type TEXT NOT NULL,
-  label TEXT,
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  FOREIGN KEY(from_node_id) REFERENCES index_nodes(id) ON DELETE CASCADE,
-  FOREIGN KEY(to_node_id) REFERENCES index_nodes(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS index_node_stats (
@@ -405,22 +422,12 @@ CREATE TABLE IF NOT EXISTS audio_playback_session_entries (
   FOREIGN KEY(session_id) REFERENCES audio_playback_sessions(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS graph_node_positions (
-  node_id TEXT PRIMARY KEY,
-  x REAL NOT NULL,
-  y REAL NOT NULL,
-  updated_at INTEGER NOT NULL,
-  FOREIGN KEY(node_id) REFERENCES index_nodes(id) ON DELETE CASCADE
-);
-
 CREATE UNIQUE INDEX IF NOT EXISTS idx_index_nodes_root_source
 ON index_nodes(source_path) WHERE source_path IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_index_nodes_single_root
 ON index_nodes(node_type) WHERE node_type = 'root';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_index_nodes_sibling_name_type
 ON index_nodes(parent_id, name, node_type) WHERE parent_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_index_node_edges_unique
-ON index_node_edges(from_node_id, to_node_id, edge_type);
 CREATE INDEX IF NOT EXISTS idx_index_nodes_parent_id ON index_nodes(parent_id);
 CREATE INDEX IF NOT EXISTS idx_index_nodes_parent_sort_name
 ON index_nodes(parent_id, sort_order, name COLLATE NOCASE);
@@ -445,8 +452,6 @@ CREATE INDEX IF NOT EXISTS idx_index_node_entities_entity
 ON index_node_entities(entity_id);
 CREATE INDEX IF NOT EXISTS idx_index_node_entities_node_sort_name
 ON index_node_entities(index_node_id, sort_name COLLATE NOCASE, entity_id);
-CREATE INDEX IF NOT EXISTS idx_index_node_edges_from ON index_node_edges(from_node_id);
-CREATE INDEX IF NOT EXISTS idx_index_node_edges_to ON index_node_edges(to_node_id);
 CREATE INDEX IF NOT EXISTS idx_library_build_jobs_recovery
 ON library_build_jobs(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_library_build_manifest_sequence

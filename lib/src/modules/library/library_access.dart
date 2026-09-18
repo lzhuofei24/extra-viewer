@@ -87,9 +87,6 @@ abstract interface class LibraryAccess {
   FutureOr<void> pruneEmptyDirectoryNodes(String rootId);
   FutureOr<IndexNode> ensureCategoryIndexRoot(String name);
   FutureOr<IndexNode> ensureCollectionIndexRoot(String name);
-  FutureOr<IndexNode> ensureGraphIndexRoot(String name);
-  FutureOr<IndexNode> ensureGraphNode(
-      {required String parentId, required String name, int sortOrder = 0});
   FutureOr<IndexNode> ensureIndexNode(
       {required String name,
       required NodeType nodeType,
@@ -119,20 +116,6 @@ abstract interface class LibraryAccess {
       {required String parentId, required String name});
   FutureOr<IndexNode> cloneIndexNodeTree(
       {required String sourceNodeId, required String targetParentId});
-  FutureOr<IndexNodeEdge> linkIndexNodes(
-      {required String fromNodeId,
-      required String toNodeId,
-      String edgeType = 'related',
-      String? label,
-      int sortOrder = 0});
-  FutureOr<List<IndexNodeEdge>> listOutgoingEdges(String fromNodeId);
-  FutureOr<List<IndexNodeEdge>> listIncomingEdges(String toNodeId);
-  FutureOr<List<IndexNodeEdge>> listGraphEdges(String graphRootId);
-  FutureOr<List<IndexNode>> listGraphNodes(String graphRootId);
-  FutureOr<Map<String, GraphNodePosition>> listGraphNodePositions(
-      String graphRootId);
-  FutureOr<void> setGraphNodePosition(
-      {required String nodeId, required double x, required double y});
   FutureOr<List<IndexNode>> listIndexRoots(
       {EntitySortMode sortMode = EntitySortMode.nameAsc});
   FutureOr<List<IndexNode>> listChildNodes(String indexRootId,

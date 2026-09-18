@@ -182,13 +182,13 @@ class _ImagePreviewState extends State<_ImagePreview> {
                   if (!_toolbarCollapsed) ...[
                     if (widget.onReturnToSource != null)
                       toolbarButton(
-                        tooltip: '返回所在节点',
+                        tooltip: '返回所在位置',
                         onPressed: widget.onReturnToSource,
                         icon: Icons.arrow_back_rounded,
                       ),
                     if (widget.onDirectoryRoot != null)
                       toolbarButton(
-                        tooltip: '返回目录索引',
+                        tooltip: '返回目录',
                         onPressed: widget.onDirectoryRoot,
                         icon: Icons.account_tree_outlined,
                       ),

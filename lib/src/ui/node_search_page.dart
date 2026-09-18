@@ -71,7 +71,7 @@ class _NodeSearchPageViewState extends State<NodeSearchPageView> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('搜索节点')),
+        appBar: AppBar(title: const Text('搜索')),
         body: SafeArea(
             child: Column(children: [
           Padding(
@@ -85,7 +85,7 @@ class _NodeSearchPageViewState extends State<NodeSearchPageView> {
                   _search();
                 },
                 decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.search), hintText: '输入节点名称'),
+                    prefixIcon: Icon(Icons.search), hintText: '输入目录或分类名称'),
               )),
           Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -94,9 +94,8 @@ class _NodeSearchPageViewState extends State<NodeSearchPageView> {
                   ChoiceChip(
                       label: Text(switch (scope) {
                         NodeSearchScope.all => '全部',
-                        NodeSearchScope.directory => '目录索引',
-                        NodeSearchScope.collection => '树索引',
-                        NodeSearchScope.graph => '图索引'
+                        NodeSearchScope.directory => '目录',
+                        NodeSearchScope.collection => '分类'
                       }),
                       selected: _scope == scope,
                       onSelected: (_) {
@@ -114,8 +113,8 @@ class _NodeSearchPageViewState extends State<NodeSearchPageView> {
                       child: Text(_busy
                           ? '正在搜索…'
                           : _text.text.trim().isEmpty
-                              ? '按名称查找目录索引、树索引和图索引节点'
-                              : '没有匹配的节点'))
+                              ? '按名称查找目录或分类'
+                              : '没有匹配的内容'))
                   : ListView.separated(
                       itemCount: _items.length + (_more ? 1 : 0),
                       separatorBuilder: (context, index) =>
@@ -129,9 +128,8 @@ class _NodeSearchPageViewState extends State<NodeSearchPageView> {
                         }
                         final result = _items[index];
                         final type = switch (result.root.nodeType) {
-                          NodeType.directoryIndexRoot => '目录索引',
-                          NodeType.graphIndexRoot => '图索引',
-                          _ => '树索引'
+                          NodeType.directoryIndexRoot => '目录',
+                          _ => '分类'
                         };
                         return ListTile(
                             dense: true,

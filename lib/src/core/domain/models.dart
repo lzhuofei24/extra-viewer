@@ -88,10 +88,8 @@ enum NodeType {
   directoryIndexRoot('directory_index_root'),
   // Keep the storage value for compatibility with existing databases.
   customIndexRoot('category_index_root'),
-  graphIndexRoot('graph_index_root'),
   folder('folder'),
-  customNode('category'),
-  graphNode('graph_node');
+  customNode('category');
 
   const NodeType(this.value);
   final String value;
@@ -105,10 +103,7 @@ enum NodeType {
 }
 
 enum ViewType {
-  tree('tree'),
-  graph('graph'),
-  grid('grid'),
-  timeline('timeline');
+  tree('tree');
 
   const ViewType(this.value);
   final String value;
@@ -231,7 +226,7 @@ class NodePreviewBuildInput {
   final IndexNodePreview preview;
 }
 
-enum NodeSearchScope { all, directory, collection, graph }
+enum NodeSearchScope { all, directory, collection }
 
 class NodeSearchQuery {
   const NodeSearchQuery(
@@ -478,33 +473,6 @@ class IndexNodeSummary {
   final int childNodeCount;
 }
 
-class IndexNodeEdge {
-  const IndexNodeEdge({
-    required this.id,
-    required this.fromNodeId,
-    required this.toNodeId,
-    required this.edgeType,
-    required this.sortOrder,
-    this.label,
-  });
-
-  final String id;
-  final String fromNodeId;
-  final String toNodeId;
-  final String edgeType;
-  final String? label;
-  final int sortOrder;
-}
-
-class GraphNodePosition {
-  const GraphNodePosition(
-      {required this.nodeId, required this.x, required this.y});
-
-  final String nodeId;
-  final double x;
-  final double y;
-}
-
 enum EntityUpsertStatus { inserted, skipped, updated }
 
 class EntityUpsertResult {
@@ -639,8 +607,8 @@ class EntityListItem {
 enum AudioPlaybackMode {
   sequential('顺序播放'),
   singleRepeat('单曲循环'),
-  nodeRepeat('节点内循环'),
-  nodeShuffle('节点内随机');
+  nodeRepeat('列表循环'),
+  nodeShuffle('列表随机');
 
   const AudioPlaybackMode(this.label);
   final String label;

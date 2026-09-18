@@ -1,5 +1,8 @@
 # Modular refactor execution log
 
+> Historical note: graph indexes were removed in schema 8. Entries below
+> describe the implementation state at the time and are not current features.
+
 ## Contract
 
 Implement the approved seven-module plan. Preserve source files, existing user
