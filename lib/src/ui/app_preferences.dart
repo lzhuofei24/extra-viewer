@@ -61,9 +61,15 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
   static const _pageMarginKey = 'preferences.gallery.page_margin';
   static const _cardGapKey = 'preferences.gallery.card_gap';
   static const _cardRadiusKey = 'preferences.gallery.card_radius';
-  static const _equalWidthKey = 'preferences.gallery.equal_width';
+  static const _portraitEqualWidthColumnsKey =
+      'preferences.gallery.portrait_equal_width_columns';
+  static const _landscapeEqualWidthColumnsKey =
+      'preferences.gallery.landscape_equal_width_columns';
+  static const _portraitSquareColumnsKey =
+      'preferences.gallery.portrait_square_columns';
+  static const _landscapeSquareColumnsKey =
+      'preferences.gallery.landscape_square_columns';
   static const _equalHeightKey = 'preferences.gallery.equal_height';
-  static const _squareSizeKey = 'preferences.gallery.square_size';
   static const _folderHeightKey = 'preferences.gallery.folder_height';
 
   @override
@@ -94,12 +100,16 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
           cardGap: _number(_cardGapKey, GalleryLayoutSettings.defaultCardGap),
           cardRadius:
               _number(_cardRadiusKey, GalleryLayoutSettings.defaultCardRadius),
-          equalWidthTarget: _number(
-              _equalWidthKey, GalleryLayoutSettings.defaultEqualWidthTarget),
+          portraitEqualWidthColumns: _integer(_portraitEqualWidthColumnsKey,
+              GalleryLayoutSettings.defaultPortraitEqualWidthColumns),
+          landscapeEqualWidthColumns: _integer(_landscapeEqualWidthColumnsKey,
+              GalleryLayoutSettings.defaultLandscapeEqualWidthColumns),
+          portraitSquareColumns: _integer(_portraitSquareColumnsKey,
+              GalleryLayoutSettings.defaultPortraitSquareColumns),
+          landscapeSquareColumns: _integer(_landscapeSquareColumnsKey,
+              GalleryLayoutSettings.defaultLandscapeSquareColumns),
           equalHeightTarget: _number(
               _equalHeightKey, GalleryLayoutSettings.defaultEqualHeightTarget),
-          squareSize:
-              _number(_squareSizeKey, GalleryLayoutSettings.defaultSquareSize),
           folderHeight: _number(
               _folderHeightKey, GalleryLayoutSettings.defaultFolderHeight),
         ).normalized(),
@@ -109,6 +119,9 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
     final value = _preferences.getDouble(key);
     return value == null || !value.isFinite ? fallback : value;
   }
+
+  int _integer(String key, int fallback) =>
+      _preferences.getInt(key) ?? fallback;
 
   @override
   Future<void> save(AppPreferencesData value) async {
@@ -121,9 +134,15 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
       _preferences.setDouble(_pageMarginKey, layout.pageMargin),
       _preferences.setDouble(_cardGapKey, layout.cardGap),
       _preferences.setDouble(_cardRadiusKey, layout.cardRadius),
-      _preferences.setDouble(_equalWidthKey, layout.equalWidthTarget),
+      _preferences.setInt(
+          _portraitEqualWidthColumnsKey, layout.portraitEqualWidthColumns),
+      _preferences.setInt(
+          _landscapeEqualWidthColumnsKey, layout.landscapeEqualWidthColumns),
+      _preferences.setInt(
+          _portraitSquareColumnsKey, layout.portraitSquareColumns),
+      _preferences.setInt(
+          _landscapeSquareColumnsKey, layout.landscapeSquareColumns),
       _preferences.setDouble(_equalHeightKey, layout.equalHeightTarget),
-      _preferences.setDouble(_squareSizeKey, layout.squareSize),
       _preferences.setDouble(_folderHeightKey, layout.folderHeight),
     ]);
   }

@@ -44,35 +44,30 @@ class MiniAudioPlayer extends StatelessWidget {
         (MediaQuery.sizeOf(context).width - 8).clamp(280.0, 500.0).toDouble();
     final expandedWidth =
         (titleWidth + 224).clamp(280.0, availableWidth).toDouble();
-    const attachedRadius = BorderRadius.only(
-      topLeft: Radius.circular(10),
-      bottomLeft: Radius.circular(10),
-    );
-
-    return AnimatedSize(
+    final radius = collapsed ? 24.0 : 28.0;
+    return AnimatedContainer(
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOutCubic,
-      alignment: Alignment.centerRight,
-      child: collapsed
-          ? Material(
-              color: scheme.surface.withValues(alpha: 0.92),
-              elevation: 8,
-              borderRadius: attachedRadius,
-              clipBehavior: Clip.antiAlias,
-              child: IconButton(
-                tooltip: '展开播放器',
-                onPressed: onToggleCollapsed,
-                icon: const CollapseGripIcon(),
-              ),
-            )
-          : Material(
-              color: scheme.surface.withValues(alpha: 0.92),
-              elevation: 8,
-              borderRadius: attachedRadius,
-              clipBehavior: Clip.antiAlias,
-              child: SizedBox(
-                width: expandedWidth,
-                child: InkWell(
+      width: collapsed ? 48 : expandedWidth,
+      height: collapsed ? 48 : 56,
+      child: AnimatedPhysicalModel(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+        shape: BoxShape.rectangle,
+        borderRadius: BorderRadius.circular(radius),
+        elevation: 8,
+        color: scheme.surface.withValues(alpha: 0.92),
+        shadowColor: Colors.black,
+        clipBehavior: Clip.antiAlias,
+        child: Material(
+          color: Colors.transparent,
+          child: collapsed
+              ? IconButton(
+                  tooltip: '展开播放器',
+                  onPressed: onToggleCollapsed,
+                  icon: const CollapseGripIcon(),
+                )
+              : InkWell(
                   onTap: onOpen,
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
@@ -142,8 +137,8 @@ class MiniAudioPlayer extends StatelessWidget {
                     ),
                   ),
                 ),
-              ),
-            ),
+        ),
+      ),
     );
   }
 }

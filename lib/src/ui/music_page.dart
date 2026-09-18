@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/domain/models.dart';
 import '../core/media/app_audio_controller.dart';
 import 'design_tokens.dart';
+import 'app_sidebar.dart';
 
 class MusicPage extends StatelessWidget {
   const MusicPage({
@@ -24,9 +25,15 @@ class MusicPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final activeId = controller.session?.id;
+    final obstruction = AppNavigationObstruction.of(context);
     return SafeArea(
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(28, 26, 28, 40),
+        padding: EdgeInsets.fromLTRB(
+          28 + obstruction.left,
+          26,
+          28,
+          40 + obstruction.bottom,
+        ),
         children: [
           Text('音乐', style: Theme.of(context).textTheme.headlineMedium),
           const SizedBox(height: 6),

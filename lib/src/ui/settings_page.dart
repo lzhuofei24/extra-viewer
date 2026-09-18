@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'design_tokens.dart';
+import 'app_sidebar.dart';
 import 'gallery_layout_settings.dart';
 import 'library_widgets.dart';
 
@@ -26,7 +27,7 @@ class SettingsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return ListView(
-      padding: AppTokens.pagePadding,
+      padding: AppTokens.pagePadding.add(AppNavigationObstruction.of(context)),
       children: [
         const SectionHeader(
           title: '设置',
@@ -62,69 +63,146 @@ class SettingsPage extends StatelessWidget {
             icon: const Icon(Icons.restart_alt_rounded),
             label: const Text('恢复默认布局'),
           ),
-          child: Column(
-            children: [
-              _slider(
-                  '页面边距',
-                  layoutSettings.pageMargin,
-                  0,
-                  24,
-                  GalleryLayoutSettings.defaultPageMargin,
-                  (v) => layoutSettings.copyWith(pageMargin: v)),
-              _slider(
-                  '卡片间距',
-                  layoutSettings.cardGap,
-                  0,
-                  24,
-                  GalleryLayoutSettings.defaultCardGap,
-                  (v) => layoutSettings.copyWith(cardGap: v)),
-              _slider(
-                  '卡片圆角',
-                  layoutSettings.cardRadius,
-                  0,
-                  32,
-                  GalleryLayoutSettings.defaultCardRadius,
-                  (v) => layoutSettings.copyWith(cardRadius: v)),
-              _slider(
-                  '等宽卡片宽度',
-                  layoutSettings.equalWidthTarget,
-                  160,
-                  480,
-                  GalleryLayoutSettings.defaultEqualWidthTarget,
-                  (v) => layoutSettings.copyWith(equalWidthTarget: v),
-                  32),
-              _slider(
-                  '等高卡片高度',
-                  layoutSettings.equalHeightTarget,
-                  160,
-                  600,
-                  GalleryLayoutSettings.defaultEqualHeightTarget,
-                  (v) => layoutSettings.copyWith(equalHeightTarget: v),
-                  44),
-              _slider(
-                  '方格边长',
-                  layoutSettings.squareSize,
-                  160,
-                  480,
-                  GalleryLayoutSettings.defaultSquareSize,
-                  (v) => layoutSettings.copyWith(squareSize: v),
-                  32),
-              _slider(
-                  '文件夹封面高度',
-                  layoutSettings.folderHeight,
-                  140,
-                  480,
-                  GalleryLayoutSettings.defaultFolderHeight,
-                  (v) => layoutSettings.copyWith(folderHeight: v),
-                  34),
-              const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text('沉浸式浏览始终使用 1dp 间距和 2dp 圆角。',
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-              ),
-            ],
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final appearance = _SettingsGroup(
+                title: '外观',
+                children: [
+                  _stepper(
+                    '页面边距',
+                    layoutSettings.pageMargin.round(),
+                    0,
+                    24,
+                    2,
+                    'dp',
+                    (value) => layoutSettings.copyWith(
+                      pageMargin: value.toDouble(),
+                    ),
+                  ),
+                  _stepper(
+                    '卡片间距',
+                    layoutSettings.cardGap.round(),
+                    0,
+                    24,
+                    2,
+                    'dp',
+                    (value) => layoutSettings.copyWith(
+                      cardGap: value.toDouble(),
+                    ),
+                  ),
+                  _stepper(
+                    '卡片圆角',
+                    layoutSettings.cardRadius.round(),
+                    0,
+                    32,
+                    2,
+                    'dp',
+                    (value) => layoutSettings.copyWith(
+                      cardRadius: value.toDouble(),
+                    ),
+                  ),
+                ],
+              );
+              final cards = _SettingsGroup(
+                title: '卡片',
+                children: [
+                  _stepper(
+                    '等宽 · 竖屏',
+                    layoutSettings.portraitEqualWidthColumns,
+                    1,
+                    8,
+                    1,
+                    '列',
+                    (value) => layoutSettings.copyWith(
+                      portraitEqualWidthColumns: value,
+                    ),
+                  ),
+                  _stepper(
+                    '等宽 · 横屏',
+                    layoutSettings.landscapeEqualWidthColumns,
+                    1,
+                    8,
+                    1,
+                    '列',
+                    (value) => layoutSettings.copyWith(
+                      landscapeEqualWidthColumns: value,
+                    ),
+                  ),
+                  _stepper(
+                    '方格 · 竖屏',
+                    layoutSettings.portraitSquareColumns,
+                    1,
+                    8,
+                    1,
+                    '列',
+                    (value) => layoutSettings.copyWith(
+                      portraitSquareColumns: value,
+                    ),
+                  ),
+                  _stepper(
+                    '方格 · 横屏',
+                    layoutSettings.landscapeSquareColumns,
+                    1,
+                    8,
+                    1,
+                    '列',
+                    (value) => layoutSettings.copyWith(
+                      landscapeSquareColumns: value,
+                    ),
+                  ),
+                  _stepper(
+                    '等高卡片高度',
+                    layoutSettings.equalHeightTarget.round(),
+                    160,
+                    600,
+                    20,
+                    'dp',
+                    (value) => layoutSettings.copyWith(
+                      equalHeightTarget: value.toDouble(),
+                    ),
+                  ),
+                  _stepper(
+                    '文件夹封面高度',
+                    layoutSettings.folderHeight.round(),
+                    140,
+                    480,
+                    20,
+                    'dp',
+                    (value) => layoutSettings.copyWith(
+                      folderHeight: value.toDouble(),
+                    ),
+                  ),
+                ],
+              );
+              final landscape =
+                  MediaQuery.orientationOf(context) == Orientation.landscape;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (landscape)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: appearance),
+                        const SizedBox(width: 28),
+                        Expanded(child: cards),
+                      ],
+                    )
+                  else ...[
+                    appearance,
+                    const SizedBox(height: 20),
+                    cards,
+                  ],
+                  const SizedBox(height: 12),
+                  Text(
+                    '自适应布局使用当前方向的等宽列数。沉浸式浏览始终使用 1dp 间距和 2dp 圆角。',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ),
         const SizedBox(height: 18),
@@ -139,61 +217,145 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
-  Widget _slider(String label, double value, double min, double max,
-          double defaultValue, GalleryLayoutSettings Function(double) update,
-          [int divisions = 24]) =>
-      _LayoutSlider(
-          label: label,
-          value: value,
-          min: min,
-          max: max,
-          defaultValue: defaultValue,
-          divisions: divisions,
-          onChanged: (value) => onLayoutChanged(update(value)));
+  Widget _stepper(
+    String label,
+    int value,
+    int min,
+    int max,
+    int step,
+    String unit,
+    GalleryLayoutSettings Function(int) update,
+  ) =>
+      _LayoutStepper(
+        label: label,
+        value: value,
+        min: min,
+        max: max,
+        step: step,
+        unit: unit,
+        onChanged: (value) => onLayoutChanged(update(value)),
+      );
 }
 
-class _LayoutSlider extends StatelessWidget {
-  const _LayoutSlider(
-      {required this.label,
-      required this.value,
-      required this.min,
-      required this.max,
-      required this.defaultValue,
-      required this.divisions,
-      required this.onChanged});
+class _SettingsGroup extends StatelessWidget {
+  const _SettingsGroup({required this.title, required this.children});
 
-  final String label;
-  final double value;
-  final double min;
-  final double max;
-  final double defaultValue;
-  final int divisions;
-  final ValueChanged<double> onChanged;
+  final String title;
+  final List<Widget> children;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: Row(children: [
-          SizedBox(width: 116, child: Text(label)),
-          Expanded(
-              child: Slider(
-                  value: value.clamp(min, max),
-                  min: min,
-                  max: max,
-                  divisions: divisions,
-                  label: '${value.round()} dp',
-                  onChanged: onChanged)),
-          SizedBox(
-              width: 58,
-              child: Text('${value.round()} dp',
-                  textAlign: TextAlign.end,
-                  style: Theme.of(context).textTheme.labelMedium)),
-          IconButton(
-              tooltip: '恢复默认值',
-              onPressed:
-                  value == defaultValue ? null : () => onChanged(defaultValue),
-              icon: const Icon(Icons.restart_alt_rounded, size: 19)),
-        ]),
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          const Divider(),
+          const SizedBox(height: 4),
+          ...children,
+        ],
+      );
+}
+
+class _LayoutStepper extends StatelessWidget {
+  const _LayoutStepper({
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.step,
+    required this.unit,
+    required this.onChanged,
+  });
+
+  final String label;
+  final int value;
+  final int min;
+  final int max;
+  final int step;
+  final String unit;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final controls = _StepperControls(
+      value: value,
+      unit: unit,
+      onDecrease:
+          value <= min ? null : () => onChanged((value - step).clamp(min, max)),
+      onIncrease:
+          value >= max ? null : () => onChanged((value + step).clamp(min, max)),
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 310) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label),
+                const SizedBox(height: 6),
+                Align(alignment: Alignment.centerRight, child: controls),
+              ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: Text(label)),
+              const SizedBox(width: 12),
+              controls,
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _StepperControls extends StatelessWidget {
+  const _StepperControls({
+    required this.value,
+    required this.unit,
+    required this.onDecrease,
+    required this.onIncrease,
+  });
+
+  final int value;
+  final String unit;
+  final VoidCallback? onDecrease;
+  final VoidCallback? onIncrease;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: '减少',
+              onPressed: onDecrease,
+              constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+              icon: const Icon(Icons.remove_rounded),
+            ),
+            SizedBox(
+              width: 66,
+              child: Text(
+                '$value $unit',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+            ),
+            IconButton(
+              tooltip: '增加',
+              onPressed: onIncrease,
+              constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+              icon: const Icon(Icons.add_rounded),
+            ),
+          ],
+        ),
       );
 }
 

@@ -33,6 +33,9 @@ class AppNavigation extends StatelessWidget {
   static const double expandedRailWidth = 80;
   static const double collapsedRailWidth = 40;
   static const double bottomBarHeight = 72;
+  static const double outerMargin = 12;
+  static const double contentClearance = 20;
+  static const double miniPlayerGap = 8;
 
   final AppNavigationLayout layout;
   final AppSection current;
@@ -127,6 +130,26 @@ class AppNavigation extends StatelessWidget {
       onChanged(item.section);
     }
   }
+}
+
+class AppNavigationObstruction extends InheritedWidget {
+  const AppNavigationObstruction({
+    super.key,
+    required this.insets,
+    required super.child,
+  });
+
+  final EdgeInsets insets;
+
+  static EdgeInsets of(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<AppNavigationObstruction>()
+          ?.insets ??
+      EdgeInsets.zero;
+
+  @override
+  bool updateShouldNotify(AppNavigationObstruction oldWidget) =>
+      oldWidget.insets != insets;
 }
 
 class _NavigationDestination {

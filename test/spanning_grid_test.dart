@@ -17,7 +17,7 @@ void main() {
           slivers: [
             SpanningGridSliver<int>(
               items: List<int>.generate(aspects.length, (index) => index),
-              targetCellWidth: 210,
+              columnCount: 6,
               targetRowHeight: 280,
               crossRowMode: false,
               aspectRatio: (item) => aspects[item],

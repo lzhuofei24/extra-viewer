@@ -26,7 +26,11 @@ void main() {
       sortMode: EntitySortMode.sizeDesc,
       displayMode: BrowserDisplayMode.list,
       gridLayout: BrowserGridLayout.square,
-      layout: initial.layout.copyWith(cardRadius: 24),
+      layout: initial.layout.copyWith(
+        cardRadius: 24,
+        portraitEqualWidthColumns: 3,
+        landscapeSquareColumns: 5,
+      ),
     ));
     final restored = await store.load();
     expect(restored.themeChoice, ViewerThemeChoice.galleryDark);
@@ -34,6 +38,8 @@ void main() {
     expect(restored.displayMode, BrowserDisplayMode.list);
     expect(restored.gridLayout, BrowserGridLayout.square);
     expect(restored.layout.cardRadius, 24);
+    expect(restored.layout.portraitEqualWidthColumns, 3);
+    expect(restored.layout.landscapeSquareColumns, 5);
   });
 
   test('invalid stored values fall back or clamp to supported ranges',
@@ -43,6 +49,8 @@ void main() {
       'preferences.browser.display': 'removed-display',
       'preferences.gallery.page_margin': -40.0,
       'preferences.gallery.equal_height': 9999.0,
+      'preferences.gallery.portrait_equal_width_columns': 0,
+      'preferences.gallery.landscape_square_columns': 99,
     });
     final store = SharedPreferencesAppPreferencesStore(
         await SharedPreferences.getInstance());
@@ -51,6 +59,8 @@ void main() {
     expect(value.displayMode, BrowserDisplayMode.grid);
     expect(value.layout.pageMargin, 0);
     expect(value.layout.equalHeightTarget, 600);
+    expect(value.layout.portraitEqualWidthColumns, 1);
+    expect(value.layout.landscapeSquareColumns, 8);
   });
 
   test('controller serializes changes and resets only layout', () async {

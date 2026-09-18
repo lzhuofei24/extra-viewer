@@ -1,5 +1,3 @@
-import 'gallery_layout_settings.dart';
-
 class CollectionGridLayout {
   const CollectionGridLayout({
     required this.columnCount,
@@ -13,25 +11,22 @@ class CollectionGridLayout {
 
   /// Uses the actual sliver width, not the full window width.
   ///
-  /// `targetItemWidth` selects density. The computed width fills the row
-  /// exactly, so a sidebar or window resize cannot create a trailing overflow.
+  /// The computed width fills the requested columns exactly, so a sidebar or
+  /// window resize cannot create a trailing overflow.
   factory CollectionGridLayout.calculate({
     required double availableWidth,
+    required int columnCount,
     double horizontalPadding = 8,
     double gap = 4,
-    double? targetItemWidth,
     int maxColumns = 8,
   }) {
-    final resolvedTargetItemWidth =
-        targetItemWidth ?? GalleryLayoutSettings.defaultEqualWidthTarget;
     final contentWidth =
         (availableWidth - horizontalPadding * 2).clamp(1.0, double.infinity);
-    final rawColumns =
-        ((contentWidth + gap) / (resolvedTargetItemWidth + gap)).floor();
-    final columnCount = rawColumns.clamp(1, maxColumns);
-    final itemWidth = (contentWidth - gap * (columnCount - 1)) / columnCount;
+    final resolvedColumns = columnCount.clamp(1, maxColumns);
+    final itemWidth =
+        (contentWidth - gap * (resolvedColumns - 1)) / resolvedColumns;
     return CollectionGridLayout(
-      columnCount: columnCount,
+      columnCount: resolvedColumns,
       itemWidth: itemWidth,
       contentWidth: contentWidth,
     );

@@ -8,7 +8,7 @@ class SpanningGridSliver<T> extends StatelessWidget {
   const SpanningGridSliver({
     super.key,
     required this.items,
-    required this.targetCellWidth,
+    required this.columnCount,
     required this.targetRowHeight,
     required this.crossRowMode,
     this.gap = 4,
@@ -18,7 +18,7 @@ class SpanningGridSliver<T> extends StatelessWidget {
   });
 
   final List<T> items;
-  final double targetCellWidth;
+  final int columnCount;
   final double targetRowHeight;
   final bool crossRowMode;
   final double gap;
@@ -46,10 +46,7 @@ class SpanningGridSliver<T> extends StatelessWidget {
               constraints.crossAxisExtent - horizontalPadding * 2,
             )
             .toDouble();
-        final physicalColumns =
-            ((availableWidth + gap) / (targetCellWidth + gap))
-                .floor()
-                .clamp(1, 8);
+        final physicalColumns = columnCount.clamp(1, 8);
         final physicalCellWidth =
             (availableWidth - gap * (physicalColumns - 1)) / physicalColumns;
         final aspects = [

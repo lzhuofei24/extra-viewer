@@ -2836,13 +2836,19 @@ class _AppShellState extends State<AppShell> {
                   ? AppNavigation.collapsedRailWidth
                   : AppNavigation.expandedRailWidth;
               final safeBottom = MediaQuery.paddingOf(context).bottom;
-              final contentInset = hasMediaOverlay
+              final navigationObstruction = hasMediaOverlay
                   ? EdgeInsets.zero
                   : isPortrait
                       ? const EdgeInsets.only(
-                          bottom: AppNavigation.bottomBarHeight + 24,
+                          bottom: AppNavigation.bottomBarHeight +
+                              AppNavigation.outerMargin +
+                              AppNavigation.contentClearance,
                         )
-                      : EdgeInsets.only(left: railWidth + 24);
+                      : EdgeInsets.only(
+                          left: railWidth +
+                              AppNavigation.outerMargin +
+                              AppNavigation.contentClearance,
+                        );
               final navigation = AppNavigation(
                 layout: navigationLayout,
                 current: _section,
@@ -2857,17 +2863,17 @@ class _AppShellState extends State<AppShell> {
 
               return Stack(
                 children: [
-                  SafeArea(
-                    child: Padding(
-                      padding: contentInset,
+                  AppNavigationObstruction(
+                    insets: navigationObstruction,
+                    child: SafeArea(
                       child: body,
                     ),
                   ),
                   if (!hasMediaOverlay && isPortrait)
                     Positioned(
-                      left: 12,
-                      right: 12,
-                      bottom: 12,
+                      left: AppNavigation.outerMargin,
+                      right: AppNavigation.outerMargin,
+                      bottom: AppNavigation.outerMargin,
                       child: SafeArea(
                         top: false,
                         left: false,
@@ -2877,20 +2883,26 @@ class _AppShellState extends State<AppShell> {
                     ),
                   if (!hasMediaOverlay && !isPortrait)
                     Positioned(
-                      left: 12,
-                      top: 12,
-                      bottom: 12,
-                      child: SafeArea(
-                        right: false,
-                        child: navigation,
+                      left: AppNavigation.outerMargin,
+                      top: AppNavigation.outerMargin,
+                      bottom: AppNavigation.outerMargin,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: SafeArea(
+                          right: false,
+                          child: navigation,
+                        ),
                       ),
                     ),
                   if (!hasMediaOverlay)
                     Positioned(
-                      right: 12,
+                      right: AppNavigation.outerMargin,
                       bottom: isPortrait
-                          ? 12 + safeBottom + AppNavigation.bottomBarHeight + 8
-                          : 12 + safeBottom,
+                          ? AppNavigation.outerMargin +
+                              safeBottom +
+                              AppNavigation.bottomBarHeight +
+                              AppNavigation.miniPlayerGap
+                          : AppNavigation.outerMargin + safeBottom,
                       child: miniPlayer,
                     ),
                   if (_mediaOverlay case final overlay?)

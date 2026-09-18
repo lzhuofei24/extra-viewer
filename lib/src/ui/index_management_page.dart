@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/controllers/library_build_task_controller.dart';
 import '../core/domain/models.dart';
 import 'design_tokens.dart';
+import 'app_sidebar.dart';
 import 'library_widgets.dart';
 
 class IndexManagementPage extends StatelessWidget {
@@ -49,7 +50,7 @@ class IndexManagementPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return ListView(
-      padding: AppTokens.pagePadding,
+      padding: AppTokens.pagePadding.add(AppNavigationObstruction.of(context)),
       children: [
         const SectionHeader(
           title: '管理',
@@ -233,8 +234,11 @@ class _IndexRootSection extends StatelessWidget {
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             itemCount: roots.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount:
+                  MediaQuery.orientationOf(context) == Orientation.portrait
+                      ? 1
+                      : 3,
               mainAxisExtent: 76,
               crossAxisSpacing: 8,
               mainAxisSpacing: 1,

@@ -9,6 +9,7 @@ import '../core/diagnostics/app_diagnostic_log.dart';
 import '../core/domain/models.dart';
 import '../core/controllers/library_build_task_controller.dart';
 import 'design_tokens.dart';
+import 'app_sidebar.dart';
 import 'library_widgets.dart';
 
 class DiagnosticsPage extends StatefulWidget {
@@ -66,7 +67,8 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
   Future<void> _copyDiagnostics(List<AppDiagnosticRecord> records) async {
     final buffer = StringBuffer()
       ..writeln('Extra Viewer 诊断摘要')
-      ..writeln('平台: ${Platform.operatingSystem} ${Platform.operatingSystemVersion}')
+      ..writeln(
+          '平台: ${Platform.operatingSystem} ${Platform.operatingSystemVersion}')
       ..writeln('Schema: ${DatabaseDescriptor.schemaVersion}')
       ..writeln('日志目录: ${_redact(widget.log.directoryPath ?? '不可用')}')
       ..writeln()
@@ -99,7 +101,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: AppTokens.pagePadding,
+      padding: AppTokens.pagePadding.add(AppNavigationObstruction.of(context)),
       children: [
         SectionHeader(
           title: '日志',
@@ -184,9 +186,11 @@ class _StatusCard extends StatelessWidget {
             runSpacing: 10,
             children: [
               _StatusItem('平台', Platform.operatingSystem),
-              const _StatusItem('Schema', '${DatabaseDescriptor.schemaVersion}'),
+              const _StatusItem(
+                  'Schema', '${DatabaseDescriptor.schemaVersion}'),
               _StatusItem('可恢复任务', '$recoverableCount'),
-              _StatusItem('内存图片缓存', '${cache.currentSize}/${cache.maximumSize}'),
+              _StatusItem(
+                  '内存图片缓存', '${cache.currentSize}/${cache.maximumSize}'),
               _StatusItem('缓存容量', _formatBytes(cache.currentSizeBytes)),
             ],
           ),
@@ -225,7 +229,8 @@ class _StatusCard extends StatelessWidget {
 }
 
 class _TaskSummaryCard extends StatelessWidget {
-  const _TaskSummaryCard({required this.recoverableJobs, required this.history});
+  const _TaskSummaryCard(
+      {required this.recoverableJobs, required this.history});
 
   final List<LibraryBuildJob> recoverableJobs;
   final List<LibraryBuildJob> history;
@@ -239,7 +244,7 @@ class _TaskSummaryCard extends StatelessWidget {
         children: [
           Text('最近任务摘要', style: theme.textTheme.titleMedium),
           const SizedBox(height: 8),
-            for (final job in [...recoverableJobs, ...history].take(6))
+          for (final job in [...recoverableJobs, ...history].take(6))
             ListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
@@ -334,8 +339,7 @@ class _EventPanel extends StatelessWidget {
               child: Center(child: Text('暂无日志记录')),
             )
           else ...[
-            if (errorGroups.isNotEmpty)
-              _ErrorSummary(groups: errorGroups),
+            if (errorGroups.isNotEmpty) _ErrorSummary(groups: errorGroups),
             for (final record in filtered.take(120))
               _EventTile(record: record, expanded: showDetails),
           ],
@@ -433,7 +437,9 @@ class _EventTile extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             child: SelectableText(
-              record.fields.entries.map((entry) => '${entry.key}: ${entry.value}').join('\n'),
+              record.fields.entries
+                  .map((entry) => '${entry.key}: ${entry.value}')
+                  .join('\n'),
               style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
             ),
           ),
