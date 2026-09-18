@@ -136,17 +136,12 @@ class CollectionBrowserPage extends StatelessWidget {
     final listMode = !immersiveBrowsing &&
         browserState.displayMode == BrowserDisplayMode.list;
     final obstruction = AppNavigationObstruction.of(context);
-    final toolbarHeight =
-        MediaQuery.sizeOf(context).width - obstruction.left < 600
-            ? 108.0
-            : 64.0;
     return Stack(
       children: [
         Padding(
-          padding: EdgeInsets.only(left: obstruction.left),
+          padding: EdgeInsets.zero,
           child: Column(
             children: [
-              if (!immersiveBrowsing) SizedBox(height: toolbarHeight + 8),
               Expanded(
                 child: _BrowserScrollShell(
                   preloadScopeKey:
@@ -354,29 +349,50 @@ class CollectionBrowserPage extends StatelessWidget {
         if (!immersiveBrowsing)
           Positioned(
             top: 4,
-            left: obstruction.left + 8,
+            left: 8,
             right: 8,
-            child: _PathBar(
-              onSearchNodes: onSearchNodes,
-              currentNode: currentNode,
-              path: nodePath,
-              onOpenRootIndex: onOpenRootIndex,
-              onPathNodeSelected: onPathNodeSelected,
-              browserState: browserState,
-              onSortChanged: onSortChanged,
-              onDisplayModeChanged: onDisplayModeChanged,
-              onGridLayoutChanged: onGridLayoutChanged,
-              immersiveBrowsing: immersiveBrowsing,
-              onToggleImmersiveBrowsing: onToggleImmersiveBrowsing,
-              selectionMode: selectionMode,
-              onToggleSelectionMode: onToggleSelectionMode,
-              onCloneCurrentNodeTree: onCloneCurrentNodeTree,
-              canUpdateDirectoryNode: canUpdateDirectoryNode,
-              onUpdateDirectoryNode: onUpdateDirectoryNode,
-              canDeleteCurrentNode: canDeleteCurrentNode,
-              onDeleteCurrentNode: onDeleteCurrentNode,
-              canCreateNode: canManageCurrentCustomIndex,
-              onCreateNode: onCreateCollection,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 960),
+                child: _PathBar(
+                  onSearchNodes: onSearchNodes,
+                  currentNode: currentNode,
+                  path: nodePath,
+                  onOpenRootIndex: onOpenRootIndex,
+                  onPathNodeSelected: onPathNodeSelected,
+                  browserState: browserState,
+                  onSortChanged: onSortChanged,
+                  onDisplayModeChanged: onDisplayModeChanged,
+                  onGridLayoutChanged: onGridLayoutChanged,
+                  immersiveBrowsing: immersiveBrowsing,
+                  onToggleImmersiveBrowsing: onToggleImmersiveBrowsing,
+                  selectionMode: selectionMode,
+                  onToggleSelectionMode: onToggleSelectionMode,
+                  onCloneCurrentNodeTree: onCloneCurrentNodeTree,
+                  canUpdateDirectoryNode: canUpdateDirectoryNode,
+                  onUpdateDirectoryNode: onUpdateDirectoryNode,
+                  canDeleteCurrentNode: canDeleteCurrentNode,
+                  onDeleteCurrentNode: onDeleteCurrentNode,
+                  canCreateNode: canManageCurrentCustomIndex,
+                  onCreateNode: onCreateCollection,
+                ),
+              ),
+            ),
+          ),
+        if (immersiveBrowsing)
+          Positioned(
+            top: 8,
+            right: 8,
+            child: FloatingGlassSurface(
+              borderRadius: 24,
+              child: Material(
+                color: Colors.transparent,
+                child: IconButton(
+                  tooltip: '退出沉浸式浏览',
+                  onPressed: onToggleImmersiveBrowsing,
+                  icon: const Icon(Icons.fullscreen_exit_rounded),
+                ),
+              ),
             ),
           ),
         if (selectionMode)
@@ -1840,6 +1856,7 @@ class _HorizontalNodeRail extends StatelessWidget {
       height: 42,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
+        reverse: true,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [

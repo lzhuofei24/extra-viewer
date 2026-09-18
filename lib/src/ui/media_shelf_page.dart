@@ -10,6 +10,7 @@ import 'browser_toolbar.dart';
 import 'collection_grid_layout.dart';
 import 'gallery_layout_settings.dart';
 import 'library_widgets.dart';
+import 'recent_media_switcher.dart';
 import 'spanning_grid.dart';
 
 enum MediaShelfKind { video, gallery, reading }
@@ -26,7 +27,8 @@ class MediaShelfPage extends StatefulWidget {
     required this.onSortChanged,
     required this.onDisplayModeChanged,
     required this.onGridLayoutChanged,
-    this.onImmersiveChanged,
+    required this.currentSection,
+    required this.onSectionChanged,
   });
 
   final MediaShelfKind kind;
@@ -38,7 +40,8 @@ class MediaShelfPage extends StatefulWidget {
   final ValueChanged<EntitySortMode> onSortChanged;
   final ValueChanged<BrowserDisplayMode> onDisplayModeChanged;
   final ValueChanged<BrowserGridLayout> onGridLayoutChanged;
-  final ValueChanged<bool>? onImmersiveChanged;
+  final AppSection currentSection;
+  final ValueChanged<AppSection> onSectionChanged;
 
   @override
   State<MediaShelfPage> createState() => _MediaShelfPageState();
@@ -58,12 +61,6 @@ class _MediaShelfPageState extends State<MediaShelfPage> {
         MediaShelfKind.reading => const [EntityType.text],
       };
 
-  String get _title => switch (widget.kind) {
-        MediaShelfKind.video => '最近视频',
-        MediaShelfKind.gallery => '最近图片',
-        MediaShelfKind.reading => '最近阅读',
-      };
-
   @override
   void initState() {
     super.initState();
@@ -76,9 +73,6 @@ class _MediaShelfPageState extends State<MediaShelfPage> {
     if (oldWidget.kind != widget.kind) {
       if (_immersive) {
         _immersive = false;
-        WidgetsBinding.instance.addPostFrameCallback(
-          (_) => widget.onImmersiveChanged?.call(false),
-        );
       }
       _reload();
     }
@@ -88,7 +82,6 @@ class _MediaShelfPageState extends State<MediaShelfPage> {
     if (!_supportsImmersive) return;
     final next = !_immersive;
     setState(() => _immersive = next);
-    widget.onImmersiveChanged?.call(next);
   }
 
   Future<void> _reload() async {
@@ -122,50 +115,39 @@ class _MediaShelfPageState extends State<MediaShelfPage> {
   Widget build(BuildContext context) {
     final items = _sortedItems;
     final obstruction = AppNavigationObstruction.of(context);
-    final toolbarHeight =
-        MediaQuery.sizeOf(context).width - obstruction.left < 600
-            ? 108.0
-            : 64.0;
     return Stack(
       children: [
-        Padding(
-          padding: EdgeInsets.only(left: obstruction.left),
-          child: Stack(
-            children: [
-              CustomScrollView(
-                slivers: [
-                  if (!_immersive)
-                    SliverToBoxAdapter(
-                        child: SizedBox(height: toolbarHeight + 16)),
-                  if (items.isEmpty)
-                    SliverFillRemaining(
-                      child: Center(child: Text('暂无$_title内容')),
-                    )
-                  else ...[
-                    _ShelfContentSliver(
-                      items: items,
-                      browserState: widget.browserState,
-                      layoutSettings: widget.layoutSettings,
-                      immersive: _immersive,
-                      onOpenEntity: widget.onOpenEntity,
-                      onThumbnailNeeded: widget.onThumbnailNeeded,
-                    ),
-                    SliverPadding(
-                      padding: EdgeInsets.only(bottom: 92 + obstruction.bottom),
-                    ),
-                  ],
+        Stack(
+          children: [
+            CustomScrollView(
+              slivers: [
+                if (items.isEmpty)
+                  const SliverFillRemaining(
+                    child: Center(child: Text('暂无最近内容')),
+                  )
+                else ...[
+                  _ShelfContentSliver(
+                    items: items,
+                    browserState: widget.browserState,
+                    layoutSettings: widget.layoutSettings,
+                    immersive: _immersive,
+                    onOpenEntity: widget.onOpenEntity,
+                    onThumbnailNeeded: widget.onThumbnailNeeded,
+                  ),
+                  SliverPadding(
+                    padding: EdgeInsets.only(bottom: 92 + obstruction.bottom),
+                  ),
                 ],
-              ),
-              if (_immersive)
-                Positioned(
-                  top: 8,
-                  right: 8,
+              ],
+            ),
+            if (_immersive)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: FloatingGlassSurface(
+                  borderRadius: 24,
                   child: Material(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .surface
-                        .withValues(alpha: .72),
-                    borderRadius: BorderRadius.circular(16),
+                    color: Colors.transparent,
                     child: IconButton(
                       tooltip: '退出沉浸式浏览',
                       onPressed: _toggleImmersive,
@@ -173,24 +155,31 @@ class _MediaShelfPageState extends State<MediaShelfPage> {
                     ),
                   ),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
         if (!_immersive)
           Positioned(
             top: 8,
-            left: obstruction.left + 12,
+            left: 12,
             right: 12,
-            child: BrowserToolbar(
-              leading: Text(
-                _title,
-                style: Theme.of(context).textTheme.titleLarge,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 960),
+                child: BrowserToolbar(
+                  leading: RecentMediaSwitcher(
+                    current: widget.currentSection,
+                    onChanged: widget.onSectionChanged,
+                    embedded: true,
+                  ),
+                  browserState: widget.browserState,
+                  onSortChanged: widget.onSortChanged,
+                  onDisplayModeChanged: widget.onDisplayModeChanged,
+                  onGridLayoutChanged: widget.onGridLayoutChanged,
+                  onToggleImmersive:
+                      _supportsImmersive ? _toggleImmersive : null,
+                ),
               ),
-              browserState: widget.browserState,
-              onSortChanged: widget.onSortChanged,
-              onDisplayModeChanged: widget.onDisplayModeChanged,
-              onGridLayoutChanged: widget.onGridLayoutChanged,
-              onToggleImmersive: _supportsImmersive ? _toggleImmersive : null,
             ),
           ),
       ],

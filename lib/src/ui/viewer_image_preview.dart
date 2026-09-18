@@ -150,81 +150,82 @@ class _ImagePreviewState extends State<_ImagePreview> {
           ),
         ),
         Positioned(
-          right: 0,
-          // Keep the viewer drawer directly above the app-shell music drawer.
-          // It remains local to this image preview and disappears with it.
-          bottom: MediaQuery.sizeOf(context).width >= 900 ? 84 : 160,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface.withValues(
-                    alpha: 0.86,
-                  ),
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(10),
-                bottomLeft: Radius.circular(10),
-              ),
-              boxShadow: const [
-                BoxShadow(blurRadius: 10, color: Color(0x33000000)),
-              ],
-            ),
-            child: SizedBox(
-              height: 48,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  toolbarButton(
-                    tooltip: _toolbarCollapsed ? '展开工具栏' : '收起工具栏',
-                    onPressed: () => setState(
-                      () => _toolbarCollapsed = !_toolbarCollapsed,
+          left: 12,
+          right: 12,
+          bottom: 12,
+          child: SafeArea(
+            top: false,
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              child: FloatingGlassSurface(
+                borderRadius: 28,
+                child: SizedBox(
+                  width: _toolbarCollapsed
+                      ? 48
+                      : min(MediaQuery.sizeOf(context).width - 24, 432),
+                  height: 48,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        toolbarButton(
+                          tooltip: _toolbarCollapsed ? '展开工具栏' : '收起工具栏',
+                          onPressed: () => setState(
+                            () => _toolbarCollapsed = !_toolbarCollapsed,
+                          ),
+                          iconWidget: const CollapseGripIcon(),
+                        ),
+                        if (!_toolbarCollapsed) ...[
+                          if (widget.onReturnToSource != null)
+                            toolbarButton(
+                              tooltip: '返回所在位置',
+                              onPressed: widget.onReturnToSource,
+                              icon: Icons.arrow_back_rounded,
+                            ),
+                          if (widget.onDirectoryRoot != null)
+                            toolbarButton(
+                              tooltip: '返回目录',
+                              onPressed: widget.onDirectoryRoot,
+                              icon: Icons.account_tree_outlined,
+                            ),
+                          if (widget.onShowDetails != null)
+                            toolbarButton(
+                              tooltip: '详情',
+                              onPressed: () => widget.onShowDetails?.call(),
+                              icon: Icons.info_outline_rounded,
+                            ),
+                          SizedBox(
+                            width: 48,
+                            child: Center(
+                              child: Text(
+                                '${widget.currentIndex + 1}/${widget.total}',
+                              ),
+                            ),
+                          ),
+                          if (!widget.transparentStage)
+                            toolbarButton(
+                              tooltip: '切换背景',
+                              onPressed: _nextBackground,
+                              icon: Icons.contrast,
+                            ),
+                          if (widget.onPrevious != null)
+                            toolbarButton(
+                              tooltip: '上一项',
+                              onPressed: widget.onPrevious,
+                              icon: Icons.skip_previous_rounded,
+                            ),
+                          if (widget.onNext != null)
+                            toolbarButton(
+                              tooltip: '下一项',
+                              onPressed: widget.onNext,
+                              icon: Icons.skip_next_rounded,
+                            ),
+                        ],
+                      ],
                     ),
-                    iconWidget: const CollapseGripIcon(),
                   ),
-                  if (!_toolbarCollapsed) ...[
-                    if (widget.onReturnToSource != null)
-                      toolbarButton(
-                        tooltip: '返回所在位置',
-                        onPressed: widget.onReturnToSource,
-                        icon: Icons.arrow_back_rounded,
-                      ),
-                    if (widget.onDirectoryRoot != null)
-                      toolbarButton(
-                        tooltip: '返回目录',
-                        onPressed: widget.onDirectoryRoot,
-                        icon: Icons.account_tree_outlined,
-                      ),
-                    if (widget.onShowDetails != null)
-                      toolbarButton(
-                        tooltip: '详情',
-                        onPressed: () => widget.onShowDetails?.call(),
-                        icon: Icons.info_outline_rounded,
-                      ),
-                    SizedBox(
-                      width: 48,
-                      child: Center(
-                        child:
-                            Text('${widget.currentIndex + 1}/${widget.total}'),
-                      ),
-                    ),
-                    if (!widget.transparentStage)
-                      toolbarButton(
-                        tooltip: '切换背景',
-                        onPressed: _nextBackground,
-                        icon: Icons.contrast,
-                      ),
-                    if (widget.onPrevious != null)
-                      toolbarButton(
-                        tooltip: '上一项',
-                        onPressed: widget.onPrevious,
-                        icon: Icons.skip_previous_rounded,
-                      ),
-                    if (widget.onNext != null)
-                      toolbarButton(
-                        tooltip: '下一项',
-                        onPressed: widget.onNext,
-                        icon: Icons.skip_next_rounded,
-                      ),
-                  ],
-                ],
+                ),
               ),
             ),
           ),

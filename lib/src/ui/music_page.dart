@@ -4,6 +4,7 @@ import '../core/domain/models.dart';
 import '../core/media/app_audio_controller.dart';
 import 'design_tokens.dart';
 import 'app_sidebar.dart';
+import 'recent_media_switcher.dart';
 
 class MusicPage extends StatelessWidget {
   const MusicPage({
@@ -13,6 +14,8 @@ class MusicPage extends StatelessWidget {
     required this.onRestore,
     required this.onPlayEntry,
     required this.onDelete,
+    required this.currentSection,
+    required this.onSectionChanged,
   });
 
   final List<AudioPlaybackSession> sessions;
@@ -21,42 +24,60 @@ class MusicPage extends StatelessWidget {
   final Future<void> Function(AudioPlaybackSession session, int index)
       onPlayEntry;
   final ValueChanged<AudioPlaybackSession> onDelete;
+  final AppSection currentSection;
+  final ValueChanged<AppSection> onSectionChanged;
 
   @override
   Widget build(BuildContext context) {
     final activeId = controller.session?.id;
     final obstruction = AppNavigationObstruction.of(context);
-    return SafeArea(
-      child: ListView(
-        padding: EdgeInsets.fromLTRB(
-          28 + obstruction.left,
-          26,
-          28,
-          40 + obstruction.bottom,
-        ),
-        children: [
-          Text('音乐', style: Theme.of(context).textTheme.headlineMedium),
-          const SizedBox(height: 6),
-          Text('当前播放与保存的歌单', style: Theme.of(context).textTheme.bodyMedium),
-          const SizedBox(height: 22),
-          if (sessions.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(top: 70),
-              child: Center(child: Text('从目录或分类中打开一首音频后，歌单会保留在这里。')),
+    return Stack(
+      children: [
+        SafeArea(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(
+              28,
+              8,
+              28,
+              40 + obstruction.bottom,
             ),
-          for (final session in sessions)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: _SessionCard(
-                session: session,
-                active: session.id == activeId,
-                onRestore: () => onRestore(session),
-                onPlayEntry: (index) => onPlayEntry(session, index),
-                onDelete: () => onDelete(session),
+            children: [
+              if (sessions.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: 70),
+                  child: Center(
+                    child: Text('从目录或分类中打开一首音频后，歌单会保留在这里。'),
+                  ),
+                ),
+              for (final session in sessions)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _SessionCard(
+                    session: session,
+                    active: session.id == activeId,
+                    onRestore: () => onRestore(session),
+                    onPlayEntry: (index) => onPlayEntry(session, index),
+                    onDelete: () => onDelete(session),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Positioned(
+          top: 8,
+          left: 12,
+          right: 12,
+          child: SafeArea(
+            bottom: false,
+            child: Center(
+              child: RecentMediaSwitcher(
+                current: currentSection,
+                onChanged: onSectionChanged,
               ),
             ),
-        ],
-      ),
+          ),
+        ),
+      ],
     );
   }
 }

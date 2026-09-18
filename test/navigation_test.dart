@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('landscape rail shows five destinations and switches data roots',
+  testWidgets('landscape bottom bar shows destinations and switches data roots',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(500, 300));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -13,15 +13,12 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: Align(
-          alignment: Alignment.centerLeft,
+          alignment: Alignment.bottomCenter,
           child: AppNavigation(
-            layout: AppNavigationLayout.rail,
             current: AppSection.data,
             rootTab: BrowserRootTab.tree,
             onChanged: (_) {},
             onRootTabChanged: (value) => selectedRootTab = value,
-            collapsed: false,
-            onToggleCollapsed: () {},
           ),
         ),
       ),
@@ -39,7 +36,8 @@ void main() {
       await tester.tap(find.text(entry.key));
       expect(selectedRootTab, entry.value);
     }
-    expect(find.byTooltip('收起功能栏'), findsOneWidget);
+    expect(find.byTooltip('收起功能栏'), findsNothing);
+    expect(find.byType(BackdropFilter), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -56,13 +54,10 @@ void main() {
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: AppNavigation(
-              layout: AppNavigationLayout.bottom,
               current: AppSection.gallery,
               rootTab: BrowserRootTab.directory,
               onChanged: (value) => selectedSection = value,
               onRootTabChanged: (_) {},
-              collapsed: false,
-              onToggleCollapsed: () {},
             ),
           ),
         ),
@@ -86,13 +81,10 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: AppNavigation(
-          layout: AppNavigationLayout.bottom,
           current: AppSection.logs,
           rootTab: BrowserRootTab.directory,
           onChanged: (_) {},
           onRootTabChanged: (_) {},
-          collapsed: false,
-          onToggleCollapsed: () {},
         ),
       ),
     ));

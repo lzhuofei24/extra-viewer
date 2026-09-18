@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import '../../core/domain/models.dart';
 import '../../core/media/app_audio_controller.dart';
 import '../collapse_grip_icon.dart';
+import '../app_sidebar.dart';
 
 /// Entity context menu action enum.
 enum EntityMenuAction { select, regenerateThumbnail }
@@ -50,15 +51,8 @@ class MiniAudioPlayer extends StatelessWidget {
       curve: Curves.easeOutCubic,
       width: collapsed ? 48 : expandedWidth,
       height: collapsed ? 48 : 56,
-      child: AnimatedPhysicalModel(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOutCubic,
-        shape: BoxShape.rectangle,
-        borderRadius: BorderRadius.circular(radius),
-        elevation: 8,
-        color: scheme.surface.withValues(alpha: 0.92),
-        shadowColor: Colors.black,
-        clipBehavior: Clip.antiAlias,
+      child: FloatingGlassSurface(
+        borderRadius: radius,
         child: Material(
           color: Colors.transparent,
           child: collapsed

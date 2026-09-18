@@ -31,6 +31,7 @@ import '../core/readers/archive_session.dart';
 import '../core/readers/reflow_document.dart';
 import '../core/readers/reflow_text_decoder.dart';
 import 'collapse_grip_icon.dart';
+import 'app_sidebar.dart';
 
 part 'viewer_text_reader.dart';
 part 'viewer_pdf_epub_preview.dart';

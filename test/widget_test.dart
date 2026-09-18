@@ -42,7 +42,8 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1000, 600));
     await tester.pumpAndSettle();
     expect(find.text('浏览布局'), findsOneWidget);
-    expect(find.byTooltip('收起功能栏'), findsOneWidget);
+    expect(find.byTooltip('收起功能栏'), findsNothing);
+    expect(find.byType(BackdropFilter), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     await tester.runAsync(() async {

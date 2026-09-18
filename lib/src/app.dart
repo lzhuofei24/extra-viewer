@@ -148,7 +148,6 @@ class _AppShellState extends State<AppShell> {
   bool _entitiesHasMore = false;
   RecursiveEntityPageCursor? _recursiveEntityCursor;
   bool _loadingMoreEntities = false;
-  bool _sidebarCollapsed = false;
   bool _miniPlayerCollapsed = false;
   bool _restoreExpandedMiniPlayerAfterSelection = false;
   late final SelectionController _selection;
@@ -1278,7 +1277,6 @@ class _AppShellState extends State<AppShell> {
             : BrowserContentScope.direct,
       );
       if (enteringImmersive) {
-        _sidebarCollapsed = true;
         _selection.exit();
       }
     });
@@ -1304,11 +1302,6 @@ class _AppShellState extends State<AppShell> {
         contentScope: BrowserContentScope.direct,
       );
     });
-  }
-
-  void _setShelfImmersive(bool enabled) {
-    if (!mounted) return;
-    setState(() => _sidebarCollapsed = enabled);
   }
 
   void _setShelfSort(EntitySortMode value) {
@@ -2687,7 +2680,8 @@ class _AppShellState extends State<AppShell> {
           onSortChanged: _setShelfSort,
           onDisplayModeChanged: _setShelfDisplayMode,
           onGridLayoutChanged: _setShelfGridLayout,
-          onImmersiveChanged: _setShelfImmersive,
+          currentSection: _section,
+          onSectionChanged: _navigateToSection,
         ),
       AppSection.gallery => MediaShelfPage(
           kind: MediaShelfKind.gallery,
@@ -2699,7 +2693,8 @@ class _AppShellState extends State<AppShell> {
           onSortChanged: _setShelfSort,
           onDisplayModeChanged: _setShelfDisplayMode,
           onGridLayoutChanged: _setShelfGridLayout,
-          onImmersiveChanged: _setShelfImmersive,
+          currentSection: _section,
+          onSectionChanged: _navigateToSection,
         ),
       AppSection.reading => MediaShelfPage(
           kind: MediaShelfKind.reading,
@@ -2711,6 +2706,8 @@ class _AppShellState extends State<AppShell> {
           onSortChanged: _setShelfSort,
           onDisplayModeChanged: _setShelfDisplayMode,
           onGridLayoutChanged: _setShelfGridLayout,
+          currentSection: _section,
+          onSectionChanged: _navigateToSection,
         ),
       AppSection.music => MusicPage(
           sessions: _audioSessions,
@@ -2728,6 +2725,8 @@ class _AppShellState extends State<AppShell> {
             final sessions = await _repository!.listAudioPlaybackSessions();
             if (mounted) setState(() => _audioSessions = sessions);
           },
+          currentSection: _section,
+          onSectionChanged: _navigateToSection,
         ),
       AppSection.indexes => IndexManagementPage(
           roots: _indexRoots,
@@ -2770,22 +2769,8 @@ class _AppShellState extends State<AppShell> {
           progress: _scanProgress,
         ),
     };
-    final recentSections = <AppSection, String>{
-      AppSection.gallery: '图片',
-      AppSection.video: '视频',
-      AppSection.reading: '阅读',
-      AppSection.music: '音乐',
-    };
     final tabs = <Widget>[];
-    if (recentSections.containsKey(_section)) {
-      tabs.add(Wrap(spacing: 8, children: [
-        for (final entry in recentSections.entries)
-          ChoiceChip(
-              label: Text(entry.value),
-              selected: _section == entry.key,
-              onSelected: (_) => _navigateToSection(entry.key)),
-      ]));
-    } else if (_section == AppSection.logs) {
+    if (_section == AppSection.logs) {
       tabs.add(TextButton.icon(
           onPressed: () => _navigateToSection(AppSection.settings),
           icon: const Icon(Icons.arrow_back),
@@ -2859,51 +2844,34 @@ class _AppShellState extends State<AppShell> {
           ),
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final isPortrait = constraints.maxHeight > constraints.maxWidth;
               final hasMediaOverlay = _mediaOverlay != null;
               final showMiniPlayer = !hasMediaOverlay ||
-                  _mediaOverlayEntityType == EntityType.video;
-              final navigationLayout = isPortrait
-                  ? AppNavigationLayout.bottom
-                  : AppNavigationLayout.rail;
-              final railWidth = _sidebarCollapsed
-                  ? AppNavigation.collapsedRailWidth
-                  : AppNavigation.expandedRailWidth;
+                  const {EntityType.image, EntityType.video}
+                      .contains(_mediaOverlayEntityType);
               final safeBottom = MediaQuery.paddingOf(context).bottom;
               final navigationObstruction = hasMediaOverlay
                   ? EdgeInsets.zero
-                  : isPortrait
-                      ? const EdgeInsets.only(
-                          bottom: AppNavigation.bottomBarHeight +
-                              AppNavigation.outerMargin +
-                              AppNavigation.contentClearance,
-                        )
-                      : EdgeInsets.only(
-                          left: railWidth +
-                              AppNavigation.outerMargin +
-                              AppNavigation.contentClearance,
-                        );
+                  : const EdgeInsets.only(
+                      bottom: AppNavigation.bottomBarHeight +
+                          AppNavigation.outerMargin +
+                          AppNavigation.contentClearance,
+                    );
               final navigation = AppNavigation(
-                layout: navigationLayout,
                 current: _section,
                 onChanged: _navigateToSection,
                 rootTab: _browserState.rootTab,
                 onRootTabChanged: _selectDataRootTab,
-                collapsed: _sidebarCollapsed,
-                onToggleCollapsed: () => setState(
-                  () => _sidebarCollapsed = !_sidebarCollapsed,
-                ),
               );
 
               return Stack(
                 children: [
                   AppNavigationObstruction(
-                    insets: navigationObstruction,
+                    bottom: navigationObstruction.bottom,
                     child: SafeArea(
                       child: body,
                     ),
                   ),
-                  if (!hasMediaOverlay && isPortrait)
+                  if (!hasMediaOverlay)
                     Positioned(
                       left: AppNavigation.outerMargin,
                       right: AppNavigation.outerMargin,
@@ -2912,19 +2880,13 @@ class _AppShellState extends State<AppShell> {
                         top: false,
                         left: false,
                         right: false,
-                        child: navigation,
-                      ),
-                    ),
-                  if (!hasMediaOverlay && !isPortrait)
-                    Positioned(
-                      left: AppNavigation.outerMargin,
-                      top: AppNavigation.outerMargin,
-                      bottom: AppNavigation.outerMargin,
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: SafeArea(
-                          right: false,
-                          child: navigation,
+                        child: Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(
+                              maxWidth: AppNavigation.landscapeMaxWidth,
+                            ),
+                            child: navigation,
+                          ),
                         ),
                       ),
                     ),
@@ -2934,13 +2896,16 @@ class _AppShellState extends State<AppShell> {
                     Positioned(
                       right: AppNavigation.outerMargin,
                       bottom: hasMediaOverlay
-                          ? AppNavigation.outerMargin + safeBottom
-                          : isPortrait
-                              ? AppNavigation.outerMargin +
-                                  safeBottom +
-                                  AppNavigation.bottomBarHeight +
-                                  AppNavigation.miniPlayerGap
-                              : AppNavigation.outerMargin + safeBottom,
+                          ? AppNavigation.outerMargin +
+                              safeBottom +
+                              (_mediaOverlayEntityType == EntityType.image
+                                  ? 48 + AppNavigation.miniPlayerGap
+                                  : 120)
+                          : AppNavigation.outerMargin +
+                              safeBottom +
+                              AppNavigation.bottomBarHeight +
+                              AppNavigation.miniPlayerGap +
+                              (_selectionMode ? 88 : 0),
                       child: miniPlayer,
                     ),
                 ],

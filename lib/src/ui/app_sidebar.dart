@@ -3,7 +3,6 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import 'browser_state.dart';
-import 'collapse_grip_icon.dart';
 
 enum AppSection {
   data,
@@ -16,34 +15,25 @@ enum AppSection {
   settings
 }
 
-enum AppNavigationLayout { rail, bottom }
-
 class AppNavigation extends StatelessWidget {
   const AppNavigation({
     super.key,
-    required this.layout,
     required this.current,
     required this.onChanged,
     required this.rootTab,
     required this.onRootTabChanged,
-    required this.collapsed,
-    required this.onToggleCollapsed,
   });
 
-  static const double expandedRailWidth = 80;
-  static const double collapsedRailWidth = 40;
   static const double bottomBarHeight = 72;
+  static const double landscapeMaxWidth = 560;
   static const double outerMargin = 12;
   static const double contentClearance = 20;
   static const double miniPlayerGap = 8;
 
-  final AppNavigationLayout layout;
   final AppSection current;
   final ValueChanged<AppSection> onChanged;
   final BrowserRootTab rootTab;
   final ValueChanged<BrowserRootTab> onRootTabChanged;
-  final bool collapsed;
-  final VoidCallback onToggleCollapsed;
 
   static const _primaryItems = [
     _NavigationDestination(
@@ -85,26 +75,12 @@ class AppNavigation extends StatelessWidget {
 
   static const _allItems = [..._primaryItems, ..._utilityItems];
 
-  double get railWidth => collapsed ? collapsedRailWidth : expandedRailWidth;
-
   @override
-  Widget build(BuildContext context) {
-    return switch (layout) {
-      AppNavigationLayout.rail => _NavigationRail(
-          width: railWidth,
-          destinations: _allItems,
-          collapsed: collapsed,
-          onToggleCollapsed: onToggleCollapsed,
-          onSelect: _select,
-          isSelected: _isSelected,
-        ),
-      AppNavigationLayout.bottom => _BottomNavigation(
-          destinations: _allItems,
-          onSelect: _select,
-          isSelected: _isSelected,
-        ),
-    };
-  }
+  Widget build(BuildContext context) => _BottomNavigation(
+        destinations: _allItems,
+        onSelect: _select,
+        isSelected: _isSelected,
+      );
 
   bool _isSelected(_NavigationDestination item) {
     if (item.section == AppSection.gallery) {
@@ -135,21 +111,21 @@ class AppNavigation extends StatelessWidget {
 class AppNavigationObstruction extends InheritedWidget {
   const AppNavigationObstruction({
     super.key,
-    required this.insets,
+    required this.bottom,
     required super.child,
   });
 
-  final EdgeInsets insets;
+  final double bottom;
 
-  static EdgeInsets of(BuildContext context) =>
-      context
-          .dependOnInheritedWidgetOfExactType<AppNavigationObstruction>()
-          ?.insets ??
-      EdgeInsets.zero;
+  static EdgeInsets of(BuildContext context) => EdgeInsets.only(
+      bottom: context
+              .dependOnInheritedWidgetOfExactType<AppNavigationObstruction>()
+              ?.bottom ??
+          0);
 
   @override
   bool updateShouldNotify(AppNavigationObstruction oldWidget) =>
-      oldWidget.insets != insets;
+      oldWidget.bottom != bottom;
 }
 
 class FloatingGlassSurface extends StatelessWidget {
@@ -164,6 +140,10 @@ class FloatingGlassSurface extends StatelessWidget {
   final double borderRadius;
   final EdgeInsetsGeometry padding;
 
+  static const double blurSigma = 18;
+  static const double darkSurfaceAlpha = 0.66;
+  static const double lightSurfaceAlpha = 0.74;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -173,7 +153,10 @@ class FloatingGlassSurface extends StatelessWidget {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(borderRadius),
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            filter: ImageFilter.blur(
+              sigmaX: blurSigma,
+              sigmaY: blurSigma,
+            ),
             child: DecoratedBox(
               decoration: _glassSurface(theme, borderRadius),
               child: Padding(padding: padding, child: child),
@@ -201,83 +184,6 @@ class _NavigationDestination {
   final BrowserRootTab? dataTab;
 }
 
-class _NavigationRail extends StatelessWidget {
-  const _NavigationRail({
-    required this.width,
-    required this.destinations,
-    required this.collapsed,
-    required this.onToggleCollapsed,
-    required this.onSelect,
-    required this.isSelected,
-  });
-
-  final double width;
-  final List<_NavigationDestination> destinations;
-  final bool collapsed;
-  final VoidCallback onToggleCollapsed;
-  final ValueChanged<_NavigationDestination> onSelect;
-  final bool Function(_NavigationDestination) isSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOutCubic,
-      width: width,
-      decoration: _glassShadow(theme, 24),
-      child: RepaintBoundary(
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(24),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-            child: DecoratedBox(
-              decoration: _glassSurface(theme, 24),
-              child: Material(
-                color: Colors.transparent,
-                child: SingleChildScrollView(
-                  padding: EdgeInsets.fromLTRB(
-                    collapsed ? 3 : 6,
-                    10,
-                    collapsed ? 3 : 6,
-                    10,
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _SidebarCollapseButton(
-                        collapsed: collapsed,
-                        onTap: onToggleCollapsed,
-                      ),
-                      const SizedBox(height: 8),
-                      for (var index = 0;
-                          index < destinations.length;
-                          index++) ...[
-                        if (index == 3)
-                          Divider(
-                            height: 12,
-                            color: theme.colorScheme.outlineVariant
-                                .withValues(alpha: 0.6),
-                          ),
-                        _RailDestinationButton(
-                          item: destinations[index],
-                          selected: isSelected(destinations[index]),
-                          collapsed: collapsed,
-                          onTap: () => onSelect(destinations[index]),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _BottomNavigation extends StatelessWidget {
   const _BottomNavigation({
     required this.destinations,
@@ -290,47 +196,37 @@ class _BottomNavigation extends StatelessWidget {
   final bool Function(_NavigationDestination) isSelected;
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return SizedBox(
-      height: AppNavigation.bottomBarHeight,
-      child: DecoratedBox(
-        decoration: _glassShadow(theme, 28),
-        child: RepaintBoundary(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(28),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-              child: DecoratedBox(
-                decoration: _glassSurface(theme, 28),
-                child: Material(
-                  color: Colors.transparent,
-                  child: Row(
-                    children: [
-                      for (final item in destinations)
-                        Expanded(
-                          child: _BottomDestinationButton(
-                            item: item,
-                            selected: isSelected(item),
-                            onTap: () => onSelect(item),
-                          ),
-                        ),
-                    ],
+  Widget build(BuildContext context) => SizedBox(
+        height: AppNavigation.bottomBarHeight,
+        child: FloatingGlassSurface(
+          borderRadius: 28,
+          child: Material(
+            color: Colors.transparent,
+            child: Row(
+              children: [
+                for (final item in destinations)
+                  Expanded(
+                    child: _BottomDestinationButton(
+                      item: item,
+                      selected: isSelected(item),
+                      onTap: () => onSelect(item),
+                    ),
                   ),
-                ),
-              ),
+              ],
             ),
           ),
         ),
-      ),
-    );
-  }
+      );
 }
 
 BoxDecoration _glassSurface(ThemeData theme, double radius) {
   final isDark = theme.brightness == Brightness.dark;
   return BoxDecoration(
-    color: theme.colorScheme.surface.withValues(alpha: isDark ? 0.66 : 0.74),
+    color: theme.colorScheme.surface.withValues(
+      alpha: isDark
+          ? FloatingGlassSurface.darkSurfaceAlpha
+          : FloatingGlassSurface.lightSurfaceAlpha,
+    ),
     borderRadius: BorderRadius.circular(radius),
     border: Border.all(
       color: theme.colorScheme.outlineVariant
@@ -352,80 +248,6 @@ BoxDecoration _glassShadow(ThemeData theme, double radius) => BoxDecoration(
         ),
       ],
     );
-
-class _RailDestinationButton extends StatelessWidget {
-  const _RailDestinationButton({
-    required this.item,
-    required this.selected,
-    required this.collapsed,
-    required this.onTap,
-  });
-
-  final _NavigationDestination item;
-  final bool selected;
-  final bool collapsed;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final color = selected
-        ? theme.colorScheme.onSecondaryContainer
-        : theme.colorScheme.onSurfaceVariant;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
-          width: double.infinity,
-          padding: EdgeInsets.symmetric(
-            horizontal: collapsed ? 0 : 5,
-            vertical: collapsed ? 10 : 8,
-          ),
-          decoration: BoxDecoration(
-            color: selected
-                ? theme.colorScheme.secondaryContainer.withValues(alpha: 0.72)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: collapsed
-              ? Center(
-                  child: Icon(
-                    selected ? item.selectedIcon : item.icon,
-                    color: color,
-                    size: 21,
-                  ),
-                )
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      selected ? item.selectedIcon : item.icon,
-                      color: color,
-                      size: 21,
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      item.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.fade,
-                      softWrap: false,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: color,
-                        fontWeight:
-                            selected ? FontWeight.w700 : FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-        ),
-      ),
-    );
-  }
-}
 
 class _BottomDestinationButton extends StatelessWidget {
   const _BottomDestinationButton({
@@ -489,31 +311,6 @@ class _BottomDestinationButton extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _SidebarCollapseButton extends StatelessWidget {
-  const _SidebarCollapseButton({
-    required this.collapsed,
-    required this.onTap,
-  });
-
-  final bool collapsed;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 32,
-      height: 32,
-      child: IconButton(
-        tooltip: collapsed ? '展开功能栏' : '收起功能栏',
-        visualDensity: VisualDensity.compact,
-        padding: EdgeInsets.zero,
-        onPressed: onTap,
-        icon: const CollapseGripIcon(size: 18),
       ),
     );
   }
