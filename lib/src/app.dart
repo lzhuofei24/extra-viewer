@@ -40,6 +40,7 @@ import 'ui/entity_detail_sheet.dart';
 import 'ui/node_search_page.dart';
 import 'ui/index_management_page.dart';
 import 'ui/rule_index_page.dart';
+import 'ui/rule_browser_controller.dart';
 import 'ui/rule_editor_dialog.dart';
 import 'ui/now_playing_page.dart';
 import 'ui/node_preview_picker.dart';
@@ -148,6 +149,18 @@ class _AppShellState extends State<AppShell> {
   RecursiveEntityPageCursor? _recursiveEntityCursor;
   bool _loadingMoreEntities = false;
   bool _miniPlayerCollapsed = false;
+  bool _ruleSelectionMode = false;
+  RuleBrowserController? _ruleBrowserController;
+  int _ruleNavigationRevision = 0;
+
+  RuleBrowserController get _ruleBrowser {
+    if (_ruleBrowserController?.queries != _readWorker) {
+      _ruleBrowserController?.dispose();
+      _ruleBrowserController = RuleBrowserController(_readWorker!);
+    }
+    return _ruleBrowserController!;
+  }
+
   bool _restoreExpandedMiniPlayerAfterSelection = false;
   late final SelectionController _selection;
   final Set<String> _regeneratingThumbnailIds = <String>{};
@@ -237,6 +250,7 @@ class _AppShellState extends State<AppShell> {
   @override
   void dispose() {
     _dirtyPreviews?.stop();
+    _ruleBrowserController?.dispose();
     AppDiagnosticLog.instance.info('app_shell_dispose_started');
     _indexPathController.dispose();
     _buildTasks?.removeListener(_handleBuildTaskChanged);
@@ -1161,6 +1175,7 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _navigateToSection(AppSection section) {
+    if (section != AppSection.rules) _setRuleSelectionMode(false);
     if (section == AppSection.data) {
       _openRootIndex();
       return;
@@ -1175,6 +1190,7 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _selectDataRootTab(BrowserRootTab tab) {
+    _setRuleSelectionMode(false);
     _exitImmersiveBrowsing();
     _cancelPageWarmup();
     setState(() {
@@ -1213,14 +1229,17 @@ class _AppShellState extends State<AppShell> {
               builder: (_) => NodeSearchPageView(queries: queries)));
       if (result == null || !mounted) return;
       if (result.node.nodeType == NodeType.ruleNode) {
+        _setRuleSelectionMode(false);
         setState(() {
           _section = AppSection.rules;
           _requestedRuleId = result.node.id;
+          _ruleNavigationRevision++;
         });
         return;
       }
       _exitImmersiveBrowsing();
       _cancelPageWarmup();
+      _setRuleSelectionMode(false);
       setState(() {
         _section = AppSection.data;
         _selectedIndexRoot = result.root;
@@ -1333,9 +1352,9 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _setRuleBrowserState(BrowserState value) {
-    setState(() => _browserState = value);
+    setState(
+        () => _browserState = value.copyWith(sortMode: _browserState.sortMode));
     widget.preferences.setBrowser(
-      sortMode: value.sortMode,
       displayMode: value.displayMode,
       gridLayout: value.gridLayout,
       listStyle: value.listStyle,
@@ -1351,6 +1370,21 @@ class _AppShellState extends State<AppShell> {
       }
     });
     await _showAddToCollection();
+    if (mounted) setState(() => _selection.exit());
+  }
+
+  void _setRuleSelectionMode(bool enabled) {
+    if (!mounted || _ruleSelectionMode == enabled) return;
+    setState(() {
+      _ruleSelectionMode = enabled;
+      if (enabled) {
+        _restoreExpandedMiniPlayerAfterSelection = !_miniPlayerCollapsed;
+        _miniPlayerCollapsed = true;
+      } else if (_restoreExpandedMiniPlayerAfterSelection) {
+        _miniPlayerCollapsed = false;
+        _restoreExpandedMiniPlayerAfterSelection = false;
+      }
+    });
   }
 
   Future<void> _createRule() async {
@@ -1412,7 +1446,7 @@ class _AppShellState extends State<AppShell> {
         defaultSort: draft.defaultSort,
       );
       if (mounted) {
-        setState(() => _requestedRuleId = null);
+        await _ruleBrowserController?.refreshDefinitions();
         await _reloadDashboardDataAsync();
       }
     } catch (error) {
@@ -1433,7 +1467,7 @@ class _AppShellState extends State<AppShell> {
     try {
       await _repository!.deleteRule(rule.node.id);
       if (mounted) {
-        setState(() => _requestedRuleId = null);
+        await _ruleBrowserController?.refreshDefinitions();
         await _reloadDashboardDataAsync();
       }
     } catch (error) {
@@ -2504,6 +2538,11 @@ class _AppShellState extends State<AppShell> {
     if (trimmed == null || trimmed.isEmpty || trimmed == index.name) return;
     try {
       (await repository.renameIndexNode(index.id, trimmed));
+      if (index.nodeType == NodeType.ruleNode) {
+        await _ruleBrowserController?.refreshDefinitions();
+        await _reloadDashboardDataAsync();
+        return;
+      }
       await _refreshNodePreview(index.id, reason: 'node_renamed');
       _reload(
         indexNodeId: _currentIndexNode?.id,
@@ -2794,8 +2833,9 @@ class _AppShellState extends State<AppShell> {
           onClearSelectedNodePreviewOverride: _clearSelectedNodePreviewOverride,
         ),
       AppSection.rules => RuleIndexPage(
-          key: ValueKey(_requestedRuleId),
+          key: ValueKey('$_requestedRuleId:$_ruleNavigationRevision'),
           queries: _readWorker!,
+          controller: _ruleBrowser,
           initialRuleId: _requestedRuleId,
           browserState: _browserState,
           layoutSettings: widget.preferences.value.layout,
@@ -2811,6 +2851,7 @@ class _AppShellState extends State<AppShell> {
           onAddToCollection: _addRuleItemsToCollection,
           onEditRule: _editRule,
           onDeleteRule: _deleteRule,
+          onSelectionModeChanged: _setRuleSelectionMode,
         ),
       AppSection.indexes => IndexManagementPage(
           roots: _indexRoots,
@@ -2867,7 +2908,7 @@ class _AppShellState extends State<AppShell> {
                     onOpen: _openNowPlaying,
                     collapsed: _miniPlayerCollapsed,
                     onToggleCollapsed: () {
-                      if (_selectionMode) {
+                      if (_selectionMode || _ruleSelectionMode) {
                         _openNowPlaying();
                         return;
                       }
@@ -2959,7 +3000,7 @@ class _AppShellState extends State<AppShell> {
                               safeBottom +
                               AppNavigation.bottomBarHeight +
                               AppNavigation.miniPlayerGap +
-                              (_selectionMode ? 88 : 0),
+                              (_selectionMode || _ruleSelectionMode ? 88 : 0),
                       child: miniPlayer,
                     ),
                 ],

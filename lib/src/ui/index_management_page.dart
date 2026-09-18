@@ -60,30 +60,48 @@ class IndexManagementPage extends StatelessWidget {
           subtitle: '添加资料目录，建立分类，或创建自动筛选规则。',
         ),
         const SizedBox(height: 18),
-        _IndexCard(
-          title: '添加资料',
-          child: Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              FilledButton.icon(
-                onPressed: scanning ? null : onCreateDirectoryIndex,
-                icon: const Icon(Icons.folder_copy_outlined),
-                label: const Text('添加目录'),
-              ),
-              OutlinedButton.icon(
-                onPressed: scanning ? null : onCreateCollection,
-                icon: const Icon(Icons.collections_bookmark_outlined),
-                label: const Text('新建分类'),
-              ),
-              OutlinedButton.icon(
-                onPressed: scanning ? null : onCreateRule,
-                icon: const Icon(Icons.rule_outlined),
-                label: const Text('新建规则'),
-              ),
-            ],
-          ),
+        Text('全部资料', style: theme.textTheme.titleLarge),
+        const SizedBox(height: 12),
+        _IndexRootSection(
+          onCreate: scanning ? null : onCreateDirectoryIndex,
+          presentation: IndexRootPresentation.directory,
+          roots: roots
+              .where((node) => node.nodeType == NodeType.directoryIndexRoot)
+              .toList(growable: false),
+          rootCounts: rootCounts,
+          scanning: scanning,
+          onPrimaryAction: onUpdateDirectoryIndex,
+          onRename: onRename,
+          onDelete: onDelete,
+          onRebuildPreviews: onRebuildNodePreviews,
         ),
+        _IndexRootSection(
+          onCreate: scanning ? null : onCreateCollection,
+          presentation: IndexRootPresentation.collection,
+          roots: roots
+              .where((node) => node.nodeType == NodeType.customIndexRoot)
+              .toList(growable: false),
+          rootCounts: rootCounts,
+          scanning: scanning,
+          onPrimaryAction: onCreateNodeAtRoot,
+          onRename: onRename,
+          onDelete: onDelete,
+          onRebuildPreviews: onRebuildNodePreviews,
+        ),
+        _RuleManagementSection(
+          rules: rules,
+          onCreate: scanning ? null : onCreateRule,
+          onEdit: actions.onEditRule,
+          onRename: onRename,
+          scanning: scanning,
+          onDelete: actions.onDeleteRule,
+        ),
+        const SizedBox(height: 16),
+        Text('可恢复任务', style: theme.textTheme.titleLarge),
+        if (progress == null && recoverableJobs.isEmpty)
+          const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Text('暂无可恢复任务')),
         if (progress != null) ...[
           const SizedBox(height: 16),
           _IndexTaskCard.active(
@@ -96,7 +114,6 @@ class IndexManagementPage extends StatelessWidget {
         ],
         if (recoverableJobs.isNotEmpty) ...[
           const SizedBox(height: 16),
-          Text('可恢复任务', style: theme.textTheme.titleMedium),
           const SizedBox(height: 8),
           for (final job in recoverableJobs) ...[
             _IndexTaskCard.recoverable(
@@ -123,46 +140,6 @@ class IndexManagementPage extends StatelessWidget {
                 ),
               ),
             ),
-          ),
-        ],
-        const SizedBox(height: 24),
-        Text('已有资料', style: theme.textTheme.titleLarge),
-        const SizedBox(height: 12),
-        if (roots.isEmpty)
-          const EmptyStateCard(
-            title: '还没有添加资料',
-            message: '添加一个目录，或新建分类来开始整理文件。',
-          )
-        else ...[
-          _IndexRootSection(
-            presentation: IndexRootPresentation.directory,
-            roots: roots
-                .where((node) => node.nodeType == NodeType.directoryIndexRoot)
-                .toList(growable: false),
-            rootCounts: rootCounts,
-            scanning: scanning,
-            onPrimaryAction: onUpdateDirectoryIndex,
-            onRename: onRename,
-            onDelete: onDelete,
-            onRebuildPreviews: onRebuildNodePreviews,
-          ),
-          if (rules.isNotEmpty)
-            _RuleManagementSection(
-              rules: rules,
-              onEdit: actions.onEditRule,
-              onDelete: actions.onDeleteRule,
-            ),
-          _IndexRootSection(
-            presentation: IndexRootPresentation.collection,
-            roots: roots
-                .where((node) => node.nodeType == NodeType.customIndexRoot)
-                .toList(growable: false),
-            rootCounts: rootCounts,
-            scanning: scanning,
-            onPrimaryAction: onCreateNodeAtRoot,
-            onRename: onRename,
-            onDelete: onDelete,
-            onRebuildPreviews: onRebuildNodePreviews,
           ),
         ],
         const SizedBox(height: 100),
@@ -214,6 +191,7 @@ class IndexManagementActions {
 
 class _IndexRootSection extends StatelessWidget {
   const _IndexRootSection({
+    required this.onCreate,
     required this.presentation,
     required this.roots,
     required this.rootCounts,
@@ -224,6 +202,7 @@ class _IndexRootSection extends StatelessWidget {
     required this.onPrimaryAction,
   });
 
+  final VoidCallback? onCreate;
   final IndexRootPresentation presentation;
   final List<IndexNode> roots;
   final Map<String, int> rootCounts;
@@ -235,7 +214,6 @@ class _IndexRootSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (roots.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(bottom: 18),
       child: Column(
@@ -247,9 +225,15 @@ class _IndexRootSection extends StatelessWidget {
               const SizedBox(width: 8),
               Text(presentation.title,
                   style: Theme.of(context).textTheme.titleMedium),
+              IconButton(
+                  tooltip: presentation.title == '目录' ? '添加目录' : '新建分类',
+                  onPressed: onCreate,
+                  icon: const Icon(Icons.add)),
             ],
           ),
           const SizedBox(height: 8),
+          if (roots.isEmpty)
+            const Padding(padding: EdgeInsets.all(8), child: Text('暂无资料')),
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
@@ -257,9 +241,10 @@ class _IndexRootSection extends StatelessWidget {
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount:
                   MediaQuery.orientationOf(context) == Orientation.portrait
-                      ? 1
-                      : 3,
-              mainAxisExtent: 76,
+                      ? 2
+                      : 4,
+              mainAxisExtent: 112 *
+                  (MediaQuery.textScalerOf(context).scale(14) / 14).clamp(1, 3),
               crossAxisSpacing: 8,
               mainAxisSpacing: 1,
             ),
@@ -306,61 +291,55 @@ class _IndexRootGridCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card(
+    return _ManagementItem(
+        name: node.name,
+        count: entityCount,
+        icon: protected ? Icons.lock_outline : presentation.icon,
+        actions: _RootActionsMenu(
+            enabled: !scanning,
+            onRename: onRename,
+            onDelete: onDelete,
+            onRebuildPreviews: node.nodeType == NodeType.directoryIndexRoot
+                ? onPrimaryAction
+                : onRebuildPreviews,
+            protected: protected));
+  }
+}
+
+class _ManagementItem extends StatelessWidget {
+  const _ManagementItem(
+      {required this.name,
+      required this.count,
+      required this.icon,
+      required this.actions});
+  final String name;
+  final int count;
+  final IconData icon;
+  final Widget actions;
+  @override
+  Widget build(BuildContext context) => Card(
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 6, 4, 6),
-        child: Row(
-          children: [
-            Icon(
-              presentation.icon,
-              size: 21,
-              color: theme.colorScheme.primary,
-            ),
-            const SizedBox(width: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    node.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '$entityCount 个文件',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelSmall,
-                  ),
-                ],
-              ),
-            ),
-            TextButton(
-              onPressed: scanning ? null : onPrimaryAction,
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                minimumSize: const Size(0, 30),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: Text(presentation.primaryActionLabel),
-            ),
-            _RootActionsMenu(
-              enabled: !scanning,
-              onRename: onRename,
-              onDelete: onDelete,
-              onRebuildPreviews: onRebuildPreviews,
-              protected: protected,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+                child: Row(children: [
+              Icon(icon, size: 18),
+              const SizedBox(width: 6),
+              Expanded(
+                  child:
+                      Text(name, maxLines: 2, overflow: TextOverflow.ellipsis)),
+            ])),
+            Row(children: [
+              Expanded(
+                  child: Text('$count 个文件',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelSmall)),
+              actions,
+            ]),
+          ])));
 }
 
 class _RootActionsMenu extends StatelessWidget {
@@ -383,7 +362,10 @@ class _RootActionsMenu extends StatelessWidget {
         enabled: enabled,
         padding: EdgeInsets.zero,
         constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-        iconSize: 19,
+        tooltip: '操作',
+        child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+            child: Text('操作')),
         onSelected: (action) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             switch (action) {
@@ -399,24 +381,30 @@ class _RootActionsMenu extends StatelessWidget {
         itemBuilder: (context) => [
           const PopupMenuItem(
             value: 'rebuildPreviews',
-            child: Text('重新生成封面'),
+            child: Text('更新'),
           ),
-          if (!protected)
-            const PopupMenuItem(value: 'rename', child: Text('重命名')),
-          if (!protected)
-            const PopupMenuItem(value: 'delete', child: Text('删除')),
+          PopupMenuItem(
+              value: 'rename', enabled: !protected, child: const Text('重命名')),
+          PopupMenuItem(
+              value: 'delete', enabled: !protected, child: const Text('删除')),
         ],
       );
 }
 
 class _RuleManagementSection extends StatelessWidget {
   const _RuleManagementSection({
+    required this.onRename,
+    required this.scanning,
+    required this.onCreate,
     required this.rules,
     required this.onEdit,
     required this.onDelete,
   });
 
+  final ValueChanged<IndexNode> onRename;
+  final bool scanning;
   final List<RuleDefinition> rules;
+  final VoidCallback? onCreate;
   final ValueChanged<RuleDefinition> onEdit;
   final ValueChanged<RuleDefinition> onDelete;
 
@@ -428,6 +416,10 @@ class _RuleManagementSection extends StatelessWidget {
             const Icon(Icons.rule_outlined, size: 18),
             const SizedBox(width: 8),
             Text('规则', style: Theme.of(context).textTheme.titleMedium),
+            IconButton(
+                tooltip: '新建规则',
+                onPressed: onCreate,
+                icon: const Icon(Icons.add)),
           ]),
           const SizedBox(height: 8),
           GridView.builder(
@@ -437,35 +429,26 @@ class _RuleManagementSection extends StatelessWidget {
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount:
                   MediaQuery.orientationOf(context) == Orientation.portrait
-                      ? 1
-                      : 3,
-              mainAxisExtent: 76,
+                      ? 2
+                      : 4,
+              mainAxisExtent: 112 *
+                  (MediaQuery.textScalerOf(context).scale(14) / 14).clamp(1, 3),
               crossAxisSpacing: 8,
               mainAxisSpacing: 1,
             ),
             itemBuilder: (context, index) {
               final rule = rules[index];
-              return Card(
-                margin: EdgeInsets.zero,
-                child: ListTile(
-                  dense: true,
-                  leading: Icon(rule.isBuiltIn
-                      ? Icons.lock_outline
-                      : Icons.rule_outlined),
-                  title: Text(rule.node.name, maxLines: 1),
-                  subtitle: Text('${rule.resultCount ?? 0} 个文件'),
-                  trailing: rule.isBuiltIn
-                      ? null
-                      : PopupMenuButton<String>(
-                          onSelected: (value) =>
-                              value == 'edit' ? onEdit(rule) : onDelete(rule),
-                          itemBuilder: (_) => const [
-                            PopupMenuItem(value: 'edit', child: Text('编辑')),
-                            PopupMenuItem(value: 'delete', child: Text('删除')),
-                          ],
-                        ),
-                ),
-              );
+              return _ManagementItem(
+                  name: rule.node.name,
+                  count: rule.resultCount ?? 0,
+                  icon:
+                      rule.isBuiltIn ? Icons.lock_outline : Icons.rule_outlined,
+                  actions: _RootActionsMenu(
+                      enabled: !scanning && !rule.isBuiltIn,
+                      onRename: () => onRename(rule.node),
+                      onDelete: () => onDelete(rule),
+                      onRebuildPreviews: () => onEdit(rule),
+                      protected: rule.isBuiltIn));
             },
           ),
         ]),
@@ -797,7 +780,7 @@ class _BuildStageLine extends StatelessWidget {
           value: active && total <= 0
               ? null
               : completedStage
-                  ? 1
+                  ? 2
                   : total <= 0
                       ? 0
                       : completed.clamp(0, total) / total,

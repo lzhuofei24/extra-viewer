@@ -4,23 +4,30 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('management roots use one portrait column', (tester) async {
+  testWidgets('management roots use two portrait columns', (tester) async {
     await _pumpManagement(tester, const Size(400, 800));
     for (final grid in tester.widgetList<GridView>(find.byType(GridView))) {
       final delegate =
           grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
-      expect(delegate.crossAxisCount, 1);
+      expect(delegate.crossAxisCount, 2);
     }
     expect(tester.takeException(), isNull);
+    expect(find.text('添加资料'), findsNothing);
+    expect(find.text('全部资料'), findsOneWidget);
+    expect(find.byTooltip('添加目录'), findsOneWidget);
+    await tester.tap(find.byTooltip('操作').first);
+    await tester.pumpAndSettle();
+    expect(find.text('更新'), findsOneWidget);
+    expect(find.text('重命名'), findsOneWidget);
+    expect(find.text('删除'), findsOneWidget);
   });
 
-  testWidgets('management roots retain three landscape columns',
-      (tester) async {
+  testWidgets('management roots use four landscape columns', (tester) async {
     await _pumpManagement(tester, const Size(1000, 600));
     for (final grid in tester.widgetList<GridView>(find.byType(GridView))) {
       final delegate =
           grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
-      expect(delegate.crossAxisCount, 3);
+      expect(delegate.crossAxisCount, 4);
     }
     expect(tester.takeException(), isNull);
   });

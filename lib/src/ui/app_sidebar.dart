@@ -109,103 +109,53 @@ class FloatingGlassSurface extends StatelessWidget {
     required this.child,
     this.borderRadius = 24,
     this.padding = EdgeInsets.zero,
+    this.independentBackdrop = false,
   });
 
   final Widget child;
   final double borderRadius;
   final EdgeInsetsGeometry padding;
+  final bool independentBackdrop;
 
-  static const double blurSigma = 18;
-  static const double darkSurfaceAlpha = 0.54;
-  static const double lightSurfaceAlpha = 0.62;
+  static LiquidGlassSettings settingsOf(BuildContext context) =>
+      LiquidGlassSettings(
+        glassColor:
+            Theme.of(context).colorScheme.surface.withValues(alpha: .27),
+        blur: 8,
+        thickness: 20,
+        saturation: 1.2,
+        lightIntensity: .5,
+        chromaticAberration: .01,
+      );
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return RepaintBoundary(
+    final surface = RepaintBoundary(
       child: GlassContainer(
         useOwnLayer: true,
         quality: ImageFilter.isShaderFilterSupported
             ? GlassQuality.premium
             : GlassQuality.minimal,
         shape: LiquidRoundedSuperellipse(borderRadius: borderRadius),
-        settings: LiquidGlassSettings(
-          glassColor: colors.surface.withValues(alpha: .27),
-          blur: 8,
-          thickness: 20,
-          saturation: 1.2,
-          lightIntensity: .5,
-          chromaticAberration: .01,
-        ),
+        settings: settingsOf(context),
         child: Padding(
           padding: padding,
           child: _FloatingGlassTextTheme(child: child),
         ),
       ),
     );
-  }
-}
-
-/// Glass surface for popup overlays. Menu overlays cannot reliably sample the
-/// app-level liquid-glass capture layer, so use the native backdrop here and
-/// leave nested interactive glass controls free to render their own effects.
-class FloatingGlassOverlaySurface extends StatelessWidget {
-  const FloatingGlassOverlaySurface({
-    super.key,
-    required this.child,
-    this.borderRadius = 24,
-    this.padding = EdgeInsets.zero,
-  });
-
-  final Widget child;
-  final double borderRadius;
-  final EdgeInsetsGeometry padding;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final radius = BorderRadius.circular(borderRadius);
-    return RepaintBoundary(
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: radius,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: .18),
-              blurRadius: 24,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: radius,
-          child: BackdropFilter(
-            filter: ImageFilter.blur(
-              sigmaX: FloatingGlassSurface.blurSigma,
-              sigmaY: FloatingGlassSurface.blurSigma,
-            ),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: colors.surface.withValues(
-                  alpha: Theme.of(context).brightness == Brightness.dark
-                      ? FloatingGlassSurface.darkSurfaceAlpha
-                      : FloatingGlassSurface.lightSurfaceAlpha,
-                ),
-                borderRadius: radius,
-                border: Border.all(
-                  color: colors.onSurface.withValues(alpha: .24),
-                  width: 1,
-                ),
-              ),
-              child: Padding(
-                padding: padding,
-                child: _FloatingGlassTextTheme(child: child),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
+    // An overlay is visually outside its anchor, but OverlayPortal preserves
+    // inherited widgets. Reset the anchor's nested-glass no-refraction flag.
+    return independentBackdrop
+        ? InheritedLiquidGlass(
+            settings: settingsOf(context),
+            quality: ImageFilter.isShaderFilterSupported
+                ? GlassQuality.premium
+                : GlassQuality.minimal,
+            avoidsRefraction: false,
+            isBlurProvidedByAncestor: false,
+            child: surface)
+        : surface;
   }
 }
 

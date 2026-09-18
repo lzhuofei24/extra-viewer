@@ -56,6 +56,10 @@ class IndexNodeThumbnail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final data = preview;
+    if (!hasContent &&
+        (data == null || data.kind == IndexNodePreviewKind.empty)) {
+      return EmptyFolderCover(borderRadius: borderRadius);
+    }
     if (data == null) {
       return _NodeNameTile(title: nodeName);
     }
@@ -124,6 +128,47 @@ class IndexNodeThumbnail extends StatelessWidget {
         },
       ),
     );
+  }
+}
+
+class EmptyFolderCover extends StatelessWidget {
+  const EmptyFolderCover({super.key, this.borderRadius = 16});
+  final double borderRadius;
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+        label: '空文件夹',
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(borderRadius),
+          child: LayoutBuilder(builder: (context, constraints) {
+            final compact =
+                constraints.maxHeight < 90 || constraints.maxWidth < 90;
+            return DecoratedBox(
+                decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                      colors.surfaceContainerHighest,
+                      colors.surfaceContainerLow
+                    ])),
+                child: Center(
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.folder_open_rounded,
+                      size: compact ? 24 : 64,
+                      color: colors.onSurfaceVariant.withValues(alpha: 0.55)),
+                  if (!compact) ...[
+                    const SizedBox(height: 8),
+                    Text('空文件夹',
+                        style: Theme.of(context)
+                            .textTheme
+                            .labelLarge
+                            ?.copyWith(color: colors.onSurfaceVariant))
+                  ],
+                ])));
+          }),
+        ));
   }
 }
 

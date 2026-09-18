@@ -1,16 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
-
 import '../core/domain/models.dart';
 import '../modules/library/library_queries.dart';
 import 'app_preferences.dart';
-import 'app_sidebar.dart';
 import 'browser_list.dart';
 import 'browser_state.dart';
 import 'browser_toolbar.dart';
-import 'collection_grid_layout.dart';
+import 'browser_page_scaffold.dart';
+import 'browser_entity_sliver.dart';
+import 'rule_browser_controller.dart';
 import 'gallery_layout_settings.dart';
-import 'library_widgets.dart';
 
 class RuleIndexPage extends StatefulWidget {
   const RuleIndexPage({
@@ -27,6 +25,8 @@ class RuleIndexPage extends StatefulWidget {
     required this.onEditRule,
     required this.onDeleteRule,
     this.initialRuleId,
+    required this.onSelectionModeChanged,
+    this.controller,
   });
 
   final LibraryQueries queries;
@@ -42,412 +42,354 @@ class RuleIndexPage extends StatefulWidget {
   final Future<void> Function(RuleDefinition) onEditRule;
   final Future<void> Function(RuleDefinition) onDeleteRule;
   final String? initialRuleId;
+  final ValueChanged<bool> onSelectionModeChanged;
+  final RuleBrowserController? controller;
 
   @override
   State<RuleIndexPage> createState() => _RuleIndexPageState();
 }
 
 class _RuleIndexPageState extends State<RuleIndexPage> {
-  List<RuleDefinition> _rules = const [];
-  RuleDefinition? _activeRule;
-  List<EntityListItem> _items = const [];
-  RulePageCursor? _cursor;
-  RuleSortMode? _temporarySort;
-  bool _loading = true;
-  bool _loadingMore = false;
+  late final RuleBrowserController _controller;
   bool _immersive = false;
   bool _selectionMode = false;
-  final Set<String> _selected = <String>{};
-  Object? _error;
+  final Set<String> _selected = {};
+  String get _scope => _controller.activeRule?.node.id ?? 'home';
 
   @override
   void initState() {
     super.initState();
-    _loadRules();
+    _controller = widget.controller ?? RuleBrowserController(widget.queries);
+    _controller.addListener(_changed);
+    if (widget.initialRuleId != null &&
+        widget.initialRuleId != _controller.activeRule?.node.id) {
+      _controller.loadRules(initialRuleId: widget.initialRuleId);
+    } else if (_controller.activeRule == null) {
+      _controller.loadRules();
+    }
   }
 
-  Future<void> _loadRules() async {
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_changed);
+    if (widget.controller == null) _controller.dispose();
+    super.dispose();
+  }
+
+  void _select([String? id]) {
+    final entering = !_selectionMode;
     setState(() {
-      _loading = true;
-      _error = null;
+      _selectionMode = true;
+      if (id != null && !_selected.add(id)) _selected.remove(id);
     });
-    try {
-      final rules = await widget.queries.listRules();
-      if (!mounted) return;
-      setState(() {
-        _rules = rules;
-        _loading = false;
-      });
-      final initialId = widget.initialRuleId;
-      if (initialId != null) {
-        final matches = rules.where((rule) => rule.node.id == initialId);
-        if (matches.isNotEmpty) await _openRule(matches.first);
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _error = error;
-          _loading = false;
-        });
-      }
-    }
+    if (entering) widget.onSelectionModeChanged(true);
   }
 
-  Future<void> _openRule(RuleDefinition rule) async {
+  void _exitSelection() {
+    if (!_selectionMode) return;
     setState(() {
-      _activeRule = rule;
-      _items = const [];
-      _cursor = null;
-      _temporarySort = null;
-      _loading = true;
-      _error = null;
-    });
-    await _loadPage(reset: true);
-  }
-
-  Future<void> _loadPage({bool reset = false}) async {
-    final rule = _activeRule;
-    if (rule == null || _loadingMore) return;
-    if (reset) {
-      setState(() => _loading = true);
-    } else {
-      setState(() => _loadingMore = true);
-    }
-    try {
-      final page = await widget.queries.loadRulePage(
-        ruleNodeId: rule.node.id,
-        sortMode: rule.isBuiltIn ? null : _temporarySort,
-        after: reset ? null : _cursor,
-      );
-      if (!mounted || _activeRule?.node.id != rule.node.id) return;
-      setState(() {
-        _items = reset ? page.items : [..._items, ...page.items];
-        _cursor = page.cursor;
-        _loading = false;
-        _loadingMore = false;
-      });
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _error = error;
-          _loading = false;
-          _loadingMore = false;
-        });
-      }
-    }
-  }
-
-  void _closeRule() {
-    setState(() {
-      _activeRule = null;
-      _items = const [];
-      _cursor = null;
-      _temporarySort = null;
-      _immersive = false;
       _selectionMode = false;
       _selected.clear();
     });
-    _loadRules();
+    widget.onSelectionModeChanged(false);
   }
 
-  void _toggleSelection([String? entityId]) {
-    setState(() {
-      _selectionMode = true;
-      if (entityId != null && !_selected.add(entityId)) {
-        _selected.remove(entityId);
-      }
-    });
+  void _open(RuleDefinition rule) {
+    _exitSelection();
+    setState(() => _immersive = false);
+    _controller.openRule(rule);
   }
 
-  void _exitSelection() => setState(() {
-        _selectionMode = false;
-        _selected.clear();
-      });
+  void _close() {
+    _exitSelection();
+    setState(() => _immersive = false);
+    _controller.closeRule();
+  }
+
+  Iterable<String> get _visibleIds => _controller.activeRule == null
+      ? _controller.rules.map((r) => r.node.id)
+      : _controller.items.map((e) => e.id);
 
   @override
   Widget build(BuildContext context) {
-    if (_activeRule == null) return _buildHome(context);
-    return _buildResults(context, _activeRule!);
-  }
-
-  Widget _buildHome(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return _ErrorState(error: _error!, onRetry: _loadRules);
-    final obstruction = AppNavigationObstruction.of(context);
-    final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
-    return RefreshIndicator(
-      onRefresh: _loadRules,
-      child: GridView.builder(
-        padding: EdgeInsets.fromLTRB(12, 20, 12, 100 + obstruction.bottom),
-        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: portrait ? 1 : 3,
-          mainAxisExtent: 116,
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
+    final rule = _controller.activeRule;
+    return BrowserPageScaffold(
+      immersive: _immersive,
+      onExitImmersive: () => setState(() => _immersive = false),
+      toolbar: _toolbar(rule),
+      selectionBar: _selectionMode ? _selectionBar() : null,
+      body: BrowserScrollShell(
+        key: ValueKey('rule:$_scope:$_immersive'),
+        preloadScopeKey: 'rule:$_scope:${_controller.temporarySort}',
+        warmupEnabled: rule != null &&
+            (_immersive ||
+                widget.browserState.displayMode != BrowserDisplayMode.list ||
+                widget.browserState.listStyle != BrowserListStyle.text),
+        entities: _controller.items,
+        hasMore: _controller.hasMore &&
+            !_controller.loading &&
+            _controller.error == null,
+        onLoadMore: _controller.loadPage,
+        selectionMode: _selectionMode,
+        onSelectEntitiesByDrag: (items) =>
+            setState(() => _selected.addAll(items.map((e) => e.id))),
+        child: (scroll, registry) => CustomScrollView(
+          key: PageStorageKey('rule:$_scope:$_immersive'),
+          controller: scroll,
+          slivers: [
+            if (!_immersive)
+              SliverToBoxAdapter(
+                  child:
+                      SizedBox(height: BrowserPageScaffold.topInset(context))),
+            if (_controller.loading)
+              const SliverFillRemaining(
+                  child: Center(child: CircularProgressIndicator()))
+            else if (_controller.error != null && _controller.items.isEmpty)
+              SliverFillRemaining(
+                  child: _ErrorState(
+                      error: _controller.error!,
+                      onRetry: () => rule == null
+                          ? _controller.loadRules()
+                          : _controller.loadPage(reset: true)))
+            else if (rule == null)
+              _homeSliver()
+            else if (_controller.items.isEmpty)
+              const SliverFillRemaining(child: Center(child: Text('没有符合规则的文件')))
+            else
+              BrowserEntitySliver(
+                  entities: _controller.items,
+                  browserState: widget.browserState,
+                  layoutSettings: widget.layoutSettings,
+                  immersive: _immersive,
+                  selectionMode: _selectionMode,
+                  selectionRegistry: registry,
+                  selectedEntityIds: _selected,
+                  onOpenEntity: (e) =>
+                      widget.onOpenEntity(e, _controller.items),
+                  onShowEntityMenu: (e) => _select(e.id),
+                  onThumbnailNeeded: widget.onThumbnailNeeded,
+                  onToggleEntitySelection: (e) => _select(e.id),
+                  onStartEntitySelection: (e) => _select(e.id)),
+            if (_controller.hasMore)
+              SliverToBoxAdapter(
+                  child: Center(
+                      child: TextButton(
+                          onPressed: _controller.loadingMore
+                              ? null
+                              : _controller.loadPage,
+                          child: Text(_controller.loadingMore
+                              ? '加载中…'
+                              : _controller.error != null
+                                  ? '重试加载'
+                                  : '加载更多')))),
+            SliverToBoxAdapter(
+                child: SizedBox(
+                    height: BrowserPageScaffold.bottomInset(context,
+                        selecting: _selectionMode))),
+          ],
         ),
-        itemCount: _rules.length,
-        itemBuilder: (context, index) {
-          final rule = _rules[index];
-          return Card(
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              onTap: () => _openRule(rule),
-              onLongPress: rule.isBuiltIn
-                  ? null
-                  : () async {
-                      await widget.onEditRule(rule);
-                      await _loadRules();
-                    },
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Row(children: [
-                  CircleAvatar(
-                    child: Icon(_ruleIcon(rule.builtInKind)),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Row(children: [
-                          Expanded(
-                              child: Text(rule.node.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style:
-                                      Theme.of(context).textTheme.titleMedium)),
-                          if (rule.isBuiltIn)
-                            const Icon(Icons.lock_outline, size: 16),
-                        ]),
-                        const SizedBox(height: 5),
-                        Text(_ruleSummary(rule),
-                            maxLines: 2, overflow: TextOverflow.ellipsis),
-                        if (rule.resultCount != null)
-                          Text('${rule.resultCount} 个文件',
-                              style: Theme.of(context).textTheme.labelSmall),
-                      ],
-                    ),
-                  ),
-                  if (!rule.isBuiltIn)
-                    PopupMenuButton<String>(
-                      onSelected: (value) async {
-                        if (value == 'edit') await widget.onEditRule(rule);
-                        if (value == 'delete') await widget.onDeleteRule(rule);
-                        await _loadRules();
-                      },
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(value: 'edit', child: Text('编辑')),
-                        PopupMenuItem(value: 'delete', child: Text('删除')),
-                      ],
-                    ),
-                ]),
-              ),
-            ),
-          );
-        },
       ),
     );
   }
 
-  Widget _buildResults(BuildContext context, RuleDefinition rule) {
-    final obstruction = AppNavigationObstruction.of(context);
-    final topInset = MediaQuery.sizeOf(context).width < 600 ? 116.0 : 76.0;
-    return Stack(children: [
-      CustomScrollView(slivers: [
-        if (!_immersive) SliverToBoxAdapter(child: SizedBox(height: topInset)),
-        if (_loading)
-          const SliverFillRemaining(
-              child: Center(child: CircularProgressIndicator()))
-        else if (_error != null)
-          SliverFillRemaining(
-              child: _ErrorState(
-                  error: _error!, onRetry: () => _loadPage(reset: true)))
-        else if (_items.isEmpty)
-          const SliverFillRemaining(child: Center(child: Text('没有符合规则的文件')))
-        else
-          _buildEntitySliver(context),
-        if (_cursor != null)
-          SliverToBoxAdapter(
-            child: Center(
-                child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: FilledButton.tonal(
-                onPressed: _loadingMore ? null : _loadPage,
-                child: Text(_loadingMore ? '加载中…' : '加载更多'),
-              ),
-            )),
-          ),
-        SliverPadding(
-            padding: EdgeInsets.only(bottom: 100 + obstruction.bottom)),
-      ]),
-      if (!_immersive)
-        Positioned(
-          top: 8,
-          left: 12,
-          right: 12,
-          child: Center(
-              child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 960),
-            child: BrowserToolbar(
-              leading: Row(children: [
-                IconButton(
-                    onPressed: _closeRule, icon: const Icon(Icons.arrow_back)),
-                Expanded(
-                    child: Text(rule.node.name,
-                        maxLines: 1, overflow: TextOverflow.ellipsis)),
+  Widget _toolbar(RuleDefinition? rule) => BrowserToolbar(
+        leading: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              TextButton(
+                  onPressed: rule == null ? null : _close,
+                  child: const Text('规则')),
+              if (rule != null) ...[
+                const Icon(Icons.chevron_right, size: 18),
+                Text(rule.node.name),
                 if (rule.isBuiltIn)
                   const Padding(
-                      padding: EdgeInsets.only(right: 6),
+                      padding: EdgeInsets.only(left: 8),
                       child: Icon(Icons.lock_outline, size: 16)),
-              ]),
-              browserState: widget.browserState,
-              onSortChanged: (sort) {
-                widget.onBrowserStateChanged(
-                    widget.browserState.copyWith(sortMode: sort));
-                if (!rule.isBuiltIn) {
-                  _temporarySort = _ruleSort(sort);
-                  _loadPage(reset: true);
-                }
-              },
-              onDisplayModeChanged: (mode) => widget.onBrowserStateChanged(
-                  widget.browserState.copyWith(displayMode: mode)),
-              onGridLayoutChanged: (layout) => widget.onBrowserStateChanged(
-                  widget.browserState.copyWith(gridLayout: layout)),
-              onListStyleChanged: (style) => widget.onBrowserStateChanged(
-                  widget.browserState.copyWith(listStyle: style)),
-              themeChoice: widget.preferences.value.themeChoice,
-              onThemeChanged: widget.preferences.setTheme,
-              layoutPreset: widget.preferences.value.layoutPreset,
-              onLayoutPresetChanged: widget.preferences.setLayoutPreset,
-              onSearch: widget.onSearch,
-              onToggleImmersive: () => setState(() => _immersive = true),
-              selectionMode: _selectionMode,
-              onToggleSelection:
-                  _selectionMode ? _exitSelection : () => _toggleSelection(),
-            ),
-          )),
-        ),
-      if (_immersive)
-        Positioned(
-            top: 8,
-            right: 8,
-            child: FloatingGlassSurface(
-              borderRadius: 24,
-              child: IconButton(
-                tooltip: '退出沉浸式浏览',
-                onPressed: () => setState(() => _immersive = false),
-                icon: const Icon(Icons.fullscreen_exit_rounded),
-              ),
-            )),
-      if (_selectionMode)
-        Positioned(
-          left: 16,
-          right: 16,
-          bottom: obstruction.bottom + 8,
-          child: Center(
-              child: FloatingGlassSurface(
-            borderRadius: 28,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Text('已选 ${_selected.length} 项'),
-              IconButton(
-                tooltip: '加入分类',
-                onPressed: _selected.isEmpty
-                    ? null
-                    : () async {
-                        await widget.onAddToCollection(Set.of(_selected));
-                        if (mounted) _exitSelection();
-                      },
-                icon: const Icon(Icons.playlist_add_rounded),
-              ),
-              IconButton(
-                  tooltip: '退出选择',
-                  onPressed: _exitSelection,
-                  icon: const Icon(Icons.close)),
-            ]),
-          )),
-        ),
-    ]);
+              ],
+            ])),
+        browserState:
+            widget.browserState.copyWith(sortMode: _displaySort(rule)),
+        allowSorting: rule != null && !rule.isBuiltIn,
+        allowGridStyle: rule != null,
+        sortDescription: rule?.isBuiltIn == true
+            ? rule!.builtInKind == BuiltInRuleKind.frequent
+                ? '固定排序：访问次数'
+                : '固定排序：最近打开'
+            : rule != null && _controller.temporarySort == null
+                ? '规则默认排序：${_sortLabel(rule.defaultSort)}'
+                : null,
+        onSortChanged: (value) => _controller.sort(_ruleSort(value)),
+        onDisplayModeChanged: (v) => widget.onBrowserStateChanged(
+            widget.browserState.copyWith(displayMode: v)),
+        onGridLayoutChanged: (v) => widget
+            .onBrowserStateChanged(widget.browserState.copyWith(gridLayout: v)),
+        onListStyleChanged: (v) => widget
+            .onBrowserStateChanged(widget.browserState.copyWith(listStyle: v)),
+        themeChoice: widget.preferences.value.themeChoice,
+        onThemeChanged: widget.preferences.setTheme,
+        layoutPreset: widget.preferences.value.layoutPreset,
+        onLayoutPresetChanged: widget.preferences.setLayoutPreset,
+        onSearch: widget.onSearch,
+        onToggleImmersive:
+            rule == null ? null : () => setState(() => _immersive = true),
+        selectionMode: _selectionMode,
+        onToggleSelection: _selectionMode ? _exitSelection : () => _select(),
+      );
+
+  EntitySortMode _displaySort(RuleDefinition? rule) =>
+      switch (_controller.temporarySort ?? rule?.defaultSort) {
+        RuleSortMode.name => EntitySortMode.nameAsc,
+        RuleSortMode.size => EntitySortMode.sizeDesc,
+        _ => EntitySortMode.modifiedDesc,
+      };
+
+  Widget _homeSliver() {
+    if (widget.browserState.displayMode == BrowserDisplayMode.list) {
+      return BrowserListSliver(
+          count: _controller.rules.length,
+          style: widget.browserState.listStyle,
+          padding: widget.layoutSettings.pageMargin,
+          itemBuilder: (_, i) {
+            final rule = _controller.rules[i];
+            return BrowserListTile(
+                style: widget.browserState.listStyle,
+                title: '${rule.node.name}${rule.isBuiltIn ? " · 内置" : ""}',
+                subtitle:
+                    '${_ruleSummary(rule)} · ${rule.resultCount ?? 0} 个文件',
+                selected: _selected.contains(rule.node.id),
+                onTap: () =>
+                    _selectionMode ? _select(rule.node.id) : _open(rule),
+                onLongPress: () => _select(rule.node.id),
+                previewBuilder: (_) => Icon(_ruleIcon(rule.builtInKind)));
+          });
+    }
+    return SliverPadding(
+        padding: EdgeInsets.all(widget.layoutSettings.pageMargin),
+        sliver: SliverLayoutBuilder(builder: (context, constraints) {
+          final portrait =
+              MediaQuery.orientationOf(context) == Orientation.portrait;
+          final columns = portrait
+              ? 1
+              : (constraints.crossAxisExtent / 280).floor().clamp(1, 3);
+          final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+          return SliverGrid(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: columns,
+                  mainAxisExtent: 128 * scale.clamp(1, 3),
+                  mainAxisSpacing: widget.layoutSettings.cardGap,
+                  crossAxisSpacing: widget.layoutSettings.cardGap),
+              delegate: SliverChildBuilderDelegate((context, i) {
+                final rule = _controller.rules[i];
+                return Card(
+                    color: _selected.contains(rule.node.id)
+                        ? Theme.of(context).colorScheme.secondaryContainer
+                        : null,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(
+                            widget.layoutSettings.cardRadius)),
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: () =>
+                          _selectionMode ? _select(rule.node.id) : _open(rule),
+                      onLongPress: () => _select(rule.node.id),
+                      child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Row(children: [
+                            Icon(_ruleIcon(rule.builtInKind)),
+                            const SizedBox(width: 12),
+                            Expanded(
+                                child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                  Text(rule.node.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium),
+                                  Text(_ruleSummary(rule),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis),
+                                  Text('${rule.resultCount ?? 0} 个文件'),
+                                ])),
+                            if (rule.isBuiltIn)
+                              const Icon(Icons.lock_outline, size: 16),
+                            if (_selected.contains(rule.node.id))
+                              const Icon(Icons.check_circle),
+                          ])),
+                    ));
+              }, childCount: _controller.rules.length));
+        }));
   }
 
-  Widget _buildEntitySliver(BuildContext context) {
-    final state = widget.browserState;
-    if (!_immersive && state.displayMode == BrowserDisplayMode.list) {
-      return BrowserListSliver(
-        count: _items.length,
-        style: state.listStyle,
-        padding: widget.layoutSettings.pageMargin,
-        itemBuilder: (context, index) {
-          final entity = _items[index];
-          return BrowserListTile(
-            style: state.listStyle,
-            title: entity.title,
-            subtitle:
-                '${entity.format.toUpperCase()} · ${_formatSize(entity.size)}',
-            selected: _selected.contains(entity.id),
-            onTap: () => _selectionMode
-                ? _toggleSelection(entity.id)
-                : widget.onOpenEntity(entity, _items),
-            onLongPress: () => _toggleSelection(entity.id),
-            previewBuilder: (_) => EntityArtwork(
-              entityType: entity.entityType,
-              format: entity.format,
-              title: entity.title,
-              contentExcerpt: entity.contentExcerpt,
-              thumbnailStatus: entity.thumbnailStatus,
-              thumbnailPath: entity.thumbnailPath,
-              onThumbnailNeeded: () => widget.onThumbnailNeeded(entity),
-            ),
-          );
-        },
-      );
-    }
-    return SliverLayoutBuilder(builder: (context, constraints) {
-      final layout = widget.layoutSettings;
-      final portrait =
-          MediaQuery.orientationOf(context) == Orientation.portrait;
-      final columns = state.gridLayout == BrowserGridLayout.square
-          ? layout.squareColumns(isPortrait: portrait)
-          : layout.equalWidthColumns(isPortrait: portrait);
-      final grid = CollectionGridLayout.calculate(
-        availableWidth: constraints.crossAxisExtent,
-        horizontalPadding: _immersive
-            ? GalleryLayoutSettings.immersiveMargin
-            : layout.pageMargin,
-        gap: _immersive ? GalleryLayoutSettings.immersiveGap : layout.cardGap,
-        columnCount: columns,
-      );
-      final gap =
-          _immersive ? GalleryLayoutSettings.immersiveGap : layout.cardGap;
-      return SliverPadding(
-        padding: EdgeInsets.all(_immersive
-            ? GalleryLayoutSettings.immersiveMargin
-            : layout.pageMargin),
-        sliver: SliverMasonryGrid.count(
-          crossAxisCount: grid.columnCount,
-          mainAxisSpacing: gap,
-          crossAxisSpacing: gap,
-          childCount: _items.length,
-          itemBuilder: (context, index) {
-            final entity = _items[index];
-            return EntityCard(
-              entity: entity,
-              immersive: _immersive,
-              selectionMode: _selectionMode,
-              selected: _selected.contains(entity.id),
-              onOpen: () => widget.onOpenEntity(entity, _items),
-              onToggleSelection: () => _toggleSelection(entity.id),
-              onStartSelection: () => _toggleSelection(entity.id),
-              onThumbnailNeeded: () => widget.onThumbnailNeeded(entity),
-              cardRadius: layout.cardRadius,
-            );
-          },
-        ),
-      );
-    });
+  Widget _selectionBar() {
+    final home = _controller.activeRule == null;
+    final selectedRules =
+        _controller.rules.where((r) => _selected.contains(r.node.id)).toList();
+    final editable =
+        selectedRules.isNotEmpty && selectedRules.every((r) => !r.isBuiltIn);
+    return BrowserSelectionBar(
+        count: _selected.length,
+        onExit: _exitSelection,
+        onSelectAll: () => setState(() => _selected.addAll(_visibleIds)),
+        onInvert: () => setState(() {
+              for (final id in _visibleIds) {
+                if (!_selected.add(id)) _selected.remove(id);
+              }
+            }),
+        actions: home
+            ? [
+                if (selectedRules.any((r) => r.isBuiltIn))
+                  const Text('内置规则不可修改'),
+                TextButton(
+                    onPressed: editable && selectedRules.length == 1
+                        ? () async {
+                            await widget.onEditRule(selectedRules.single);
+                            if (!mounted) return;
+                            _exitSelection();
+                            await _controller.loadRules();
+                          }
+                        : null,
+                    child: const Text('编辑')),
+                TextButton(
+                    onPressed: editable
+                        ? () async {
+                            for (final rule in selectedRules) {
+                              await widget.onDeleteRule(rule);
+                              if (!mounted) return;
+                            }
+                            _exitSelection();
+                            await _controller.loadRules();
+                          }
+                        : null,
+                    child: const Text('删除')),
+              ]
+            : [
+                TextButton(
+                    onPressed: _selected.isEmpty
+                        ? null
+                        : () async {
+                            await widget.onAddToCollection(Set.of(_selected));
+                            if (mounted) _exitSelection();
+                          },
+                    child: const Text('加入分类')),
+              ]);
   }
 }
+
+String _sortLabel(RuleSortMode mode) => switch (mode) {
+      RuleSortMode.name => '名称',
+      RuleSortMode.size => '大小',
+      RuleSortMode.modified => '修改时间',
+      _ => mode.name == 'openCount' ? '访问次数' : '最近打开',
+    };
 
 class _ErrorState extends StatelessWidget {
   const _ErrorState({required this.error, required this.onRetry});
@@ -500,13 +442,4 @@ String _ruleSummary(RuleDefinition rule) {
   if (rule.modifiedWithinDays != null) parts.add('最近修改');
   if (rule.openedWithinDays != null) parts.add('最近打开');
   return parts.isEmpty ? '全部文件' : parts.join(' · ');
-}
-
-String _formatSize(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-  if (bytes < 1024 * 1024 * 1024) {
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
-  return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
 }

@@ -1,4 +1,5 @@
 import 'package:best_viewer/src/ui/app_sidebar.dart';
+import 'package:best_viewer/src/ui/browser_toolbar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -50,7 +51,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('常用'), findsOneWidget);
     expect(find.byTooltip('收起功能栏'), findsNothing);
-    expect(find.byType(FloatingGlassSurface), findsOneWidget);
+    expect(find.byType(BrowserToolbar), findsOneWidget);
+    expect(find.byType(FloatingGlassSurface), findsNWidgets(2));
     expect(tester.takeException(), isNull);
 
     await tester.runAsync(() async {

@@ -35,12 +35,17 @@ class BrowserToolbar extends StatelessWidget {
     required this.layoutPreset,
     required this.onLayoutPresetChanged,
     this.onSearch,
+    this.allowSorting = true,
+    this.allowGridStyle = true,
+    this.sortDescription,
     this.immersive = false,
     this.onToggleImmersive,
     this.selectionMode = false,
     this.onToggleSelection,
   });
 
+  final bool allowSorting, allowGridStyle;
+  final String? sortDescription;
   final Widget leading;
   final BrowserState browserState;
   final ValueChanged<EntitySortMode> onSortChanged;
@@ -65,7 +70,7 @@ class BrowserToolbar extends StatelessWidget {
             children: [
               if (onSearch != null)
                 IconButton(
-                  tooltip: '搜索目录或分类',
+                  tooltip: '搜索目录、分类或规则',
                   onPressed: onSearch,
                   icon: const Icon(Icons.search),
                 ),
@@ -87,6 +92,9 @@ class BrowserToolbar extends StatelessWidget {
                 ),
               const SizedBox(width: 4),
               _BrowserOptionsMenu(
+                allowSorting: allowSorting,
+                allowGridStyle: allowGridStyle,
+                sortDescription: sortDescription,
                 browserState: browserState,
                 onSortChanged: onSortChanged,
                 onDisplayModeChanged: onDisplayModeChanged,
@@ -140,6 +148,9 @@ class BrowserToolbar extends StatelessWidget {
 
 class _BrowserOptionsMenu extends StatelessWidget {
   const _BrowserOptionsMenu({
+    required this.allowSorting,
+    required this.allowGridStyle,
+    this.sortDescription,
     required this.browserState,
     required this.onSortChanged,
     required this.onDisplayModeChanged,
@@ -151,6 +162,8 @@ class _BrowserOptionsMenu extends StatelessWidget {
     required this.onLayoutPresetChanged,
   });
 
+  final bool allowSorting, allowGridStyle;
+  final String? sortDescription;
   final BrowserState browserState;
   final ValueChanged<EntitySortMode> onSortChanged;
   final ValueChanged<BrowserDisplayMode> onDisplayModeChanged;
@@ -171,6 +184,8 @@ class _BrowserOptionsMenu extends StatelessWidget {
       color: Colors.black,
     );
     return MenuAnchor(
+      // The shared glass surface owns its superellipse and refracted edge.
+      clipBehavior: Clip.none,
       style: const MenuStyle(
         backgroundColor: WidgetStatePropertyAll(Colors.transparent),
         surfaceTintColor: WidgetStatePropertyAll(Colors.transparent),
@@ -179,7 +194,9 @@ class _BrowserOptionsMenu extends StatelessWidget {
         padding: WidgetStatePropertyAll(EdgeInsets.zero),
       ),
       menuChildren: [
-        FloatingGlassOverlaySurface(
+        FloatingGlassSurface(
+          key: const ValueKey('browser-options-surface'),
+          independentBackdrop: true,
           borderRadius: 20,
           padding: const EdgeInsets.all(12),
           child: SizedBox(
@@ -192,19 +209,23 @@ class _BrowserOptionsMenu extends StatelessWidget {
                 children: [
                   Text('浏览选项', style: titleStyle),
                   const SizedBox(height: 10),
-                  Text('排序', style: labelStyle),
-                  const SizedBox(height: 6),
-                  _GlassOptionSelector<EntitySortMode>(
-                    values: const [
-                      EntitySortMode.modifiedDesc,
-                      EntitySortMode.nameAsc,
-                      EntitySortMode.sizeDesc,
-                    ],
-                    labels: const ['最近', '名称', '大小'],
-                    selected: browserState.sortMode,
-                    onSelected: onSortChanged,
-                  ),
-                  const SizedBox(height: 12),
+                  if (sortDescription != null)
+                    Text(sortDescription!, style: labelStyle),
+                  if (allowSorting) ...[
+                    Text('排序', style: labelStyle),
+                    const SizedBox(height: 6),
+                    _GlassOptionSelector<EntitySortMode>(
+                      values: const [
+                        EntitySortMode.modifiedDesc,
+                        EntitySortMode.nameAsc,
+                        EntitySortMode.sizeDesc,
+                      ],
+                      labels: const ['最近', '名称', '大小'],
+                      selected: browserState.sortMode,
+                      onSelected: onSortChanged,
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   Text('显示', style: labelStyle),
                   const SizedBox(height: 6),
                   _GlassOptionSelector<BrowserDisplayMode>(
@@ -221,31 +242,34 @@ class _BrowserOptionsMenu extends StatelessWidget {
                     onSelected: onDisplayModeChanged,
                   ),
                   const SizedBox(height: 12),
-                  Text('样式', style: labelStyle),
-                  const SizedBox(height: 6),
-                  if (browserState.displayMode == BrowserDisplayMode.grid)
-                    _GlassOptionSelector<BrowserGridLayout>(
-                      values: const [
-                        BrowserGridLayout.equalHeight,
-                        BrowserGridLayout.equalWidth,
-                        BrowserGridLayout.square,
-                      ],
-                      labels: const ['等高', '等宽', '方形'],
-                      selected: browserState.gridLayout,
-                      onSelected: onGridLayoutChanged,
-                    )
-                  else
-                    _GlassOptionSelector<BrowserListStyle>(
-                      values: const [
-                        BrowserListStyle.text,
-                        BrowserListStyle.compact,
-                        BrowserListStyle.normal,
-                      ],
-                      labels: const ['文本', '紧凑', '正常'],
-                      selected: browserState.listStyle,
-                      onSelected: onListStyleChanged,
-                    ),
-                  const SizedBox(height: 12),
+                  if (allowGridStyle ||
+                      browserState.displayMode == BrowserDisplayMode.list) ...[
+                    Text('样式', style: labelStyle),
+                    const SizedBox(height: 6),
+                    if (browserState.displayMode == BrowserDisplayMode.grid)
+                      _GlassOptionSelector<BrowserGridLayout>(
+                        values: const [
+                          BrowserGridLayout.equalHeight,
+                          BrowserGridLayout.equalWidth,
+                          BrowserGridLayout.square,
+                        ],
+                        labels: const ['等高', '等宽', '方形'],
+                        selected: browserState.gridLayout,
+                        onSelected: onGridLayoutChanged,
+                      )
+                    else
+                      _GlassOptionSelector<BrowserListStyle>(
+                        values: const [
+                          BrowserListStyle.text,
+                          BrowserListStyle.compact,
+                          BrowserListStyle.normal,
+                        ],
+                        labels: const ['文本', '紧凑', '正常'],
+                        selected: browserState.listStyle,
+                        onSelected: onListStyleChanged,
+                      ),
+                    const SizedBox(height: 12),
+                  ],
                   Text('主题', style: labelStyle),
                   const SizedBox(height: 6),
                   _GlassOptionSelector<ViewerThemeChoice>(
@@ -314,13 +338,7 @@ class _GlassOptionSelector<T> extends StatelessWidget {
         quality: ImageFilter.isShaderFilterSupported
             ? GlassQuality.premium
             : GlassQuality.minimal,
-        settings: const LiquidGlassSettings(
-          blur: 8,
-          thickness: 20,
-          saturation: 1.2,
-          lightIntensity: .5,
-          chromaticAberration: .01,
-        ),
+        settings: FloatingGlassSurface.settingsOf(context),
         selectedTextStyle: const TextStyle(
           color: Colors.black,
           fontWeight: FontWeight.w600,
