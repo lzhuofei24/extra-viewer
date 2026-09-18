@@ -1,4 +1,5 @@
 import 'browser_node_grid.dart';
+import 'browser_path_rail.dart';
 import 'library_widgets.dart';
 import 'package:flutter/material.dart';
 import '../core/domain/models.dart';
@@ -201,21 +202,11 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
   }
 
   Widget _toolbar(RuleDefinition? rule) => BrowserToolbar(
-        leading: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              TextButton(
-                  onPressed: rule == null ? null : _close,
-                  child: const Text('规则')),
-              if (rule != null) ...[
-                const Icon(Icons.chevron_right, size: 18),
-                Text(rule.node.name),
-                if (rule.isBuiltIn)
-                  const Padding(
-                      padding: EdgeInsets.only(left: 8),
-                      child: Icon(Icons.lock_outline, size: 16)),
-              ],
-            ])),
+        leading: BrowserPathRail(
+            currentNode: rule?.node,
+            path: [if (rule != null) rule.node],
+            onOpenRootIndex: _close,
+            onPathNodeSelected: (_) {}),
         browserState:
             widget.browserState.copyWith(sortMode: _displaySort(rule)),
         allowSorting: rule != null && !rule.isBuiltIn,

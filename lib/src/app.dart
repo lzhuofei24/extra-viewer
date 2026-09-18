@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'ui/browser_location_session.dart';
+import 'modules/viewer/media_directory_location.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -2021,12 +2022,30 @@ class _AppShellState extends State<AppShell> {
 
   Future<void> _openDirectoryRootForEntity(EntityListItem item) async {
     final repository = _repository;
-    final rootId = (await repository?.getEntity(item.id))?.directoryRootId;
-    if (rootId == null) return;
-    final root = (await repository?.getIndexNode(rootId));
-    if (root?.nodeType != NodeType.directoryIndexRoot) return;
+    if (repository == null) return;
+    final path = await resolveMediaDirectoryPath(repository, item.id);
+    if (!mounted) return;
+    if (path.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('该文件没有可用的目录位置')));
+      return;
+    }
+    _rememberDataLocation();
+    _exitBrowserSelection();
+    _exitImmersiveBrowsing();
+    _cancelPageWarmup();
+    _reloadGeneration++;
     _closeMediaOverlay();
-    _openIndexRoot(root!);
+    setState(() {
+      _section = AppSection.data;
+      _browserState = _browserState.copyWith(rootTab: BrowserRootTab.directory);
+      _selectedIndexRoot = path.first;
+      _selectedItem = path.length > 1 ? path.last : null;
+      _detail = null;
+      _nodePath = path;
+      _prepareDataNavigation(path.last);
+    });
+    _reload(indexNodeId: path.last.id);
   }
 
   void _closeMediaOverlay() {
@@ -2049,6 +2068,16 @@ class _AppShellState extends State<AppShell> {
   void _handleSystemBack() {
     if (_mediaOverlay != null) {
       _closeMediaOverlay();
+      return;
+    }
+    if (_section == AppSection.rules &&
+        _ruleBrowserController?.activeRule != null) {
+      _setRuleSelectionMode(false);
+      _ruleBrowserController!.closeRule();
+      setState(() {
+        _requestedRuleId = null;
+        _ruleNavigationRevision++;
+      });
       return;
     }
     if (_selectionMode) {

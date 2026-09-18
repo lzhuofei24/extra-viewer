@@ -768,6 +768,10 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                                 transparentStage: libraryOverlay,
                                 onClose: _closeViewer,
                                 onReturnToSource: _closeViewer,
+                                onDirectoryRoot: widget.onOpenDirectoryRoot ==
+                                        null
+                                    ? null
+                                    : () => widget.onOpenDirectoryRoot!(entity),
                                 onPrevious: previousIndex == null
                                     ? null
                                     : () => _goTo(previousIndex),

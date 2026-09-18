@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import '../core/domain/models.dart';
 import '../modules/browser/thumbnail_warmup.dart';
@@ -136,6 +137,7 @@ class BrowserScrollShellState extends State<BrowserScrollShell> {
   final Map<int, Map<String, EntityListItem>> _dragEntitiesByPointer =
       <int, Map<String, EntityListItem>>{};
   final Set<int> _activeDragPointers = <int>{};
+  final Map<int, Offset> _pointerOrigins = {};
 
   @override
   void initState() {
@@ -184,12 +186,19 @@ class BrowserScrollShellState extends State<BrowserScrollShell> {
     final entity = _selectionRegistry.entityAt(event.position);
     if (entity == null) return;
     _dragEntitiesByPointer[event.pointer] = {entity.id: entity};
+    _pointerOrigins[event.pointer] = event.position;
   }
 
   void _extendPointerSelection(PointerMoveEvent event) {
     if (!widget.selectionMode) return;
     final dragged = _dragEntitiesByPointer[event.pointer];
     if (dragged == null) return;
+    // Touch jitter still belongs to the child's tap gesture, not drag selection.
+    if (!_activeDragPointers.contains(event.pointer) &&
+        (event.position - _pointerOrigins[event.pointer]!).distance <=
+            computeHitSlop(event.kind, MediaQuery.gestureSettingsOf(context))) {
+      return;
+    }
     final entity = _selectionRegistry.entityAt(event.position);
     if (entity == null) return;
     if (_activeDragPointers.add(event.pointer)) {
@@ -289,10 +298,12 @@ class BrowserScrollShellState extends State<BrowserScrollShell> {
         onPointerDown: _beginPointerSelection,
         onPointerMove: _extendPointerSelection,
         onPointerUp: (event) {
+          _pointerOrigins.remove(event.pointer);
           _dragEntitiesByPointer.remove(event.pointer);
           _activeDragPointers.remove(event.pointer);
         },
         onPointerCancel: (event) {
+          _pointerOrigins.remove(event.pointer);
           _dragEntitiesByPointer.remove(event.pointer);
           _activeDragPointers.remove(event.pointer);
         },

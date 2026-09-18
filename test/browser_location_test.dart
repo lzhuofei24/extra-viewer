@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:best_viewer/src/app.dart';
 import 'package:best_viewer/src/core/database/app_database.dart';
 import 'package:best_viewer/src/core/database/library_repository.dart';
@@ -6,6 +7,8 @@ import 'package:best_viewer/src/ui/app_preferences.dart';
 import 'package:best_viewer/src/ui/app_sidebar.dart';
 import 'package:best_viewer/src/ui/browser_state.dart';
 import 'package:best_viewer/src/ui/collection_browser_page.dart';
+import 'package:best_viewer/src/ui/rule_index_page.dart';
+import 'package:best_viewer/src/ui/browser_path_rail.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -128,6 +131,36 @@ void main() {
     await settleUntil(tester, () => !page(tester).loading);
     expect(page(tester).currentNode, isNull);
     expect(tester.takeException(), isNull);
+
+    final directoryPathRect = tester.getRect(find.byType(BrowserPathRail));
+    navigation(tester).onChanged(AppSection.rules);
+    await tester.pump();
+    await settleUntil(
+        tester,
+        () =>
+            find.byType(RuleIndexPage).evaluate().isNotEmpty &&
+            !tester
+                .widget<RuleIndexPage>(find.byType(RuleIndexPage))
+                .controller!
+                .loading);
+    final rules =
+        tester.widget<RuleIndexPage>(find.byType(RuleIndexPage)).controller!;
+    expect(tester.getRect(find.byType(BrowserPathRail)).top,
+        directoryPathRect.top);
+    expect(tester.getSize(find.byType(BrowserPathRail)).height,
+        directoryPathRect.height);
+    final recentImages =
+        rules.rules.firstWhere((rule) => rule.node.name == '最近图片');
+    unawaited(rules.openRule(recentImages));
+    await tester.pump();
+    await settleUntil(tester, () => !rules.loading);
+    expect(rules.activeRule?.node.id, recentImages.node.id);
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    await settleUntil(tester, () => !rules.loading);
+    expect(navigation(tester).current, AppSection.rules);
+    expect(rules.activeRule, isNull);
+    expect(find.byTooltip('新建规则'), findsOneWidget);
 
     await tester.runAsync(() async {
       await tester.pumpWidget(const SizedBox());

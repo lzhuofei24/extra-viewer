@@ -12,6 +12,7 @@ class _VideoPlayerPreview extends StatefulWidget {
     this.onPrevious,
     this.onNext,
     this.onShowDetails,
+    this.onDirectoryRoot,
     required this.onCompleted,
     required this.onPlaybackStateChanged,
   });
@@ -25,6 +26,7 @@ class _VideoPlayerPreview extends StatefulWidget {
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
   final VoidCallback? onShowDetails;
+  final VoidCallback? onDirectoryRoot;
   final MediaCompleted onCompleted;
   final PlaybackStateChanged? onPlaybackStateChanged;
 
@@ -263,6 +265,7 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
                         onPrevious: widget.onPrevious,
                         onNext: widget.onNext,
                         onShowDetails: widget.onShowDetails,
+                        onDirectoryRoot: widget.onDirectoryRoot,
                       ),
                     ),
                   ),
@@ -299,6 +302,7 @@ class _VideoControlBar extends StatelessWidget {
     this.onPrevious,
     this.onNext,
     this.onShowDetails,
+    this.onDirectoryRoot,
   });
 
   final Player player;
@@ -306,6 +310,7 @@ class _VideoControlBar extends StatelessWidget {
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
   final VoidCallback? onShowDetails;
+  final VoidCallback? onDirectoryRoot;
 
   @override
   Widget build(BuildContext context) {
@@ -329,6 +334,7 @@ class _VideoControlBar extends StatelessWidget {
                 onPrevious: onPrevious,
                 onNext: onNext,
                 onShowDetails: onShowDetails,
+                onDirectoryRoot: onDirectoryRoot,
               ),
             ),
           ),
@@ -375,6 +381,7 @@ class _PlaybackActionRow extends StatelessWidget {
     this.onPrevious,
     this.onNext,
     this.onShowDetails,
+    this.onDirectoryRoot,
   });
 
   final Player player;
@@ -382,6 +389,7 @@ class _PlaybackActionRow extends StatelessWidget {
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
   final VoidCallback? onShowDetails;
+  final VoidCallback? onDirectoryRoot;
 
   @override
   Widget build(BuildContext context) {
@@ -393,6 +401,12 @@ class _PlaybackActionRow extends StatelessWidget {
             tooltip: '返回所在位置',
             onPressed: onBack,
             icon: Icons.arrow_back_rounded,
+          ),
+        if (onDirectoryRoot != null)
+          _compactIconButton(
+            tooltip: '返回目录',
+            onPressed: onDirectoryRoot,
+            icon: Icons.account_tree_outlined,
           ),
         if (onShowDetails != null)
           _compactIconButton(
