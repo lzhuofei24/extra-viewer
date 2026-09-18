@@ -774,11 +774,6 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                                 onNext: nextIndex == null
                                     ? null
                                     : () => _goTo(nextIndex),
-                                onDirectoryRoot:
-                                    widget.onOpenDirectoryRoot == null
-                                        ? null
-                                        : () => widget.onOpenDirectoryRoot
-                                            ?.call(entity),
                                 onShowDetails: widget.onShowDetails == null
                                     ? null
                                     : () => unawaited(

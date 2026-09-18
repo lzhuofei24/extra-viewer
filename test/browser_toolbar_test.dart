@@ -1,3 +1,4 @@
+import 'package:best_viewer/src/ui/app_sidebar.dart';
 import 'package:best_viewer/src/ui/browser_state.dart';
 import 'package:best_viewer/src/ui/browser_toolbar.dart';
 import 'package:best_viewer/src/ui/design_tokens.dart';
@@ -30,6 +31,7 @@ void main() {
     await tester.tap(find.byTooltip('浏览选项'));
     await tester.pumpAndSettle();
     expect(find.text('浏览选项'), findsOneWidget);
+    expect(find.byType(FloatingGlassOverlaySurface), findsOneWidget);
     expect(find.text('样式'), findsOneWidget);
     expect(find.text('主题'), findsOneWidget);
     expect(find.text('布局'), findsOneWidget);

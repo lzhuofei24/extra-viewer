@@ -151,7 +151,100 @@ class FloatingGlassSurface extends StatelessWidget {
           lightIntensity: .5,
           chromaticAberration: .01,
         ),
-        child: Padding(padding: padding, child: child),
+        child: Padding(
+          padding: padding,
+          child: _FloatingGlassTextTheme(child: child),
+        ),
+      ),
+    );
+  }
+}
+
+/// Glass surface for popup overlays. Menu overlays cannot reliably sample the
+/// app-level liquid-glass capture layer, so use the native backdrop here and
+/// leave nested interactive glass controls free to render their own effects.
+class FloatingGlassOverlaySurface extends StatelessWidget {
+  const FloatingGlassOverlaySurface({
+    super.key,
+    required this.child,
+    this.borderRadius = 24,
+    this.padding = EdgeInsets.zero,
+  });
+
+  final Widget child;
+  final double borderRadius;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final radius = BorderRadius.circular(borderRadius);
+    return RepaintBoundary(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: .18),
+              blurRadius: 24,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: radius,
+          child: BackdropFilter(
+            filter: ImageFilter.blur(
+              sigmaX: FloatingGlassSurface.blurSigma,
+              sigmaY: FloatingGlassSurface.blurSigma,
+            ),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: colors.surface.withValues(
+                  alpha: Theme.of(context).brightness == Brightness.dark
+                      ? FloatingGlassSurface.darkSurfaceAlpha
+                      : FloatingGlassSurface.lightSurfaceAlpha,
+                ),
+                borderRadius: radius,
+                border: Border.all(
+                  color: colors.onSurface.withValues(alpha: .24),
+                  width: 1,
+                ),
+              ),
+              child: Padding(
+                padding: padding,
+                child: _FloatingGlassTextTheme(child: child),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FloatingGlassTextTheme extends StatelessWidget {
+  const _FloatingGlassTextTheme({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    const foreground = Colors.black;
+    return Theme(
+      data: theme.copyWith(
+        textTheme: theme.textTheme.apply(
+          bodyColor: foreground,
+          displayColor: foreground,
+        ),
+      ),
+      child: IconTheme(
+        data: const IconThemeData(color: foreground),
+        child: DefaultTextStyle.merge(
+          style: const TextStyle(color: foreground),
+          child: child,
+        ),
       ),
     );
   }

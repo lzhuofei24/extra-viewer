@@ -164,6 +164,12 @@ class _BrowserOptionsMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final titleStyle = theme.textTheme.labelLarge?.copyWith(
+      color: Colors.black,
+    );
+    final labelStyle = theme.textTheme.labelMedium?.copyWith(
+      color: Colors.black,
+    );
     return MenuAnchor(
       style: const MenuStyle(
         backgroundColor: WidgetStatePropertyAll(Colors.transparent),
@@ -173,7 +179,7 @@ class _BrowserOptionsMenu extends StatelessWidget {
         padding: WidgetStatePropertyAll(EdgeInsets.zero),
       ),
       menuChildren: [
-        FloatingGlassSurface(
+        FloatingGlassOverlaySurface(
           borderRadius: 20,
           padding: const EdgeInsets.all(12),
           child: SizedBox(
@@ -184,9 +190,9 @@ class _BrowserOptionsMenu extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text('浏览选项', style: theme.textTheme.labelLarge),
+                  Text('浏览选项', style: titleStyle),
                   const SizedBox(height: 10),
-                  Text('排序', style: theme.textTheme.labelMedium),
+                  Text('排序', style: labelStyle),
                   const SizedBox(height: 6),
                   _GlassOptionSelector<EntitySortMode>(
                     values: const [
@@ -199,7 +205,7 @@ class _BrowserOptionsMenu extends StatelessWidget {
                     onSelected: onSortChanged,
                   ),
                   const SizedBox(height: 12),
-                  Text('显示', style: theme.textTheme.labelMedium),
+                  Text('显示', style: labelStyle),
                   const SizedBox(height: 6),
                   _GlassOptionSelector<BrowserDisplayMode>(
                     values: const [
@@ -215,7 +221,7 @@ class _BrowserOptionsMenu extends StatelessWidget {
                     onSelected: onDisplayModeChanged,
                   ),
                   const SizedBox(height: 12),
-                  Text('样式', style: theme.textTheme.labelMedium),
+                  Text('样式', style: labelStyle),
                   const SizedBox(height: 6),
                   if (browserState.displayMode == BrowserDisplayMode.grid)
                     _GlassOptionSelector<BrowserGridLayout>(
@@ -240,7 +246,7 @@ class _BrowserOptionsMenu extends StatelessWidget {
                       onSelected: onListStyleChanged,
                     ),
                   const SizedBox(height: 12),
-                  Text('主题', style: theme.textTheme.labelMedium),
+                  Text('主题', style: labelStyle),
                   const SizedBox(height: 6),
                   _GlassOptionSelector<ViewerThemeChoice>(
                     values: const [
@@ -253,7 +259,7 @@ class _BrowserOptionsMenu extends StatelessWidget {
                     onSelected: onThemeChanged,
                   ),
                   const SizedBox(height: 12),
-                  Text('布局', style: theme.textTheme.labelMedium),
+                  Text('布局', style: labelStyle),
                   const SizedBox(height: 6),
                   _GlassOptionSelector<GalleryLayoutPreset>(
                     values: const [
@@ -315,6 +321,16 @@ class _GlassOptionSelector<T> extends StatelessWidget {
           lightIntensity: .5,
           chromaticAberration: .01,
         ),
+        selectedTextStyle: const TextStyle(
+          color: Colors.black,
+          fontWeight: FontWeight.w600,
+        ),
+        unselectedTextStyle: const TextStyle(
+          color: Colors.black,
+          fontWeight: FontWeight.w400,
+        ),
+        selectedIconColor: Colors.black,
+        unselectedIconColor: Colors.black,
         segments: [
           for (var index = 0; index < values.length; index++)
             GlassSegment(
