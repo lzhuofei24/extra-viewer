@@ -22,6 +22,7 @@ part 'index_build_mixin.dart';
 part 'node_preview_repository.dart';
 part 'index_stats_repository.dart';
 part 'audio_playback_repository.dart';
+part 'rule_repository.dart';
 
 /// Central repository for all library database operations.
 ///
@@ -45,7 +46,8 @@ class LibraryRepository extends LibraryRepositoryBase
         IndexBuildMixin,
         NodePreviewRepositoryMixin,
         IndexStatsRepositoryMixin,
-        AudioPlaybackRepositoryMixin
+        AudioPlaybackRepositoryMixin,
+        RuleRepositoryMixin
     implements LibraryAccess {
   LibraryRepository(super.database);
 }

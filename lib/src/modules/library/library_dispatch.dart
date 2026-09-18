@@ -328,6 +328,38 @@ Future<Object?> dispatchLibrary(LibraryRepository repository, String method,
     case 'clearNodePreviewOverride':
       repository.clearNodePreviewOverride(args['nodeId'] as String);
       return null;
+    case 'createRule':
+      return repository.createRule(
+          name: args['name'] as String,
+          entityTypes: (args['entityTypes'] as List<EntityType>?) ?? const [],
+          extensions: (args['extensions'] as List<String>?) ?? const [],
+          scopeNodeId: args['scopeNodeId'] as String?,
+          minSize: args['minSize'] as int?,
+          maxSize: args['maxSize'] as int?,
+          modifiedWithinDays: args['modifiedWithinDays'] as int?,
+          openedWithinDays: args['openedWithinDays'] as int?,
+          defaultSort:
+              (args['defaultSort'] as RuleSortMode?) ?? RuleSortMode.lastOpened,
+          maxResults: (args['maxResults'] as int?) ?? 1000);
+    case 'updateRule':
+      return repository.updateRule(
+          nodeId: args['nodeId'] as String,
+          name: args['name'] as String,
+          entityTypes: (args['entityTypes'] as List<EntityType>?) ?? const [],
+          extensions: (args['extensions'] as List<String>?) ?? const [],
+          scopeNodeId: args['scopeNodeId'] as String?,
+          minSize: args['minSize'] as int?,
+          maxSize: args['maxSize'] as int?,
+          modifiedWithinDays: args['modifiedWithinDays'] as int?,
+          openedWithinDays: args['openedWithinDays'] as int?,
+          defaultSort:
+              (args['defaultSort'] as RuleSortMode?) ?? RuleSortMode.lastOpened,
+          maxResults: (args['maxResults'] as int?) ?? 1000);
+    case 'deleteRule':
+      repository.deleteRule(args['nodeId'] as String);
+      return null;
+    case 'getRule':
+      return repository.getRule(args['nodeId'] as String);
     case 'beginEntityPreview':
       return repository.beginEntityPreview(args['entity'] as Entity);
     case 'commitEntityPreview':

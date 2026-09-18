@@ -211,6 +211,14 @@ class LibraryRepositoryBase {
         'System root node cannot be used in relationships',
       );
     }
+    if (node.nodeType == NodeType.ruleIndexRoot ||
+        node.nodeType == NodeType.ruleNode) {
+      throw ArgumentError.value(
+        nodeId,
+        argumentName,
+        'Rule nodes cannot contain static entity references',
+      );
+    }
     return node;
   }
 
@@ -231,6 +239,7 @@ class LibraryRepositoryBase {
     final requiredRootType = switch (nodeType) {
       NodeType.folder => NodeType.directoryIndexRoot,
       NodeType.customNode => NodeType.customIndexRoot,
+      NodeType.ruleNode => NodeType.ruleIndexRoot,
       _ => null,
     };
     if (requiredRootType == null) return;
@@ -265,8 +274,10 @@ class LibraryRepositoryBase {
   }) {
     final requiredViewType = switch (nodeType) {
       NodeType.customIndexRoot ||
+      NodeType.ruleIndexRoot ||
       NodeType.folder ||
-      NodeType.customNode =>
+      NodeType.customNode ||
+      NodeType.ruleNode =>
         ViewType.tree,
       _ => null,
     };

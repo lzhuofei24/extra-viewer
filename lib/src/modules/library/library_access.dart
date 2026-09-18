@@ -180,6 +180,31 @@ abstract interface class LibraryAccess {
   FutureOr<String?> getNodePreviewOverride(String nodeId);
   FutureOr<void> setNodePreviewOverride(String nodeId, String itemsJson);
   FutureOr<void> clearNodePreviewOverride(String nodeId);
+  FutureOr<RuleDefinition> createRule(
+      {required String name,
+      List<EntityType> entityTypes = const [],
+      List<String> extensions = const [],
+      String? scopeNodeId,
+      int? minSize,
+      int? maxSize,
+      int? modifiedWithinDays,
+      int? openedWithinDays,
+      RuleSortMode defaultSort = RuleSortMode.lastOpened,
+      int maxResults = 1000});
+  FutureOr<RuleDefinition> updateRule(
+      {required String nodeId,
+      required String name,
+      List<EntityType> entityTypes = const [],
+      List<String> extensions = const [],
+      String? scopeNodeId,
+      int? minSize,
+      int? maxSize,
+      int? modifiedWithinDays,
+      int? openedWithinDays,
+      RuleSortMode defaultSort = RuleSortMode.lastOpened,
+      int maxResults = 1000});
+  FutureOr<void> deleteRule(String nodeId);
+  FutureOr<RuleDefinition?> getRule(String nodeId);
   FutureOr<EntityPreviewTicket> beginEntityPreview(Entity entity);
   FutureOr<bool> commitEntityPreview(
       EntityPreviewTicket ticket, ThumbnailDatabaseUpdate update,

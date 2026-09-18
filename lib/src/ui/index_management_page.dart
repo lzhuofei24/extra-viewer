@@ -18,6 +18,7 @@ class IndexManagementPage extends StatelessWidget {
     this.errorMessage,
     this.taskHistory = const [],
     required this.actions,
+    this.rules = const [],
   });
 
   final List<IndexNode> roots;
@@ -29,6 +30,7 @@ class IndexManagementPage extends StatelessWidget {
   final String? errorMessage;
   final List<LibraryBuildJob> taskHistory;
   final IndexManagementActions actions;
+  final List<RuleDefinition> rules;
 
   VoidCallback get onCreateDirectoryIndex => actions.onCreateDirectoryIndex;
   VoidCallback get onPause => actions.onPause;
@@ -45,6 +47,7 @@ class IndexManagementPage extends StatelessWidget {
       actions.onRebuildNodePreviews;
   VoidCallback get onCreateCollection => actions.onCreateCollection;
   ValueChanged<IndexNode> get onCreateNodeAtRoot => actions.onCreateNodeAtRoot;
+  VoidCallback get onCreateRule => actions.onCreateRule;
 
   @override
   Widget build(BuildContext context) {
@@ -54,7 +57,7 @@ class IndexManagementPage extends StatelessWidget {
       children: [
         const SectionHeader(
           title: '管理',
-          subtitle: '添加资料目录，或建立分类来整理文件。',
+          subtitle: '添加资料目录，建立分类，或创建自动筛选规则。',
         ),
         const SizedBox(height: 18),
         _IndexCard(
@@ -72,6 +75,11 @@ class IndexManagementPage extends StatelessWidget {
                 onPressed: scanning ? null : onCreateCollection,
                 icon: const Icon(Icons.collections_bookmark_outlined),
                 label: const Text('新建分类'),
+              ),
+              OutlinedButton.icon(
+                onPressed: scanning ? null : onCreateRule,
+                icon: const Icon(Icons.rule_outlined),
+                label: const Text('新建规则'),
               ),
             ],
           ),
@@ -138,6 +146,12 @@ class IndexManagementPage extends StatelessWidget {
             onDelete: onDelete,
             onRebuildPreviews: onRebuildNodePreviews,
           ),
+          if (rules.isNotEmpty)
+            _RuleManagementSection(
+              rules: rules,
+              onEdit: actions.onEditRule,
+              onDelete: actions.onDeleteRule,
+            ),
           _IndexRootSection(
             presentation: IndexRootPresentation.collection,
             roots: roots
@@ -175,6 +189,9 @@ class IndexManagementActions {
     required this.onRebuildNodePreviews,
     required this.onCreateCollection,
     required this.onCreateNodeAtRoot,
+    required this.onCreateRule,
+    required this.onEditRule,
+    required this.onDeleteRule,
   });
 
   final VoidCallback onCreateDirectoryIndex;
@@ -190,6 +207,9 @@ class IndexManagementActions {
   final ValueChanged<IndexNode> onRebuildNodePreviews;
   final VoidCallback onCreateCollection;
   final ValueChanged<IndexNode> onCreateNodeAtRoot;
+  final VoidCallback onCreateRule;
+  final ValueChanged<RuleDefinition> onEditRule;
+  final ValueChanged<RuleDefinition> onDeleteRule;
 }
 
 class _IndexRootSection extends StatelessWidget {
@@ -252,6 +272,7 @@ class _IndexRootSection extends StatelessWidget {
               onRename: () => onRename(roots[index]),
               onDelete: () => onDelete(roots[index]),
               onRebuildPreviews: () => onRebuildPreviews(roots[index]),
+              protected: roots[index].isProtected,
             ),
           ),
         ],
@@ -270,6 +291,7 @@ class _IndexRootGridCard extends StatelessWidget {
     required this.onRename,
     required this.onDelete,
     required this.onRebuildPreviews,
+    required this.protected,
   });
 
   final IndexNode node;
@@ -280,6 +302,7 @@ class _IndexRootGridCard extends StatelessWidget {
   final VoidCallback onRename;
   final VoidCallback onDelete;
   final VoidCallback onRebuildPreviews;
+  final bool protected;
 
   @override
   Widget build(BuildContext context) {
@@ -331,6 +354,7 @@ class _IndexRootGridCard extends StatelessWidget {
               onRename: onRename,
               onDelete: onDelete,
               onRebuildPreviews: onRebuildPreviews,
+              protected: protected,
             ),
           ],
         ),
@@ -345,12 +369,14 @@ class _RootActionsMenu extends StatelessWidget {
     required this.onRename,
     required this.onDelete,
     required this.onRebuildPreviews,
+    required this.protected,
   });
 
   final bool enabled;
   final VoidCallback onRename;
   final VoidCallback onDelete;
   final VoidCallback onRebuildPreviews;
+  final bool protected;
 
   @override
   Widget build(BuildContext context) => PopupMenuButton<String>(
@@ -370,14 +396,79 @@ class _RootActionsMenu extends StatelessWidget {
             }
           });
         },
-        itemBuilder: (context) => const [
-          PopupMenuItem(
+        itemBuilder: (context) => [
+          const PopupMenuItem(
             value: 'rebuildPreviews',
             child: Text('重新生成封面'),
           ),
-          PopupMenuItem(value: 'rename', child: Text('重命名')),
-          PopupMenuItem(value: 'delete', child: Text('删除')),
+          if (!protected)
+            const PopupMenuItem(value: 'rename', child: Text('重命名')),
+          if (!protected)
+            const PopupMenuItem(value: 'delete', child: Text('删除')),
         ],
+      );
+}
+
+class _RuleManagementSection extends StatelessWidget {
+  const _RuleManagementSection({
+    required this.rules,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final List<RuleDefinition> rules;
+  final ValueChanged<RuleDefinition> onEdit;
+  final ValueChanged<RuleDefinition> onDelete;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(bottom: 18),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.rule_outlined, size: 18),
+            const SizedBox(width: 8),
+            Text('规则', style: Theme.of(context).textTheme.titleMedium),
+          ]),
+          const SizedBox(height: 8),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: rules.length,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount:
+                  MediaQuery.orientationOf(context) == Orientation.portrait
+                      ? 1
+                      : 3,
+              mainAxisExtent: 76,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 1,
+            ),
+            itemBuilder: (context, index) {
+              final rule = rules[index];
+              return Card(
+                margin: EdgeInsets.zero,
+                child: ListTile(
+                  dense: true,
+                  leading: Icon(rule.isBuiltIn
+                      ? Icons.lock_outline
+                      : Icons.rule_outlined),
+                  title: Text(rule.node.name, maxLines: 1),
+                  subtitle: Text('${rule.resultCount ?? 0} 个文件'),
+                  trailing: rule.isBuiltIn
+                      ? null
+                      : PopupMenuButton<String>(
+                          onSelected: (value) =>
+                              value == 'edit' ? onEdit(rule) : onDelete(rule),
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(value: 'edit', child: Text('编辑')),
+                            PopupMenuItem(value: 'delete', child: Text('删除')),
+                          ],
+                        ),
+                ),
+              );
+            },
+          ),
+        ]),
       );
 }
 

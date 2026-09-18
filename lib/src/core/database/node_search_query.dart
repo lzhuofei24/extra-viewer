@@ -15,10 +15,12 @@ NodeSearchPage queryNodes(Database database, NodeSearchQuery query) {
         'directory_index_root',
         'folder',
         'category_index_root',
-        'category'
+        'category',
+        'rule'
       ],
     NodeSearchScope.directory => const ['directory_index_root', 'folder'],
     NodeSearchScope.collection => const ['category_index_root', 'category'],
+    NodeSearchScope.rule => const ['rule'],
   };
   final fts = text.runes.length >= 3;
   // Rank and page before loading breadcrumbs; only one page crosses the isolate.
@@ -76,4 +78,6 @@ IndexNode _node(Row row) => IndexNode(
       updatedAtMs: row['updated_at'] as int,
       sourcePath: row['source_path'] as String?,
       isStaging: row['is_staging'] == 1,
+      systemKey: row['system_key'] as String?,
+      isProtected: (row['is_protected'] as int? ?? 0) != 0,
     );

@@ -63,6 +63,7 @@ Entity _entityFromRow(Row row, [ThumbnailStore? thumbnailStore]) {
         : null,
     archived: intToBool(row['archived']),
     lastOpenedAtMs: row['last_opened_at'] as int?,
+    openCount: row['open_count'] as int? ?? 0,
     lastPositionMs: row['last_position_ms'] as int?,
     durationMs: row['duration_ms'] as int?,
     readerScrollOffset: row['reader_scroll_offset'] as double?,
@@ -86,6 +87,8 @@ IndexNode _nodeFromRow(Row row) {
     updatedAtMs: row['updated_at'] as int,
     lastBuiltAtMs: row['last_built_at_ms'] as int?,
     isStaging: (row['is_staging'] as int? ?? 0) != 0,
+    systemKey: row['system_key'] as String?,
+    isProtected: (row['is_protected'] as int? ?? 0) != 0,
   );
 }
 
@@ -550,6 +553,7 @@ EntityListItem _listItemFromRow(Row row, ThumbnailStore thumbnailStore) {
     modifiedAtMs: entity.sourceModifiedAtMs,
     archived: entity.archived,
     lastOpenedAtMs: entity.lastOpenedAtMs,
+    openCount: entity.openCount,
     lastPositionMs: entity.lastPositionMs,
     durationMs: entity.durationMs,
     readerScrollOffset: entity.readerScrollOffset,
@@ -640,7 +644,8 @@ bool _pathsOverlap(String left, String right) {
 }
 
 bool _isTopLevelIndexRootType(NodeType nodeType) {
-  return nodeType == NodeType.customIndexRoot;
+  return nodeType == NodeType.customIndexRoot ||
+      nodeType == NodeType.ruleIndexRoot;
 }
 
 String _indexNameForRoot(String rootPath, {String? displayName}) {

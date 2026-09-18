@@ -7,12 +7,13 @@ import 'package:sqlite3/sqlite3.dart';
 import 'schema_v6.dart';
 import 'schema_v7.dart';
 import 'schema_v8.dart';
+import 'schema_v9.dart';
 
 /// SQLite storage and additive migrations, owned by database workers.
 class AppDatabase {
   AppDatabase._(this.db, this.storageDirectoryPath, this.databasePath);
 
-  static const currentSchemaVersion = 8;
+  static const currentSchemaVersion = 9;
 
   final Database db;
   final String storageDirectoryPath;
@@ -115,11 +116,12 @@ class AppDatabase {
     if (version == currentSchemaVersion) {
       db.execute(_schema);
       _ensurePreviewSchema();
+      _ensureSchemaV9();
       _verifySchemaIntegrity();
       db.execute('PRAGMA optimize;');
       return;
     }
-    if (version == 5 || version == 6 || version == 7) {
+    if (version >= 5 && version <= 8) {
       final path = databasePath;
       if (path != null) {
         final backup = '$path.schema$version.backup';
@@ -132,7 +134,8 @@ class AppDatabase {
         if (version == 5) db.execute(schemaV6Upgrade);
         if (version <= 6) db.execute(schemaV7Upgrade);
         _ensurePreviewSchema();
-        db.execute(schemaV8Upgrade);
+        if (version <= 7) db.execute(schemaV8Upgrade);
+        _ensureSchemaV9();
         _verifySchemaIntegrity();
         db.userVersion = currentSchemaVersion;
         db.execute('COMMIT');
@@ -153,6 +156,7 @@ class AppDatabase {
       db.execute(schemaV7Upgrade);
       _ensurePreviewSchema();
       db.execute(schemaV8Upgrade);
+      _ensureSchemaV9();
       _verifySchemaIntegrity();
       db.userVersion = currentSchemaVersion;
       db.execute('COMMIT;');
@@ -169,6 +173,48 @@ class AppDatabase {
     if (!columns.any((row) => row['name'] == 'cover_revision')) {
       db.execute(
           'ALTER TABLE document_preview_versions ADD COLUMN cover_revision INTEGER');
+    }
+  }
+
+  void _ensureSchemaV9() {
+    final entityColumns = db
+        .select('PRAGMA table_info(entities)')
+        .map((row) => row['name'] as String)
+        .toSet();
+    if (!entityColumns.contains('open_count')) {
+      db.execute(
+          'ALTER TABLE entities ADD COLUMN open_count INTEGER NOT NULL DEFAULT 0');
+      entityColumns.add('open_count');
+    }
+    final nodeColumns = db
+        .select('PRAGMA table_info(index_nodes)')
+        .map((row) => row['name'] as String)
+        .toSet();
+    if (!nodeColumns.contains('system_key')) {
+      db.execute('ALTER TABLE index_nodes ADD COLUMN system_key TEXT');
+      nodeColumns.add('system_key');
+    }
+    if (!nodeColumns.contains('is_protected')) {
+      db.execute(
+          'ALTER TABLE index_nodes ADD COLUMN is_protected INTEGER NOT NULL DEFAULT 0');
+      nodeColumns.add('is_protected');
+    }
+    db.execute(schemaV9Objects);
+    if (entityColumns.containsAll(const {
+      'archived',
+      'last_opened_at',
+      'media_type',
+      'source_modified_at_ms',
+    })) {
+      db.execute(schemaV9Indexes);
+    }
+    if (nodeColumns.containsAll(const {
+      'parent_id',
+      'sort_order',
+      'created_at',
+      'updated_at',
+    })) {
+      db.execute(schemaV9SystemNodes);
     }
   }
 

@@ -137,9 +137,14 @@ class CollectionBrowserPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final visibleNodes = currentNode == null
-        ? childNodes
+        ? (childNodes
             .where((node) => _rootTabMatchesNode(browserState.rootTab, node))
             .toList(growable: false)
+          ..sort((a, b) {
+            if (a.systemKey == 'favorites') return -1;
+            if (b.systemKey == 'favorites') return 1;
+            return 0;
+          }))
         : childNodes;
     final hasNodes = visibleNodes.isNotEmpty && !immersiveBrowsing;
     final hasEntities = entities.isNotEmpty;

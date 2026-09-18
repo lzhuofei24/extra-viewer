@@ -39,11 +39,10 @@ import 'ui/design_tokens.dart';
 import 'ui/entity_detail_sheet.dart';
 import 'ui/node_search_page.dart';
 import 'ui/index_management_page.dart';
-import 'ui/music_page.dart';
-import 'ui/media_shelf_page.dart';
+import 'ui/rule_index_page.dart';
+import 'ui/rule_editor_dialog.dart';
 import 'ui/now_playing_page.dart';
 import 'ui/node_preview_picker.dart';
-import 'ui/diagnostics_page.dart';
 import 'ui/dialogs/app_dialogs.dart';
 import 'ui/widgets/app_widgets.dart';
 
@@ -128,7 +127,6 @@ class _AppShellState extends State<AppShell> {
   Future<LibraryReadWorker>? _readWorkerStart;
   BrowsingThumbnailController? _browsingThumbnails;
   AppAudioController? _audioController;
-  List<AudioPlaybackSession> _audioSessions = const [];
   LibraryBuildTaskController? _buildTasks;
   bool _loading = true;
   int? _incompatibleSchemaVersion;
@@ -137,10 +135,12 @@ class _AppShellState extends State<AppShell> {
   String? _readError;
   bool _readRetrying = false;
   AppSection _section = AppSection.data;
+  String? _requestedRuleId;
   late BrowserState _browserState;
   IndexNode? _selectedIndexRoot;
   IndexNode? _selectedItem;
   List<IndexNode> _indexRoots = const [];
+  List<RuleDefinition> _rules = const [];
   List<IndexNode> _childNodes = const [];
   List<IndexNode> _nodePath = const [];
   List<EntityListItem> _entities = const [];
@@ -569,7 +569,6 @@ class _AppShellState extends State<AppShell> {
     )..start();
     final activeSessions = (await repository.listAudioPlaybackSessions());
     if (!mounted) return;
-    setState(() => _audioSessions = activeSessions);
     final activeSession =
         activeSessions.where((session) => session.active).firstOrNull;
     if (activeSession != null) {
@@ -838,11 +837,13 @@ class _AppShellState extends State<AppShell> {
       final rootCounts = await _read(
         (worker) => worker.loadRootEntityCounts(roots.map((root) => root.id)),
       );
+      final rules = await _read((worker) => worker.listRules());
       _refreshRecoverableIndexTasks();
       if (!mounted) return;
       setState(() {
         _indexRoots = roots;
         _rootCounts = rootCounts;
+        _rules = rules;
       });
     } catch (error, stackTrace) {
       _setReadError(error, stackTrace);
@@ -1167,7 +1168,10 @@ class _AppShellState extends State<AppShell> {
     if (section == AppSection.indexes) {
       _reloadDashboardData();
     }
-    setState(() => _section = section);
+    setState(() {
+      _section = section;
+      if (section != AppSection.rules) _requestedRuleId = null;
+    });
   }
 
   void _selectDataRootTab(BrowserRootTab tab) {
@@ -1208,6 +1212,13 @@ class _AppShellState extends State<AppShell> {
           MaterialPageRoute(
               builder: (_) => NodeSearchPageView(queries: queries)));
       if (result == null || !mounted) return;
+      if (result.node.nodeType == NodeType.ruleNode) {
+        setState(() {
+          _section = AppSection.rules;
+          _requestedRuleId = result.node.id;
+        });
+        return;
+      }
       _exitImmersiveBrowsing();
       _cancelPageWarmup();
       setState(() {
@@ -1316,24 +1327,121 @@ class _AppShellState extends State<AppShell> {
     });
   }
 
-  void _setShelfSort(EntitySortMode value) {
-    setState(() => _browserState = _browserState.copyWith(sortMode: value));
-    widget.preferences.setBrowser(sortMode: value);
-  }
-
-  void _setShelfDisplayMode(BrowserDisplayMode value) {
-    setState(() => _browserState = _browserState.copyWith(displayMode: value));
-    widget.preferences.setBrowser(displayMode: value);
-  }
-
   void _setListStyle(BrowserListStyle value) {
     setState(() => _browserState = _browserState.copyWith(listStyle: value));
     widget.preferences.setBrowser(listStyle: value);
   }
 
-  void _setShelfGridLayout(BrowserGridLayout value) {
-    setState(() => _browserState = _browserState.copyWith(gridLayout: value));
-    widget.preferences.setBrowser(gridLayout: value);
+  void _setRuleBrowserState(BrowserState value) {
+    setState(() => _browserState = value);
+    widget.preferences.setBrowser(
+      sortMode: value.sortMode,
+      displayMode: value.displayMode,
+      gridLayout: value.gridLayout,
+      listStyle: value.listStyle,
+    );
+  }
+
+  Future<void> _addRuleItemsToCollection(Set<String> entityIds) async {
+    if (entityIds.isEmpty) return;
+    setState(() {
+      _selection.exit();
+      for (final id in entityIds) {
+        _selection.startEntity(id);
+      }
+    });
+    await _showAddToCollection();
+  }
+
+  Future<void> _createRule() async {
+    final repository = _repository;
+    if (repository == null) return;
+    final queries = await _ensureReadWorker();
+    if (!mounted) return;
+    final draft = await showDialog<RuleDraft>(
+      context: context,
+      builder: (_) => RuleEditorDialog(queries: queries),
+    );
+    if (draft == null) return;
+    try {
+      await repository.createRule(
+        name: draft.name,
+        entityTypes: draft.entityTypes,
+        extensions: draft.extensions,
+        scopeNodeId: draft.scopeNodeId,
+        minSize: draft.minSize,
+        maxSize: draft.maxSize,
+        modifiedWithinDays: draft.modifiedWithinDays,
+        openedWithinDays: draft.openedWithinDays,
+        defaultSort: draft.defaultSort,
+      );
+      if (mounted) {
+        setState(() => _requestedRuleId = null);
+        await _reloadDashboardDataAsync();
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('新建规则失败：$error')));
+      }
+    }
+  }
+
+  Future<void> _editRule(RuleDefinition rule) async {
+    if (rule.isBuiltIn) return;
+    final repository = _repository;
+    if (repository == null) return;
+    final queries = await _ensureReadWorker();
+    if (!mounted) return;
+    final draft = await showDialog<RuleDraft>(
+      context: context,
+      builder: (_) => RuleEditorDialog(queries: queries, initial: rule),
+    );
+    if (draft == null) return;
+    try {
+      await repository.updateRule(
+        nodeId: rule.node.id,
+        name: draft.name,
+        entityTypes: draft.entityTypes,
+        extensions: draft.extensions,
+        scopeNodeId: draft.scopeNodeId,
+        minSize: draft.minSize,
+        maxSize: draft.maxSize,
+        modifiedWithinDays: draft.modifiedWithinDays,
+        openedWithinDays: draft.openedWithinDays,
+        defaultSort: draft.defaultSort,
+      );
+      if (mounted) {
+        setState(() => _requestedRuleId = null);
+        await _reloadDashboardDataAsync();
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('更新规则失败：$error')));
+      }
+    }
+  }
+
+  Future<void> _deleteRule(RuleDefinition rule) async {
+    if (rule.isBuiltIn || _repository == null) return;
+    final confirmed = await _confirm(
+      title: '删除规则',
+      message: '删除“${rule.node.name}”？不会删除任何文件或分类。',
+    );
+    if (!confirmed) return;
+    try {
+      await _repository!.deleteRule(rule.node.id);
+      if (mounted) {
+        setState(() => _requestedRuleId = null);
+        await _reloadDashboardDataAsync();
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('删除规则失败：$error')));
+      }
+    }
   }
 
   Future<void> _scan({String? rootDisplayName}) async {
@@ -1623,7 +1731,11 @@ class _AppShellState extends State<AppShell> {
     return result;
   }
 
-  Future<void> _openEntity(EntityListItem entity) async {
+  Future<void> _openEntity(
+    EntityListItem entity, {
+    List<EntityListItem>? playbackQueueOverride,
+    bool detachSourceNode = false,
+  }) async {
     if (!mounted || _viewerSessions.isStopped) return;
     final repository = _repository;
     final audioController = _audioController;
@@ -1632,14 +1744,14 @@ class _AppShellState extends State<AppShell> {
     final detail = (await repository.getEntity(entity.id));
     if (!mounted || _viewerSessions.isStopped) return;
     setState(() => _detail = detail);
-    final sourceNode = _currentIndexNode;
-    final playbackQueue =
-        entity.entityType == EntityType.audio && sourceNode != null
+    final sourceNode = detachSourceNode ? null : _currentIndexNode;
+    final playbackQueue = playbackQueueOverride ??
+        (entity.entityType == EntityType.audio && sourceNode != null
             ? (await repository.listEntitiesDirectlyUnderNode(
                 sourceNode.id,
                 sortMode: _browserState.sortMode,
               ))
-            : _entities;
+            : _entities);
     final libraryOverlay = entity.entityType == EntityType.image ||
         entity.entityType == EntityType.video;
     if (!mounted || _viewerSessions.isStopped) return;
@@ -2681,81 +2793,28 @@ class _AppShellState extends State<AppShell> {
           onCustomizeSelectedNodePreview: _customizeSelectedNodePreview,
           onClearSelectedNodePreviewOverride: _clearSelectedNodePreviewOverride,
         ),
-      AppSection.video => MediaShelfPage(
-          kind: MediaShelfKind.video,
-          repository: _repository!,
-          onOpenEntity: _openEntity,
-          onThumbnailNeeded: _requestBrowseThumbnail,
+      AppSection.rules => RuleIndexPage(
+          key: ValueKey(_requestedRuleId),
+          queries: _readWorker!,
+          initialRuleId: _requestedRuleId,
           browserState: _browserState,
           layoutSettings: widget.preferences.value.layout,
-          onSortChanged: _setShelfSort,
-          onDisplayModeChanged: _setShelfDisplayMode,
-          onGridLayoutChanged: _setShelfGridLayout,
-          onListStyleChanged: _setListStyle,
-          themeChoice: widget.preferences.value.themeChoice,
-          onThemeChanged: widget.preferences.setTheme,
-          layoutPreset: widget.preferences.value.layoutPreset,
-          onLayoutPresetChanged: widget.preferences.setLayoutPreset,
-          currentSection: _section,
-          onSectionChanged: _navigateToSection,
-        ),
-      AppSection.gallery => MediaShelfPage(
-          kind: MediaShelfKind.gallery,
-          repository: _repository!,
-          onOpenEntity: _openEntity,
+          preferences: widget.preferences,
+          onOpenEntity: (entity, queue) => _openEntity(
+            entity,
+            playbackQueueOverride: queue,
+            detachSourceNode: true,
+          ),
           onThumbnailNeeded: _requestBrowseThumbnail,
-          browserState: _browserState,
-          layoutSettings: widget.preferences.value.layout,
-          onSortChanged: _setShelfSort,
-          onDisplayModeChanged: _setShelfDisplayMode,
-          onGridLayoutChanged: _setShelfGridLayout,
-          onListStyleChanged: _setListStyle,
-          themeChoice: widget.preferences.value.themeChoice,
-          onThemeChanged: widget.preferences.setTheme,
-          layoutPreset: widget.preferences.value.layoutPreset,
-          onLayoutPresetChanged: widget.preferences.setLayoutPreset,
-          currentSection: _section,
-          onSectionChanged: _navigateToSection,
-        ),
-      AppSection.reading => MediaShelfPage(
-          kind: MediaShelfKind.reading,
-          repository: _repository!,
-          onOpenEntity: _openEntity,
-          onThumbnailNeeded: _requestBrowseThumbnail,
-          browserState: _browserState,
-          layoutSettings: widget.preferences.value.layout,
-          onSortChanged: _setShelfSort,
-          onDisplayModeChanged: _setShelfDisplayMode,
-          onGridLayoutChanged: _setShelfGridLayout,
-          onListStyleChanged: _setListStyle,
-          themeChoice: widget.preferences.value.themeChoice,
-          onThemeChanged: widget.preferences.setTheme,
-          layoutPreset: widget.preferences.value.layoutPreset,
-          onLayoutPresetChanged: widget.preferences.setLayoutPreset,
-          currentSection: _section,
-          onSectionChanged: _navigateToSection,
-        ),
-      AppSection.music => MusicPage(
-          sessions: _audioSessions,
-          controller: _audioController!,
-          onRestore: (session) async {
-            await _audioController!.restoreSession(session, autoplay: true);
-            if (mounted) setState(() {});
-          },
-          onPlayEntry: (session, index) async {
-            await _audioController!.playSessionEntry(session, index);
-            if (mounted) setState(() {});
-          },
-          onDelete: (session) async {
-            await _repository!.deleteAudioPlaybackSession(session.id);
-            final sessions = await _repository!.listAudioPlaybackSessions();
-            if (mounted) setState(() => _audioSessions = sessions);
-          },
-          currentSection: _section,
-          onSectionChanged: _navigateToSection,
+          onSearch: _searchNodes,
+          onBrowserStateChanged: _setRuleBrowserState,
+          onAddToCollection: _addRuleItemsToCollection,
+          onEditRule: _editRule,
+          onDeleteRule: _deleteRule,
         ),
       AppSection.indexes => IndexManagementPage(
           roots: _indexRoots,
+          rules: _rules,
           rootCounts: _rootCounts,
           scanning: _scanning,
           progress: _scanProgress,
@@ -2778,17 +2837,13 @@ class _AppShellState extends State<AppShell> {
             onCreateCollection: () => _showCreateCollection(),
             onCreateNodeAtRoot: (root) =>
                 _showCreateCustomNode(parentOverride: root),
+            onCreateRule: _createRule,
+            onEditRule: _editRule,
+            onDeleteRule: _deleteRule,
           ),
         ),
-      AppSection.logs => DiagnosticsPage(
-          database: _database!,
-          log: AppDiagnosticLog.instance,
-          recoverableJobs: _recoverableIndexJobs,
-          history: _indexTaskHistory,
-          progress: _scanProgress,
-        ),
     };
-    final body = _readError == null || _section == AppSection.logs
+    final body = _readError == null
         ? pageBody
         : Column(
             children: [

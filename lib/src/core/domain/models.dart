@@ -88,8 +88,10 @@ enum NodeType {
   directoryIndexRoot('directory_index_root'),
   // Keep the storage value for compatibility with existing databases.
   customIndexRoot('category_index_root'),
+  ruleIndexRoot('rule_index_root'),
   folder('folder'),
-  customNode('category');
+  customNode('category'),
+  ruleNode('rule');
 
   const NodeType(this.value);
   final String value;
@@ -141,6 +143,7 @@ class Entity {
     this.thumbnailPath,
     this.archived = false,
     this.lastOpenedAtMs,
+    this.openCount = 0,
     this.lastPositionMs,
     this.durationMs,
     this.readerScrollOffset,
@@ -180,6 +183,7 @@ class Entity {
   /// workflow; normal queries expose only non-archived entities.
   final bool archived;
   final int? lastOpenedAtMs;
+  final int openCount;
   final int? lastPositionMs;
   final int? durationMs;
   final double? readerScrollOffset;
@@ -226,7 +230,82 @@ class NodePreviewBuildInput {
   final IndexNodePreview preview;
 }
 
-enum NodeSearchScope { all, directory, collection }
+enum NodeSearchScope { all, directory, collection, rule }
+
+enum BuiltInRuleKind {
+  frequent,
+  recentImages,
+  recentVideos,
+  recentText,
+  recentMusic
+}
+
+enum RuleSortMode { lastOpened, openCount, modified, name, size }
+
+class RuleDefinition {
+  const RuleDefinition({
+    required this.node,
+    this.entityTypes = const <EntityType>[],
+    this.extensions = const <String>[],
+    this.scopeNodeId,
+    this.minSize,
+    this.maxSize,
+    this.modifiedWithinDays,
+    this.openedWithinDays,
+    this.defaultSort = RuleSortMode.lastOpened,
+    this.maxResults = 1000,
+    this.builtInKind,
+    this.resultCount,
+    required this.updatedAtMs,
+  });
+
+  final IndexNode node;
+  final List<EntityType> entityTypes;
+  final List<String> extensions;
+  final String? scopeNodeId;
+  final int? minSize;
+  final int? maxSize;
+  final int? modifiedWithinDays;
+  final int? openedWithinDays;
+  final RuleSortMode defaultSort;
+  final int maxResults;
+  final BuiltInRuleKind? builtInKind;
+  final int? resultCount;
+  final int updatedAtMs;
+
+  bool get isBuiltIn => builtInKind != null;
+}
+
+class RulePageCursor {
+  const RulePageCursor({
+    required this.primary,
+    this.secondary,
+    required this.entityId,
+    required this.consumed,
+  });
+
+  final Object primary;
+  final Object? secondary;
+  final String entityId;
+  final int consumed;
+}
+
+class RuleResultPage {
+  const RuleResultPage(
+      {required this.items, required this.hasMore, this.cursor});
+
+  final List<EntityListItem> items;
+  final bool hasMore;
+  final RulePageCursor? cursor;
+}
+
+class RuleFilterOptions {
+  const RuleFilterOptions(
+      {required this.extensionsByType, required this.scopeNodes});
+
+  final Map<EntityType, List<String>> extensionsByType;
+  final List<IndexNode> scopeNodes;
+}
 
 class NodeSearchQuery {
   const NodeSearchQuery(
@@ -303,6 +382,8 @@ Map<String, Object?> _nodeMessage(IndexNode node) => {
       'previewJson': node.previewJson,
       'lastBuiltAtMs': node.lastBuiltAtMs,
       'isStaging': node.isStaging,
+      'systemKey': node.systemKey,
+      'isProtected': node.isProtected,
     };
 
 IndexNode _nodeFromMessage(Map<Object?, Object?> map) => IndexNode(
@@ -318,6 +399,8 @@ IndexNode _nodeFromMessage(Map<Object?, Object?> map) => IndexNode(
       previewJson: map['previewJson'] as String?,
       lastBuiltAtMs: map['lastBuiltAtMs'] as int?,
       isStaging: map['isStaging'] == true,
+      systemKey: map['systemKey'] as String?,
+      isProtected: map['isProtected'] == true,
     );
 
 class IndexNode {
@@ -334,6 +417,8 @@ class IndexNode {
     this.previewJson,
     this.lastBuiltAtMs,
     this.isStaging = false,
+    this.systemKey,
+    this.isProtected = false,
   });
 
   final String id;
@@ -348,6 +433,8 @@ class IndexNode {
   final int updatedAtMs;
   final int? lastBuiltAtMs;
   final bool isStaging;
+  final String? systemKey;
+  final bool isProtected;
 }
 
 /// A lightweight, non-recursive description for rendering an index-node
@@ -566,6 +653,7 @@ class EntityListItem {
     this.thumbnailHeight,
     this.archived = false,
     this.lastOpenedAtMs,
+    this.openCount = 0,
     this.lastPositionMs,
     this.durationMs,
     this.readerScrollOffset,
@@ -596,6 +684,7 @@ class EntityListItem {
   /// workflow; normal queries expose only non-archived entities.
   final bool archived;
   final int? lastOpenedAtMs;
+  final int openCount;
   final int? lastPositionMs;
   final int? durationMs;
   final double? readerScrollOffset;

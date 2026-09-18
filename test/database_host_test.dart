@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
 import 'package:best_viewer/src/modules/infrastructure/database_host.dart';
 import 'package:best_viewer/src/modules/library/library_client.dart';
+import 'package:best_viewer/src/core/domain/models.dart';
 
 void main() {
   test('domain receipts survive restart and prevent duplicate creation',
@@ -27,8 +28,12 @@ void main() {
       throwsA(isA<DatabaseCommandException>().having(
           (e) => e.outcome, 'outcome', DatabaseCommandOutcome.committed)),
     );
-    expect((await LibraryClient(second).listIndexRoots()).map((n) => n.name),
-        ['Once']);
+    expect(
+      (await LibraryClient(second).listIndexRoots())
+          .where((node) => node.systemKey == null)
+          .map((node) => node.name),
+      ['Once'],
+    );
     final failedId = DatabaseHost.newCommandId();
     await expectLater(
       second.executeBatch(const [
@@ -50,19 +55,31 @@ void main() {
     );
     expect(
         await second.commandOutcome(expired), DatabaseCommandOutcome.unknown);
-    expect((await LibraryClient(second).listIndexRoots()).length, 1);
+    expect(
+      (await LibraryClient(second).listIndexRoots())
+          .where((node) => node.systemKey == null)
+          .length,
+      1,
+    );
   });
 
-  test('listing an empty library does not create database state', () async {
+  test('a fresh library contains only idempotent system roots', () async {
     final directory = await Directory.systemTemp.createTemp('host_query_');
     addTearDown(() => directory.delete(recursive: true));
     final path = p.join(directory.path, 'library.db');
     final host = await DatabaseHost.start(databasePath: path);
-    expect(await LibraryClient(host).listIndexRoots(), isEmpty);
+    expect(
+      (await LibraryClient(host).listIndexRoots())
+          .map((node) => node.systemKey),
+      containsAll(['favorites', 'rules']),
+    );
     await host.close();
     final db = sqlite3.open(path);
     try {
-      expect(db.select('SELECT * FROM index_nodes'), isEmpty);
+      expect(
+        db.select('SELECT * FROM index_nodes WHERE system_key IS NULL'),
+        hasLength(1),
+      );
       expect(db.select('SELECT * FROM database_command_receipts'), isEmpty);
     } finally {
       db.dispose();
@@ -95,6 +112,26 @@ void main() {
     expect((await write).changes, 1);
     await close;
     await expectLater(library.getIndexNode(root.id), throwsStateError);
+  });
+
+  test('rule commands cross the database host isolate', () async {
+    final directory = await Directory.systemTemp.createTemp('host_rules_');
+    addTearDown(() => directory.delete(recursive: true));
+    final host = await DatabaseHost.start(
+        databasePath: p.join(directory.path, 'library.db'));
+    addTearDown(host.close);
+    final library = LibraryClient(host);
+
+    final rule = await library.createRule(
+      name: '图片规则',
+      entityTypes: const [EntityType.image],
+      extensions: const ['jpg'],
+      defaultSort: RuleSortMode.name,
+    );
+    final loaded = await library.getRule(rule.node.id);
+    expect(loaded?.entityTypes, const [EntityType.image]);
+    expect(loaded?.extensions, const ['jpg']);
+    expect(loaded?.defaultSort, RuleSortMode.name);
   });
 
   test('startup failure completes instead of waiting indefinitely', () async {

@@ -122,6 +122,72 @@ class LibraryReadWorker implements LibraryQueries {
         response['page'] as Map<Object?, Object?>);
   }
 
+  @override
+  Future<List<RuleDefinition>> listRules() async {
+    final response = await _request({'type': 'listRules'});
+    return (response['rules'] as List<Object?>)
+        .cast<Map<Object?, Object?>>()
+        .map(_ruleFromMessage)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<RuleResultPage> loadRulePage({
+    required String ruleNodeId,
+    RuleSortMode? sortMode,
+    RulePageCursor? after,
+    int limit = 60,
+  }) async {
+    final response = await _request({
+      'type': 'rulePage',
+      'ruleNodeId': ruleNodeId,
+      'sortMode': sortMode?.name,
+      'cursorPrimary': after?.primary,
+      'cursorSecondary': after?.secondary,
+      'cursorEntityId': after?.entityId,
+      'consumed': after?.consumed ?? 0,
+      'limit': limit,
+    });
+    final cursor = response['ruleCursor'] as Map<Object?, Object?>?;
+    return RuleResultPage(
+      items: (response['entities'] as List<Object?>)
+          .cast<Map<Object?, Object?>>()
+          .map(_entityFromMap)
+          .toList(growable: false),
+      hasMore: response['hasMore'] == true,
+      cursor: cursor == null
+          ? null
+          : RulePageCursor(
+              primary: cursor['primary']!,
+              secondary: cursor['secondary'],
+              entityId: cursor['entityId']! as String,
+              consumed: cursor['consumed']! as int,
+            ),
+    );
+  }
+
+  @override
+  Future<RuleFilterOptions> listRuleFilterOptions({
+    List<EntityType> entityTypes = const [],
+  }) async {
+    final response = await _request({
+      'type': 'ruleFilterOptions',
+      'entityTypes': entityTypes.map((type) => type.value).toList(),
+    });
+    final raw = response['extensionsByType'] as Map<Object?, Object?>;
+    return RuleFilterOptions(
+      extensionsByType: {
+        for (final entry in raw.entries)
+          EntityType.fromValue(entry.key! as String):
+              (entry.value as List<Object?>).cast<String>(),
+      },
+      scopeNodes: (response['scopeNodes'] as List<Object?>)
+          .cast<Map<Object?, Object?>>()
+          .map(_nodeFromMap)
+          .toList(growable: false),
+    );
+  }
+
   Future<LibraryReadPage> loadRecursivePage({
     String? nodeId,
     RecursiveReadScope scope = RecursiveReadScope.node,
@@ -359,6 +425,24 @@ void _readWorkerMain(Map<String, Object> config) {
             {'ok': true, 'page': queryNodes(database, query).toMessage()});
         return;
       }
+      if (request['type'] == 'listRules') {
+        replyPort.send({'ok': true, 'rules': _loadRules(database)});
+        return;
+      }
+      if (request['type'] == 'rulePage') {
+        replyPort.send({
+          'ok': true,
+          ..._loadRulePage(database, storageDirectoryPath, request),
+        });
+        return;
+      }
+      if (request['type'] == 'ruleFilterOptions') {
+        replyPort.send({
+          'ok': true,
+          ..._loadRuleFilterOptions(database, request),
+        });
+        return;
+      }
       final page = switch (request['type']) {
         'directPage' =>
           _loadDirectPage(database, storageDirectoryPath, request),
@@ -396,6 +480,313 @@ void _readWorkerMain(Map<String, Object> config) {
   });
 }
 
+List<Map<String, Object?>> _loadRules(Database database) {
+  final rows = database.select('''
+    SELECT node.*, rule.entity_types_json, rule.extensions_json,
+           rule.scope_node_id, rule.min_size, rule.max_size,
+           rule.modified_within_days, rule.opened_within_days,
+           rule.default_sort, rule.max_results, rule.built_in_kind,
+           rule.updated_at AS rule_updated_at
+    FROM index_rules rule
+    JOIN index_nodes node ON node.id = rule.node_id
+    WHERE node.node_type = 'rule'
+    ORDER BY CASE WHEN rule.built_in_kind IS NULL THEN 1 ELSE 0 END,
+             node.sort_order, node.name COLLATE NOCASE, node.id
+  ''');
+  return rows.map((row) {
+    final query = _ruleQuery(row, DateTime.now().millisecondsSinceEpoch);
+    final count = database
+        .select(
+          'SELECT COUNT(*) AS count FROM entities e WHERE ${query.whereSql}',
+          query.parameters,
+        )
+        .single['count'] as int;
+    return _ruleToMessage(row, count.clamp(0, row['max_results'] as int));
+  }).toList(growable: false);
+}
+
+Map<String, Object?> _loadRulePage(
+  Database database,
+  String storageDirectoryPath,
+  Map<Object?, Object?> request,
+) {
+  final rows = database.select('''
+    SELECT node.*, rule.entity_types_json, rule.extensions_json,
+           rule.scope_node_id, rule.min_size, rule.max_size,
+           rule.modified_within_days, rule.opened_within_days,
+           rule.default_sort, rule.max_results, rule.built_in_kind,
+           rule.updated_at AS rule_updated_at
+    FROM index_rules rule
+    JOIN index_nodes node ON node.id = rule.node_id
+    WHERE node.id = ? AND node.node_type = 'rule'
+    LIMIT 1
+  ''', [request['ruleNodeId']]);
+  if (rows.isEmpty) {
+    throw ArgumentError.value(request['ruleNodeId'], 'ruleNodeId');
+  }
+  final rule = rows.single;
+  final builtIn = rule['built_in_kind'] as String?;
+  final requestedSort = request['sortMode'] as String?;
+  final sort = builtIn == null && requestedSort != null
+      ? RuleSortMode.values.byName(requestedSort)
+      : RuleSortMode.values.byName(rule['default_sort'] as String);
+  final consumed = request['consumed'] as int? ?? 0;
+  final maxResults = rule['max_results'] as int;
+  final requestedLimit = (request['limit'] as int? ?? 60).clamp(1, 60);
+  final limit =
+      requestedLimit.clamp(0, (maxResults - consumed).clamp(0, maxResults));
+  if (limit == 0) {
+    return const {
+      'entities': <Object?>[],
+      'hasMore': false,
+      'ruleCursor': null
+    };
+  }
+  final query = _ruleQuery(rule, DateTime.now().millisecondsSinceEpoch);
+  final cursor = _ruleCursorCondition(request, sort);
+  final parameters = <Object?>[
+    ...query.parameters,
+    if (cursor != null) ...cursor.parameters,
+    limit + 1,
+  ];
+  final entityRows = database.select('''
+    SELECT e.* FROM entities e
+    WHERE ${query.whereSql}
+    ${cursor == null ? '' : 'AND (${cursor.sql})'}
+    ORDER BY ${_ruleOrderBy(sort)}
+    LIMIT ?
+  ''', parameters);
+  final hasMore = entityRows.length > limit && consumed + limit < maxResults;
+  final visible = entityRows.take(limit).toList(growable: false);
+  final last = visible.isEmpty ? null : visible.last;
+  return {
+    'entities': visible
+        .map((row) => _entityToMap(row, storageDirectoryPath))
+        .toList(growable: false),
+    'hasMore': hasMore,
+    'ruleCursor': last == null
+        ? null
+        : {
+            ..._ruleCursorValues(last, sort),
+            'entityId': last['id'],
+            'consumed': consumed + visible.length,
+          },
+  };
+}
+
+Map<String, Object?> _loadRuleFilterOptions(
+  Database database,
+  Map<Object?, Object?> request,
+) {
+  final selected = (request['entityTypes'] as List<Object?>).cast<String>();
+  final parameters = <Object?>[];
+  final typeFilter = selected.isEmpty
+      ? ''
+      : 'AND media_type IN (${List.filled(selected.length, '?').join(',')})';
+  parameters.addAll(selected);
+  final rows = database.select('''
+    SELECT media_type, lower(format) AS extension
+    FROM entities
+    WHERE archived = 0 AND format <> '' $typeFilter
+    GROUP BY media_type, lower(format)
+    ORDER BY media_type, extension
+  ''', parameters);
+  final extensions = <String, List<String>>{};
+  for (final row in rows) {
+    extensions
+        .putIfAbsent(row['media_type'] as String, () => <String>[])
+        .add(row['extension'] as String);
+  }
+  final scopes = database.select('''
+    SELECT * FROM index_nodes
+    WHERE is_staging = 0
+      AND node_type IN ('directory_index_root', 'folder',
+                        'category_index_root', 'category')
+    ORDER BY CASE system_key WHEN 'favorites' THEN 0 ELSE 1 END,
+             name COLLATE NOCASE, id
+  ''');
+  return {
+    'extensionsByType': extensions,
+    'scopeNodes': scopes.map(_nodeToMap).toList(growable: false),
+  };
+}
+
+class _RuleQueryParts {
+  const _RuleQueryParts(this.whereSql, this.parameters);
+  final String whereSql;
+  final List<Object?> parameters;
+}
+
+_RuleQueryParts _ruleQuery(Row rule, int nowMs) {
+  final clauses = <String>['e.archived = 0'];
+  final parameters = <Object?>[];
+  final builtIn = rule['built_in_kind'] as String?;
+  if (builtIn == BuiltInRuleKind.frequent.name) {
+    clauses.add('e.open_count > 0');
+  } else if (builtIn != null) {
+    clauses.add('e.last_opened_at IS NOT NULL');
+  }
+  final types =
+      (jsonDecode(rule['entity_types_json'] as String) as List).cast<String>();
+  if (types.isNotEmpty) {
+    clauses
+        .add('e.media_type IN (${List.filled(types.length, '?').join(',')})');
+    parameters.addAll(types);
+  }
+  final extensions =
+      (jsonDecode(rule['extensions_json'] as String) as List).cast<String>();
+  if (extensions.isNotEmpty) {
+    clauses.add(
+        'lower(e.format) IN (${List.filled(extensions.length, '?').join(',')})');
+    parameters.addAll(extensions);
+  }
+  final scopeNodeId = rule['scope_node_id'] as String?;
+  if (scopeNodeId != null) {
+    clauses.add('''e.id IN (
+      WITH RECURSIVE subtree(id) AS (
+        SELECT ? UNION ALL
+        SELECT node.id FROM index_nodes node JOIN subtree parent
+          ON node.parent_id = parent.id
+      )
+      SELECT link.entity_id FROM index_node_entities link
+      WHERE link.index_node_id IN (SELECT id FROM subtree)
+    )''');
+    parameters.add(scopeNodeId);
+  }
+  final minSize = rule['min_size'] as int?;
+  final maxSize = rule['max_size'] as int?;
+  if (minSize != null) {
+    clauses.add('e.size >= ?');
+    parameters.add(minSize);
+  }
+  if (maxSize != null) {
+    clauses.add('e.size <= ?');
+    parameters.add(maxSize);
+  }
+  final modifiedDays = rule['modified_within_days'] as int?;
+  if (modifiedDays != null) {
+    clauses.add('e.source_modified_at_ms >= ?');
+    parameters.add(nowMs - modifiedDays * Duration.millisecondsPerDay);
+  }
+  final openedDays = rule['opened_within_days'] as int?;
+  if (openedDays != null) {
+    clauses.add('e.last_opened_at IS NOT NULL AND e.last_opened_at >= ?');
+    parameters.add(nowMs - openedDays * Duration.millisecondsPerDay);
+  }
+  return _RuleQueryParts(clauses.join(' AND '), parameters);
+}
+
+String _ruleOrderBy(RuleSortMode sort) => switch (sort) {
+      RuleSortMode.lastOpened => 'COALESCE(e.last_opened_at, 0) DESC, e.id ASC',
+      RuleSortMode.openCount =>
+        'e.open_count DESC, COALESCE(e.last_opened_at, 0) DESC, e.id ASC',
+      RuleSortMode.modified => 'e.source_modified_at_ms DESC, e.id ASC',
+      RuleSortMode.name => 'e.name COLLATE NOCASE ASC, e.id ASC',
+      RuleSortMode.size => 'e.size DESC, e.id ASC',
+    };
+
+({String sql, List<Object> parameters})? _ruleCursorCondition(
+    Map<Object?, Object?> request, RuleSortMode sort) {
+  final primary = request['cursorPrimary'];
+  final id = request['cursorEntityId'] as String?;
+  if (primary == null || id == null) return null;
+  final secondary = request['cursorSecondary'];
+  return switch (sort) {
+    RuleSortMode.openCount => (
+        sql: '(e.open_count < ? OR (e.open_count = ? AND '
+            '(COALESCE(e.last_opened_at, 0) < ? OR '
+            '(COALESCE(e.last_opened_at, 0) = ? AND e.id > ?))))',
+        parameters: <Object>[
+          primary,
+          primary,
+          secondary ?? 0,
+          secondary ?? 0,
+          id
+        ],
+      ),
+    RuleSortMode.name => (
+        sql: '(e.name COLLATE NOCASE > ? OR '
+            '(e.name = ? COLLATE NOCASE AND e.id > ?))',
+        parameters: <Object>[primary, primary, id],
+      ),
+    RuleSortMode.lastOpened =>
+      _descendingRuleCursor('COALESCE(e.last_opened_at, 0)', primary, id),
+    RuleSortMode.modified =>
+      _descendingRuleCursor('e.source_modified_at_ms', primary, id),
+    RuleSortMode.size => _descendingRuleCursor('e.size', primary, id),
+  };
+}
+
+({String sql, List<Object> parameters}) _descendingRuleCursor(
+        String column, Object primary, String id) =>
+    (
+      sql: '($column < ? OR ($column = ? AND e.id > ?))',
+      parameters: <Object>[primary, primary, id],
+    );
+
+Map<String, Object?> _ruleCursorValues(Row row, RuleSortMode sort) =>
+    switch (sort) {
+      RuleSortMode.lastOpened => {
+          'primary': row['last_opened_at'] as int? ?? 0,
+          'secondary': null,
+        },
+      RuleSortMode.openCount => {
+          'primary': row['open_count'] as int,
+          'secondary': row['last_opened_at'] as int? ?? 0,
+        },
+      RuleSortMode.modified => {
+          'primary': row['source_modified_at_ms'] as int,
+          'secondary': null,
+        },
+      RuleSortMode.name => {
+          'primary': row['name'] as String,
+          'secondary': null,
+        },
+      RuleSortMode.size => {
+          'primary': row['size'] as int,
+          'secondary': null,
+        },
+    };
+
+Map<String, Object?> _ruleToMessage(Row row, int? resultCount) => {
+      'node': _nodeToMap(row),
+      'entityTypes': (jsonDecode(row['entity_types_json'] as String) as List),
+      'extensions': (jsonDecode(row['extensions_json'] as String) as List),
+      'scopeNodeId': row['scope_node_id'],
+      'minSize': row['min_size'],
+      'maxSize': row['max_size'],
+      'modifiedWithinDays': row['modified_within_days'],
+      'openedWithinDays': row['opened_within_days'],
+      'defaultSort': row['default_sort'],
+      'maxResults': row['max_results'],
+      'builtInKind': row['built_in_kind'],
+      'updatedAtMs': row['rule_updated_at'],
+      'resultCount': resultCount,
+    };
+
+RuleDefinition _ruleFromMessage(Map<Object?, Object?> map) {
+  final builtIn = map['builtInKind'] as String?;
+  return RuleDefinition(
+    node: _nodeFromMap(map['node'] as Map<Object?, Object?>),
+    entityTypes: (map['entityTypes'] as List<Object?>)
+        .cast<String>()
+        .map(EntityType.fromValue)
+        .toList(growable: false),
+    extensions: (map['extensions'] as List<Object?>).cast<String>(),
+    scopeNodeId: map['scopeNodeId'] as String?,
+    minSize: map['minSize'] as int?,
+    maxSize: map['maxSize'] as int?,
+    modifiedWithinDays: map['modifiedWithinDays'] as int?,
+    openedWithinDays: map['openedWithinDays'] as int?,
+    defaultSort: RuleSortMode.values.byName(map['defaultSort'] as String),
+    maxResults: map['maxResults'] as int,
+    builtInKind:
+        builtIn == null ? null : BuiltInRuleKind.values.byName(builtIn),
+    resultCount: map['resultCount'] as int?,
+    updatedAtMs: map['updatedAtMs'] as int,
+  );
+}
+
 _RawReadPage _loadDirectPage(
   Database database,
   String storageDirectoryPath,
@@ -409,7 +800,8 @@ _RawReadPage _loadDirectPage(
     SELECT node.* FROM index_nodes node
     LEFT JOIN index_node_stats stats ON stats.node_id = node.id
     WHERE node.parent_id = ?
-    ORDER BY ${_nodeOrderBy(sortName)}
+    ORDER BY CASE node.system_key WHEN 'favorites' THEN 0 ELSE 1 END,
+             ${_nodeOrderBy(sortName)}
     ''',
     [parentId],
   );
@@ -459,7 +851,8 @@ _RawReadPage _loadIndexRoots(
       SELECT root.id FROM index_nodes root WHERE root.node_type = ? LIMIT 1
     )
       AND node.is_staging = 0
-    ORDER BY ${_nodeOrderBy(sortName)}
+    ORDER BY CASE node.system_key WHEN 'favorites' THEN 0 ELSE 1 END,
+             ${_nodeOrderBy(sortName)}
     ''',
     ['root'],
   );
@@ -1021,6 +1414,8 @@ Map<String, Object?> _nodeToMap(Row row) => <String, Object?>{
       'createdAtMs': row['created_at'],
       'updatedAtMs': row['updated_at'],
       'lastBuiltAtMs': row['last_built_at_ms'],
+      'systemKey': row['system_key'],
+      'isProtected': row['is_protected'],
     };
 
 Map<String, Object?> _entityToMap(Row row, String storageDirectoryPath) {
@@ -1051,6 +1446,7 @@ Map<String, Object?> _entityToMap(Row row, String storageDirectoryPath) {
     'thumbnailHeight': row['thumbnail_height'],
     'archived': row['archived'],
     'lastOpenedAtMs': row['last_opened_at'],
+    'openCount': row['open_count'],
     'lastPositionMs': row['last_position_ms'],
     'durationMs': row['duration_ms'],
     'readerScrollOffset': row['reader_scroll_offset'],
@@ -1092,6 +1488,8 @@ IndexNode _nodeFromMap(Map<Object?, Object?> map) => IndexNode(
       createdAtMs: map['createdAtMs']! as int,
       updatedAtMs: map['updatedAtMs']! as int,
       lastBuiltAtMs: map['lastBuiltAtMs'] as int?,
+      systemKey: map['systemKey'] as String?,
+      isProtected: map['isProtected'] == 1 || map['isProtected'] == true,
     );
 
 EntityListItem _entityFromMap(Map<Object?, Object?> map) => EntityListItem(
@@ -1114,6 +1512,7 @@ EntityListItem _entityFromMap(Map<Object?, Object?> map) => EntityListItem(
       thumbnailHeight: map['thumbnailHeight'] as int?,
       archived: map['archived'] == 1,
       lastOpenedAtMs: map['lastOpenedAtMs'] as int?,
+      openCount: map['openCount'] as int? ?? 0,
       lastPositionMs: map['lastPositionMs'] as int?,
       durationMs: map['durationMs'] as int?,
       readerScrollOffset: (map['readerScrollOffset'] as num?)?.toDouble(),
@@ -1148,6 +1547,7 @@ Entity _fullEntityFromMap(Map<Object?, Object?> map) => Entity(
       thumbnailPath: map['thumbnailPath'] as String?,
       archived: map['archived'] == 1 || map['archived'] == true,
       lastOpenedAtMs: map['lastOpenedAtMs'] as int?,
+      openCount: map['openCount'] as int? ?? 0,
       lastPositionMs: map['lastPositionMs'] as int?,
       durationMs: map['durationMs'] as int?,
       readerScrollOffset: (map['readerScrollOffset'] as num?)?.toDouble(),

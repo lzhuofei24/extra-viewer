@@ -85,7 +85,7 @@ class _NodeSearchPageViewState extends State<NodeSearchPageView> {
                   _search();
                 },
                 decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.search), hintText: '输入目录或分类名称'),
+                    prefixIcon: Icon(Icons.search), hintText: '输入目录、分类或规则名称'),
               )),
           Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -95,7 +95,8 @@ class _NodeSearchPageViewState extends State<NodeSearchPageView> {
                       label: Text(switch (scope) {
                         NodeSearchScope.all => '全部',
                         NodeSearchScope.directory => '目录',
-                        NodeSearchScope.collection => '分类'
+                        NodeSearchScope.collection => '分类',
+                        NodeSearchScope.rule => '规则'
                       }),
                       selected: _scope == scope,
                       onSelected: (_) {
@@ -113,7 +114,7 @@ class _NodeSearchPageViewState extends State<NodeSearchPageView> {
                       child: Text(_busy
                           ? '正在搜索…'
                           : _text.text.trim().isEmpty
-                              ? '按名称查找目录或分类'
+                              ? '按名称查找目录、分类或规则'
                               : '没有匹配的内容'))
                   : ListView.separated(
                       itemCount: _items.length + (_more ? 1 : 0),
@@ -129,6 +130,7 @@ class _NodeSearchPageViewState extends State<NodeSearchPageView> {
                         final result = _items[index];
                         final type = switch (result.root.nodeType) {
                           NodeType.directoryIndexRoot => '目录',
+                          NodeType.ruleIndexRoot || NodeType.ruleNode => '规则',
                           _ => '分类'
                         };
                         return ListTile(

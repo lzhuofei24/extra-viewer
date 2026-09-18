@@ -86,4 +86,6 @@ If no device is listed, do not claim installation succeeded. Report the APK path
 - Preserve persistent preview publication semantics: write immutable files first, conditionally publish references, and retire old files later.
 - Do not reintroduce graph indexes, desktop application code, index package import/export, or the pet system.
 - Prefer localized updates and existing project abstractions over adding parallel state or rebuild paths.
-- The current navigation and user terminology are `目录`, `分类`, `最近`, `管理`, and `设置`.
+- The current navigation and user terminology are `目录`, `分类`, `规则`, and `管理`.
+- `收藏` is a protected system classification. Built-in rules are protected system nodes; neither may be renamed or deleted.
+- User-facing diagnostics/log pages and the former recent-media pages have been removed. Keep internal diagnostic logging for recovery and support.

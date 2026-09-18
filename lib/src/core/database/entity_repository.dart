@@ -160,6 +160,7 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
               : null,
           archived: existing.archived,
           lastOpenedAtMs: existing.lastOpenedAtMs,
+          openCount: existing.openCount,
           lastPositionMs: existing.lastPositionMs,
           durationMs: durationMs,
           readerScrollOffset: existing.readerScrollOffset,
@@ -317,7 +318,7 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
     final now = nowMillis();
     _enqueueBackgroundWrite(
       'mark_opened',
-      'UPDATE entities SET last_opened_at = ?, updated_at = ? WHERE id = ?',
+      'UPDATE entities SET last_opened_at = ?, open_count = open_count + 1, updated_at = ? WHERE id = ?',
       [now, now, entityId],
     );
   }

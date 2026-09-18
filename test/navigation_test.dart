@@ -24,7 +24,7 @@ void main() {
       ),
     ));
 
-    for (final label in ['目录', '分类', '最近', '管理', '日志']) {
+    for (final label in ['目录', '分类', '规则', '管理']) {
       expect(find.text(label), findsOneWidget);
     }
 
@@ -54,7 +54,7 @@ void main() {
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: AppNavigation(
-              current: AppSection.gallery,
+              current: AppSection.rules,
               rootTab: BrowserRootTab.directory,
               onChanged: (value) => selectedSection = value,
               onRootTabChanged: (_) {},
@@ -64,35 +64,14 @@ void main() {
       ),
     ));
 
-    for (final label in ['目录', '分类', '最近', '管理', '日志']) {
+    for (final label in ['目录', '分类', '规则', '管理']) {
       expect(find.text(label), findsOneWidget);
     }
     expect(find.byType(FloatingGlassSurface), findsOneWidget);
     expect(find.byTooltip('收起功能栏'), findsNothing);
 
-    await tester.tap(find.text('日志'));
-    expect(selectedSection, AppSection.logs);
+    await tester.tap(find.text('规则'));
+    expect(selectedSection, AppSection.rules);
     expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('diagnostics is selected in bottom navigation', (tester) async {
-    final handle = tester.ensureSemantics();
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: AppNavigation(
-          current: AppSection.logs,
-          rootTab: BrowserRootTab.directory,
-          onChanged: (_) {},
-          onRootTabChanged: (_) {},
-        ),
-      ),
-    ));
-
-    expect(
-      find.bySemanticsLabel('日志'),
-      findsOneWidget,
-    );
-    expect(tester.takeException(), isNull);
-    handle.dispose();
   });
 }

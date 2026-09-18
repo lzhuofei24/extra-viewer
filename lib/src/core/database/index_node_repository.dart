@@ -464,7 +464,8 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
       LEFT JOIN index_node_stats stats ON stats.node_id = node.id
       WHERE node.parent_id = ?
         AND node.is_staging = 0
-      ORDER BY ${_indexNodeOrderBy(sortMode)}
+      ORDER BY CASE node.system_key WHEN 'favorites' THEN 0 ELSE 1 END,
+               ${_indexNodeOrderBy(sortMode)}
       ''',
       [roots.first['id']],
     );
@@ -858,6 +859,9 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
     final node = _nodeById(nodeId);
     if (node == null) return;
     if (node.nodeType == NodeType.root) return;
+    if (node.isProtected) {
+      throw StateError('Protected system nodes cannot be renamed');
+    }
     if (normalizedName == node.name) return;
     final duplicate = database.db.select(
       '''
@@ -887,6 +891,9 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
     final node = _nodeById(nodeId);
     if (node == null) return;
     if (node.nodeType == NodeType.root) return;
+    if (node.isProtected) {
+      throw StateError('Protected system nodes cannot be deleted');
+    }
     final owner = _owningIndexRoot(node);
     final deleteEntities = owner?.nodeType == NodeType.directoryIndexRoot;
     final entityIds = deleteEntities ? _entityIdsUnderNode(nodeId) : <String>[];

@@ -702,6 +702,71 @@ class LibraryClient implements LibraryAccess {
   }
 
   @override
+  Future<RuleDefinition> createRule(
+      {required String name,
+      List<EntityType> entityTypes = const [],
+      List<String> extensions = const [],
+      String? scopeNodeId,
+      int? minSize,
+      int? maxSize,
+      int? modifiedWithinDays,
+      int? openedWithinDays,
+      RuleSortMode defaultSort = RuleSortMode.lastOpened,
+      int maxResults = 1000}) async {
+    return (await host.call('library', 'createRule', {
+      'name': name,
+      'entityTypes': entityTypes,
+      'extensions': extensions,
+      'scopeNodeId': scopeNodeId,
+      'minSize': minSize,
+      'maxSize': maxSize,
+      'modifiedWithinDays': modifiedWithinDays,
+      'openedWithinDays': openedWithinDays,
+      'defaultSort': defaultSort,
+      'maxResults': maxResults
+    })) as RuleDefinition;
+  }
+
+  @override
+  Future<RuleDefinition> updateRule(
+      {required String nodeId,
+      required String name,
+      List<EntityType> entityTypes = const [],
+      List<String> extensions = const [],
+      String? scopeNodeId,
+      int? minSize,
+      int? maxSize,
+      int? modifiedWithinDays,
+      int? openedWithinDays,
+      RuleSortMode defaultSort = RuleSortMode.lastOpened,
+      int maxResults = 1000}) async {
+    return (await host.call('library', 'updateRule', {
+      'nodeId': nodeId,
+      'name': name,
+      'entityTypes': entityTypes,
+      'extensions': extensions,
+      'scopeNodeId': scopeNodeId,
+      'minSize': minSize,
+      'maxSize': maxSize,
+      'modifiedWithinDays': modifiedWithinDays,
+      'openedWithinDays': openedWithinDays,
+      'defaultSort': defaultSort,
+      'maxResults': maxResults
+    })) as RuleDefinition;
+  }
+
+  @override
+  Future<void> deleteRule(String nodeId) async {
+    await host.call('library', 'deleteRule', {'nodeId': nodeId});
+  }
+
+  @override
+  Future<RuleDefinition?> getRule(String nodeId) async {
+    return (await host.call('library', 'getRule', {'nodeId': nodeId}))
+        as RuleDefinition?;
+  }
+
+  @override
   Future<EntityPreviewTicket> beginEntityPreview(Entity entity) async {
     return (await host
             .call('library', 'beginEntityPreview', {'entity': entity}))

@@ -46,7 +46,7 @@ void main() {
     raw.userVersion = 5;
     final database = AppDatabase.openForTesting(raw);
     addTearDown(database.close);
-    expect(raw.userVersion, 8);
+    expect(raw.userVersion, 9);
     expect(raw.select('SELECT name FROM entities').single['name'], 'keep');
     final job = raw.select('SELECT * FROM library_build_jobs').single;
     expect(job['scope_node_id'], 'root');
@@ -72,7 +72,7 @@ void main() {
     database.migrate();
     addTearDown(database.close);
 
-    expect(raw.userVersion, 8);
+    expect(raw.userVersion, 9);
     expect(
       raw.select(
           "SELECT rowid FROM index_node_search WHERE index_node_search MATCH '银狼资'"),
@@ -170,7 +170,7 @@ void main() {
 
     database.migrate();
 
-    expect(raw.userVersion, 8);
+    expect(raw.userVersion, 9);
     expect(
       raw.select('SELECT id FROM index_nodes WHERE id = ?', [directory.id]),
       isNotEmpty,
@@ -236,6 +236,35 @@ void main() {
         "SELECT name FROM sqlite_master WHERE name = 'node_preview_assets'",
       ),
       isNotEmpty,
+    );
+  });
+
+  test('schema 9 adopts an existing favorites root and is idempotent', () {
+    final database = AppDatabase.openInMemory();
+    addTearDown(database.close);
+    final raw = database.db;
+    final favorite = raw
+        .select("SELECT * FROM index_nodes WHERE system_key = 'favorites'")
+        .single;
+    final favoriteId = favorite['id'] as String;
+    raw.execute(
+      'UPDATE index_nodes SET system_key = NULL, is_protected = 0, sort_order = 0 WHERE id = ?',
+      [favoriteId],
+    );
+    raw.userVersion = 8;
+
+    database.migrate();
+    database.migrate();
+
+    final favorites = raw.select(
+      "SELECT * FROM index_nodes WHERE system_key = 'favorites'",
+    );
+    expect(favorites, hasLength(1));
+    expect(favorites.single['id'], favoriteId);
+    expect(favorites.single['is_protected'], 1);
+    expect(
+      raw.select("SELECT * FROM index_nodes WHERE node_type = 'rule'"),
+      hasLength(5),
     );
   });
 

@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'browser_state.dart';
 
-enum AppSection { data, video, gallery, reading, music, indexes, logs }
+enum AppSection { data, rules, indexes }
 
 class AppNavigation extends StatelessWidget {
   const AppNavigation({
@@ -43,10 +43,10 @@ class AppNavigation extends StatelessWidget {
       dataTab: BrowserRootTab.tree,
     ),
     _NavigationDestination(
-      AppSection.gallery,
-      '最近',
-      Icons.history_outlined,
-      Icons.history,
+      AppSection.rules,
+      '规则',
+      Icons.rule_outlined,
+      Icons.rule_rounded,
     ),
   ];
 
@@ -56,12 +56,6 @@ class AppNavigation extends StatelessWidget {
       '管理',
       Icons.task_alt_outlined,
       Icons.task_alt,
-    ),
-    _NavigationDestination(
-      AppSection.logs,
-      '日志',
-      Icons.receipt_long_outlined,
-      Icons.receipt_long_rounded,
     ),
   ];
 
@@ -75,14 +69,6 @@ class AppNavigation extends StatelessWidget {
       );
 
   bool _isSelected(_NavigationDestination item) {
-    if (item.section == AppSection.gallery) {
-      return const {
-        AppSection.gallery,
-        AppSection.video,
-        AppSection.reading,
-        AppSection.music,
-      }.contains(current);
-    }
     return current == item.section &&
         (item.dataTab == null || item.dataTab == rootTab);
   }

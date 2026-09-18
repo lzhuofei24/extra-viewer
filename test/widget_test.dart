@@ -26,23 +26,29 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     expect(find.text('目录'), findsWidgets);
     expect(find.text('分类'), findsOneWidget);
-    expect(find.text('最近'), findsOneWidget);
+    expect(find.text('规则'), findsOneWidget);
     expect(find.text('管理'), findsOneWidget);
     expect(find.text('宠物'), findsNothing);
     expect(find.byIcon(Icons.folder_copy_rounded), findsWidgets);
     expect(find.byIcon(Icons.star_outline_rounded), findsNothing);
     expect(find.byIcon(Icons.search_outlined), findsNothing);
-    expect(find.byIcon(Icons.receipt_long_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.receipt_long_outlined), findsNothing);
     expect(find.byTooltip('收起功能栏'), findsNothing);
     expect(tester.takeException(), isNull);
 
-    await tester.tap(find.text('日志'));
-    await tester.pumpAndSettle();
-    expect(find.text('复制诊断'), findsOneWidget);
+    await tester.tap(find.text('规则'));
+    for (var attempt = 0;
+        attempt < 100 && find.text('常用').evaluate().isEmpty;
+        attempt++) {
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 25)));
+      await tester.pump();
+    }
+    expect(find.text('常用'), findsOneWidget);
 
     await tester.binding.setSurfaceSize(const Size(1000, 600));
     await tester.pumpAndSettle();
-    expect(find.text('复制诊断'), findsOneWidget);
+    expect(find.text('常用'), findsOneWidget);
     expect(find.byTooltip('收起功能栏'), findsNothing);
     expect(find.byType(FloatingGlassSurface), findsOneWidget);
     expect(tester.takeException(), isNull);
