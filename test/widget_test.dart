@@ -7,6 +7,8 @@ import 'package:best_viewer/src/app.dart';
 void main() {
   testWidgets('shows redesigned Best Viewer shell',
       (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       BestViewerApp(databaseFactory: () async => AppDatabase.openInMemory()),
     );
@@ -30,7 +32,19 @@ void main() {
     expect(find.byIcon(Icons.star_outline_rounded), findsNothing);
     expect(find.byIcon(Icons.search_outlined), findsNothing);
     expect(find.byIcon(Icons.tune_outlined), findsOneWidget);
+    expect(find.byTooltip('收起功能栏'), findsNothing);
     expect(tester.takeException(), isNull);
+
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('浏览布局'), findsOneWidget);
+
+    await tester.binding.setSurfaceSize(const Size(1000, 600));
+    await tester.pumpAndSettle();
+    expect(find.text('浏览布局'), findsOneWidget);
+    expect(find.byTooltip('收起功能栏'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
     await tester.runAsync(() async {
       await tester.pumpWidget(const SizedBox());
       await Future<void>.delayed(const Duration(milliseconds: 250));

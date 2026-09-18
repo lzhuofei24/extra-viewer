@@ -12,7 +12,6 @@ class SettingsPage extends StatelessWidget {
     required this.onThemeChanged,
     required this.onLayoutChanged,
     required this.onResetLayout,
-    required this.onResetLocalIndex,
     this.onOpenDiagnostics,
   });
 
@@ -21,7 +20,6 @@ class SettingsPage extends StatelessWidget {
   final ValueChanged<ViewerThemeChoice> onThemeChanged;
   final ValueChanged<GalleryLayoutSettings> onLayoutChanged;
   final VoidCallback onResetLayout;
-  final VoidCallback onResetLocalIndex;
   final VoidCallback? onOpenDiagnostics;
 
   @override
@@ -135,26 +133,6 @@ class SettingsPage extends StatelessWidget {
           subtitle: const Text('错误、接口调用与任务历史'),
           trailing: const Icon(Icons.chevron_right),
           onTap: onOpenDiagnostics,
-        ),
-        const SizedBox(height: 18),
-        _SettingsCard(
-          title: '本地资料数据',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('清除后会删除本应用保存的目录、分类、预览图和播放缓存。主题和布局设置会保留，原始文件不会被修改。',
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-              const SizedBox(height: 14),
-              OutlinedButton.icon(
-                onPressed: onResetLocalIndex,
-                style: OutlinedButton.styleFrom(
-                    foregroundColor: theme.colorScheme.error),
-                icon: const Icon(Icons.delete_sweep_outlined),
-                label: const Text('清除本地资料数据'),
-              ),
-            ],
-          ),
         ),
         const SizedBox(height: 100),
       ],

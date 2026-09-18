@@ -18,7 +18,6 @@ void main() {
           onThemeChanged: (_) {},
           onLayoutChanged: (_) {},
           onResetLayout: () => resetCount++,
-          onResetLocalIndex: () {},
         ),
       ),
     ));
@@ -28,6 +27,8 @@ void main() {
     expect(find.byType(Slider), findsNWidgets(7));
     expect(find.text('默认排序'), findsNothing);
     expect(find.text('卡片对齐方式'), findsNothing);
+    expect(find.text('本地资料数据'), findsNothing);
+    expect(find.text('清除本地资料数据'), findsNothing);
     await tester.tap(find.text('恢复默认布局'));
     expect(resetCount, 1);
     expect(tester.takeException(), isNull);

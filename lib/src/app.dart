@@ -2735,7 +2735,6 @@ class _AppShellState extends State<AppShell> {
           onThemeChanged: widget.preferences.setTheme,
           onLayoutChanged: widget.preferences.setLayout,
           onResetLayout: widget.preferences.resetLayout,
-          onResetLocalIndex: _resetLocalIndexStorage,
         ),
       AppSection.logs => DiagnosticsPage(
           database: _database!,
@@ -2826,41 +2825,79 @@ class _AppShellState extends State<AppShell> {
               end: Alignment.bottomCenter,
             ),
           ),
-          child: Stack(
-            children: [
-              SafeArea(
-                child: Row(
-                  children: [
-                    AppSidebar(
-                      current: _section,
-                      onChanged: _navigateToSection,
-                      rootTab: _browserState.rootTab,
-                      onRootTabChanged: _selectDataRootTab,
-                      collapsed: _sidebarCollapsed,
-                      onToggleCollapsed: () => setState(
-                        () => _sidebarCollapsed = !_sidebarCollapsed,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isPortrait = constraints.maxHeight > constraints.maxWidth;
+              final hasMediaOverlay = _mediaOverlay != null;
+              final navigationLayout = isPortrait
+                  ? AppNavigationLayout.bottom
+                  : AppNavigationLayout.rail;
+              final railWidth = _sidebarCollapsed
+                  ? AppNavigation.collapsedRailWidth
+                  : AppNavigation.expandedRailWidth;
+              final safeBottom = MediaQuery.paddingOf(context).bottom;
+              final contentInset = hasMediaOverlay
+                  ? EdgeInsets.zero
+                  : isPortrait
+                      ? const EdgeInsets.only(
+                          bottom: AppNavigation.bottomBarHeight + 24,
+                        )
+                      : EdgeInsets.only(left: railWidth + 24);
+              final navigation = AppNavigation(
+                layout: navigationLayout,
+                current: _section,
+                onChanged: _navigateToSection,
+                rootTab: _browserState.rootTab,
+                onRootTabChanged: _selectDataRootTab,
+                collapsed: _sidebarCollapsed,
+                onToggleCollapsed: () => setState(
+                  () => _sidebarCollapsed = !_sidebarCollapsed,
+                ),
+              );
+
+              return Stack(
+                children: [
+                  SafeArea(
+                    child: Padding(
+                      padding: contentInset,
+                      child: body,
+                    ),
+                  ),
+                  if (!hasMediaOverlay && isPortrait)
+                    Positioned(
+                      left: 12,
+                      right: 12,
+                      bottom: 12,
+                      child: SafeArea(
+                        top: false,
+                        left: false,
+                        right: false,
+                        child: navigation,
                       ),
                     ),
-                    VerticalDivider(
-                      width: 1,
-                      thickness: 1,
-                      color: Theme.of(context).colorScheme.outlineVariant,
+                  if (!hasMediaOverlay && !isPortrait)
+                    Positioned(
+                      left: 12,
+                      top: 12,
+                      bottom: 12,
+                      child: SafeArea(
+                        right: false,
+                        child: navigation,
+                      ),
                     ),
-                    Expanded(child: body),
-                  ],
-                ),
-              ),
-              if (_mediaOverlay case final overlay?)
-                Positioned.fill(child: overlay),
-              Positioned(
-                right: 0,
-                bottom: 12,
-                child: Align(
-                  alignment: Alignment.bottomRight,
-                  child: miniPlayer,
-                ),
-              ),
-            ],
+                  if (!hasMediaOverlay)
+                    Positioned(
+                      right: 12,
+                      bottom: isPortrait
+                          ? 12 + safeBottom + AppNavigation.bottomBarHeight + 8
+                          : 12 + safeBottom,
+                      child: miniPlayer,
+                    ),
+                  if (_mediaOverlay case final overlay?)
+                    Positioned.fill(child: overlay),
+                ],
+              );
+            },
           ),
         ),
       ),
