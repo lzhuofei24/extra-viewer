@@ -14,26 +14,26 @@ enum GalleryLayoutPreset {
             pageMargin: 4,
             cardGap: 4,
             cardRadius: 8,
-            portraitEqualWidthColumns: 3,
+            portraitEqualWidthColumns: 4,
             landscapeEqualWidthColumns: 6,
-            portraitSquareColumns: 3,
+            portraitSquareColumns: 4,
             landscapeSquareColumns: 5,
             equalHeightTarget: 300,
             folderHeight: 240,
-            portraitFolderColumns: 3,
+            portraitFolderColumns: 4,
           ),
         GalleryLayoutPreset.standard => const GalleryLayoutSettings(),
         GalleryLayoutPreset.spacious => const GalleryLayoutSettings(
             pageMargin: 16,
             cardGap: 16,
             cardRadius: 24,
-            portraitEqualWidthColumns: 1,
+            portraitEqualWidthColumns: 2,
             landscapeEqualWidthColumns: 3,
             portraitSquareColumns: 2,
             landscapeSquareColumns: 2,
             equalHeightTarget: 500,
             folderHeight: 400,
-            portraitFolderColumns: 1,
+            portraitFolderColumns: 2,
           ),
       };
 }
@@ -56,13 +56,13 @@ class GalleryLayoutSettings {
   static const double defaultPageMargin = 8;
   static const double defaultCardGap = 8;
   static const double defaultCardRadius = 16;
-  static const int defaultPortraitEqualWidthColumns = 2;
+  static const int defaultPortraitEqualWidthColumns = 3;
   static const int defaultLandscapeEqualWidthColumns = 4;
-  static const int defaultPortraitSquareColumns = 2;
+  static const int defaultPortraitSquareColumns = 3;
   static const int defaultLandscapeSquareColumns = 3;
   static const double defaultEqualHeightTarget = 400;
   static const double defaultFolderHeight = 320;
-  static const int defaultPortraitFolderColumns = 2;
+  static const int defaultPortraitFolderColumns = 3;
 
   static const double immersiveMargin = 2;
   static const double immersiveGap = 1;

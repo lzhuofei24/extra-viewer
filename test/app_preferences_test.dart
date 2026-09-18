@@ -37,7 +37,7 @@ void main() {
     expect(restored.gridLayout, BrowserGridLayout.square);
     expect(restored.listStyle, BrowserListStyle.compact);
     expect(restored.layoutPreset, GalleryLayoutPreset.compact);
-    expect(restored.layout.portraitFolderColumns, 3);
+    expect(restored.layout.portraitFolderColumns, 4);
   });
 
   test('invalid and old granular values use the standard preset', () async {
@@ -69,13 +69,13 @@ void main() {
     expect(store.value.themeChoice, ViewerThemeChoice.galleryLight);
     expect(store.value.displayMode, BrowserDisplayMode.list);
     expect(store.value.layoutPreset, GalleryLayoutPreset.spacious);
-    expect(store.value.layout.portraitFolderColumns, 1);
+    expect(store.value.layout.portraitFolderColumns, 2);
   });
 
   test('layout preset values match the product density contract', () {
-    expect(GalleryLayoutPreset.compact.settings.portraitFolderColumns, 3);
-    expect(GalleryLayoutPreset.standard.settings.portraitFolderColumns, 2);
-    expect(GalleryLayoutPreset.spacious.settings.portraitFolderColumns, 1);
+    expect(GalleryLayoutPreset.compact.settings.portraitFolderColumns, 4);
+    expect(GalleryLayoutPreset.standard.settings.portraitFolderColumns, 3);
+    expect(GalleryLayoutPreset.spacious.settings.portraitFolderColumns, 2);
     expect(GalleryLayoutPreset.compact.settings.folderHeight, 240);
     expect(GalleryLayoutPreset.standard.settings.folderHeight, 320);
     expect(GalleryLayoutPreset.spacious.settings.folderHeight, 400);
