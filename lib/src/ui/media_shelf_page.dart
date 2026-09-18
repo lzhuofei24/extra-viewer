@@ -12,6 +12,7 @@ import 'gallery_layout_settings.dart';
 import 'library_widgets.dart';
 import 'recent_media_switcher.dart';
 import 'browser_list.dart';
+import 'design_tokens.dart';
 
 enum MediaShelfKind { video, gallery, reading }
 
@@ -28,6 +29,10 @@ class MediaShelfPage extends StatefulWidget {
     required this.onDisplayModeChanged,
     required this.onGridLayoutChanged,
     required this.onListStyleChanged,
+    required this.themeChoice,
+    required this.onThemeChanged,
+    required this.layoutPreset,
+    required this.onLayoutPresetChanged,
     required this.currentSection,
     required this.onSectionChanged,
   });
@@ -42,6 +47,10 @@ class MediaShelfPage extends StatefulWidget {
   final ValueChanged<BrowserDisplayMode> onDisplayModeChanged;
   final ValueChanged<BrowserGridLayout> onGridLayoutChanged;
   final ValueChanged<BrowserListStyle> onListStyleChanged;
+  final ViewerThemeChoice themeChoice;
+  final ValueChanged<ViewerThemeChoice> onThemeChanged;
+  final GalleryLayoutPreset layoutPreset;
+  final ValueChanged<GalleryLayoutPreset> onLayoutPresetChanged;
   final AppSection currentSection;
   final ValueChanged<AppSection> onSectionChanged;
 
@@ -185,6 +194,10 @@ class _MediaShelfPageState extends State<MediaShelfPage> {
                   onDisplayModeChanged: widget.onDisplayModeChanged,
                   onGridLayoutChanged: widget.onGridLayoutChanged,
                   onListStyleChanged: widget.onListStyleChanged,
+                  themeChoice: widget.themeChoice,
+                  onThemeChanged: widget.onThemeChanged,
+                  layoutPreset: widget.layoutPreset,
+                  onLayoutPresetChanged: widget.onLayoutPresetChanged,
                   onToggleImmersive:
                       _supportsImmersive ? _toggleImmersive : null,
                 ),

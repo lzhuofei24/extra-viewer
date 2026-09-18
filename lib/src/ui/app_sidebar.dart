@@ -5,16 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'browser_state.dart';
 
-enum AppSection {
-  data,
-  video,
-  gallery,
-  reading,
-  music,
-  indexes,
-  logs,
-  settings
-}
+enum AppSection { data, video, gallery, reading, music, indexes, logs }
 
 class AppNavigation extends StatelessWidget {
   const AppNavigation({
@@ -67,10 +58,10 @@ class AppNavigation extends StatelessWidget {
       Icons.task_alt,
     ),
     _NavigationDestination(
-      AppSection.settings,
-      '设置',
-      Icons.tune_outlined,
-      Icons.tune_rounded,
+      AppSection.logs,
+      '日志',
+      Icons.receipt_long_outlined,
+      Icons.receipt_long_rounded,
     ),
   ];
 
@@ -91,9 +82,6 @@ class AppNavigation extends StatelessWidget {
         AppSection.reading,
         AppSection.music,
       }.contains(current);
-    }
-    if (item.section == AppSection.settings && current == AppSection.logs) {
-      return true;
     }
     return current == item.section &&
         (item.dataTab == null || item.dataTab == rootTab);
@@ -129,22 +117,6 @@ class AppNavigationObstruction extends InheritedWidget {
       oldWidget.bottom != bottom;
 }
 
-class FloatingGlassPreference extends InheritedWidget {
-  const FloatingGlassPreference(
-      {super.key, required this.transparency, required super.child});
-  final int transparency;
-  static double opacityOf(BuildContext context) =>
-      1 -
-      (context
-                  .dependOnInheritedWidgetOfExactType<FloatingGlassPreference>()
-                  ?.transparency ??
-              40) /
-          100;
-  @override
-  bool updateShouldNotify(FloatingGlassPreference oldWidget) =>
-      oldWidget.transparency != transparency;
-}
-
 class FloatingGlassSurface extends StatelessWidget {
   const FloatingGlassSurface({
     super.key,
@@ -164,7 +136,6 @@ class FloatingGlassSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final opacity = FloatingGlassPreference.opacityOf(context);
     return RepaintBoundary(
       child: GlassContainer(
         useOwnLayer: true,
@@ -173,7 +144,7 @@ class FloatingGlassSurface extends StatelessWidget {
             : GlassQuality.minimal,
         shape: LiquidRoundedSuperellipse(borderRadius: borderRadius),
         settings: LiquidGlassSettings(
-          glassColor: colors.surface.withValues(alpha: opacity * .45),
+          glassColor: colors.surface.withValues(alpha: .27),
           blur: 8,
           thickness: 20,
           saturation: 1.2,

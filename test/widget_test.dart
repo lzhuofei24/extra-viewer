@@ -32,17 +32,17 @@ void main() {
     expect(find.byIcon(Icons.folder_copy_rounded), findsWidgets);
     expect(find.byIcon(Icons.star_outline_rounded), findsNothing);
     expect(find.byIcon(Icons.search_outlined), findsNothing);
-    expect(find.byIcon(Icons.tune_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.receipt_long_outlined), findsOneWidget);
     expect(find.byTooltip('收起功能栏'), findsNothing);
     expect(tester.takeException(), isNull);
 
-    await tester.tap(find.text('设置'));
+    await tester.tap(find.text('日志'));
     await tester.pumpAndSettle();
-    expect(find.text('浏览布局'), findsOneWidget);
+    expect(find.text('复制诊断'), findsOneWidget);
 
     await tester.binding.setSurfaceSize(const Size(1000, 600));
     await tester.pumpAndSettle();
-    expect(find.text('浏览布局'), findsOneWidget);
+    expect(find.text('复制诊断'), findsOneWidget);
     expect(find.byTooltip('收起功能栏'), findsNothing);
     expect(find.byType(FloatingGlassSurface), findsOneWidget);
     expect(tester.takeException(), isNull);

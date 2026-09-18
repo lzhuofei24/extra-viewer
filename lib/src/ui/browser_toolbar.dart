@@ -1,8 +1,13 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../core/domain/models.dart';
 import 'browser_state.dart';
 import 'app_sidebar.dart';
+import 'design_tokens.dart';
+import 'gallery_layout_settings.dart';
 
 class BrowserToolbarAction {
   const BrowserToolbarAction({
@@ -25,6 +30,10 @@ class BrowserToolbar extends StatelessWidget {
     required this.onDisplayModeChanged,
     required this.onGridLayoutChanged,
     required this.onListStyleChanged,
+    required this.themeChoice,
+    required this.onThemeChanged,
+    required this.layoutPreset,
+    required this.onLayoutPresetChanged,
     this.onSearch,
     this.immersive = false,
     this.onToggleImmersive,
@@ -38,6 +47,10 @@ class BrowserToolbar extends StatelessWidget {
   final ValueChanged<BrowserDisplayMode> onDisplayModeChanged;
   final ValueChanged<BrowserGridLayout> onGridLayoutChanged;
   final ValueChanged<BrowserListStyle> onListStyleChanged;
+  final ViewerThemeChoice themeChoice;
+  final ValueChanged<ViewerThemeChoice> onThemeChanged;
+  final GalleryLayoutPreset layoutPreset;
+  final ValueChanged<GalleryLayoutPreset> onLayoutPresetChanged;
   final VoidCallback? onSearch;
   final bool immersive;
   final VoidCallback? onToggleImmersive;
@@ -79,6 +92,10 @@ class BrowserToolbar extends StatelessWidget {
                 onDisplayModeChanged: onDisplayModeChanged,
                 onGridLayoutChanged: onGridLayoutChanged,
                 onListStyleChanged: onListStyleChanged,
+                themeChoice: themeChoice,
+                onThemeChanged: onThemeChanged,
+                layoutPreset: layoutPreset,
+                onLayoutPresetChanged: onLayoutPresetChanged,
               ),
             ],
           );
@@ -128,6 +145,10 @@ class _BrowserOptionsMenu extends StatelessWidget {
     required this.onDisplayModeChanged,
     required this.onGridLayoutChanged,
     required this.onListStyleChanged,
+    required this.themeChoice,
+    required this.onThemeChanged,
+    required this.layoutPreset,
+    required this.onLayoutPresetChanged,
   });
 
   final BrowserState browserState;
@@ -135,6 +156,10 @@ class _BrowserOptionsMenu extends StatelessWidget {
   final ValueChanged<BrowserDisplayMode> onDisplayModeChanged;
   final ValueChanged<BrowserGridLayout> onGridLayoutChanged;
   final ValueChanged<BrowserListStyle> onListStyleChanged;
+  final ViewerThemeChoice themeChoice;
+  final ValueChanged<ViewerThemeChoice> onThemeChanged;
+  final GalleryLayoutPreset layoutPreset;
+  final ValueChanged<GalleryLayoutPreset> onLayoutPresetChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -163,72 +188,83 @@ class _BrowserOptionsMenu extends StatelessWidget {
                   const SizedBox(height: 10),
                   Text('排序', style: theme.textTheme.labelMedium),
                   const SizedBox(height: 6),
-                  SegmentedButton<EntitySortMode>(
-                    segments: const [
-                      ButtonSegment(
-                          value: EntitySortMode.modifiedDesc,
-                          label: Text('最近')),
-                      ButtonSegment(
-                          value: EntitySortMode.nameAsc, label: Text('名称')),
-                      ButtonSegment(
-                          value: EntitySortMode.sizeDesc, label: Text('大小')),
+                  _GlassOptionSelector<EntitySortMode>(
+                    values: const [
+                      EntitySortMode.modifiedDesc,
+                      EntitySortMode.nameAsc,
+                      EntitySortMode.sizeDesc,
                     ],
-                    selected: {browserState.sortMode},
-                    onSelectionChanged: (value) => onSortChanged(value.first),
+                    labels: const ['最近', '名称', '大小'],
+                    selected: browserState.sortMode,
+                    onSelected: onSortChanged,
                   ),
                   const SizedBox(height: 12),
                   Text('显示', style: theme.textTheme.labelMedium),
                   const SizedBox(height: 6),
-                  SegmentedButton<BrowserDisplayMode>(
-                    segments: const [
-                      ButtonSegment(
-                        value: BrowserDisplayMode.grid,
-                        icon: Icon(Icons.grid_view_rounded),
-                        label: Text('卡片'),
-                      ),
-                      ButtonSegment(
-                        value: BrowserDisplayMode.list,
-                        icon: Icon(Icons.view_agenda_rounded),
-                        label: Text('列表'),
-                      ),
+                  _GlassOptionSelector<BrowserDisplayMode>(
+                    values: const [
+                      BrowserDisplayMode.grid,
+                      BrowserDisplayMode.list,
                     ],
-                    selected: {browserState.displayMode},
-                    onSelectionChanged: (value) =>
-                        onDisplayModeChanged(value.first),
+                    labels: const ['卡片', '列表'],
+                    icons: const [
+                      Icons.grid_view_rounded,
+                      Icons.view_agenda_rounded,
+                    ],
+                    selected: browserState.displayMode,
+                    onSelected: onDisplayModeChanged,
                   ),
                   const SizedBox(height: 12),
                   Text('样式', style: theme.textTheme.labelMedium),
                   const SizedBox(height: 6),
                   if (browserState.displayMode == BrowserDisplayMode.grid)
-                    SegmentedButton<BrowserGridLayout>(
-                      segments: const [
-                        ButtonSegment(
-                            value: BrowserGridLayout.equalHeight,
-                            label: Text('等高')),
-                        ButtonSegment(
-                            value: BrowserGridLayout.equalWidth,
-                            label: Text('等宽')),
-                        ButtonSegment(
-                            value: BrowserGridLayout.square, label: Text('方形')),
+                    _GlassOptionSelector<BrowserGridLayout>(
+                      values: const [
+                        BrowserGridLayout.equalHeight,
+                        BrowserGridLayout.equalWidth,
+                        BrowserGridLayout.square,
                       ],
-                      selected: {browserState.gridLayout},
-                      onSelectionChanged: (value) =>
-                          onGridLayoutChanged(value.first),
+                      labels: const ['等高', '等宽', '方形'],
+                      selected: browserState.gridLayout,
+                      onSelected: onGridLayoutChanged,
                     )
                   else
-                    SegmentedButton<BrowserListStyle>(
-                      segments: const [
-                        ButtonSegment(
-                            value: BrowserListStyle.text, label: Text('文本')),
-                        ButtonSegment(
-                            value: BrowserListStyle.compact, label: Text('紧凑')),
-                        ButtonSegment(
-                            value: BrowserListStyle.normal, label: Text('正常')),
+                    _GlassOptionSelector<BrowserListStyle>(
+                      values: const [
+                        BrowserListStyle.text,
+                        BrowserListStyle.compact,
+                        BrowserListStyle.normal,
                       ],
-                      selected: {browserState.listStyle},
-                      onSelectionChanged: (value) =>
-                          onListStyleChanged(value.first),
+                      labels: const ['文本', '紧凑', '正常'],
+                      selected: browserState.listStyle,
+                      onSelected: onListStyleChanged,
                     ),
+                  const SizedBox(height: 12),
+                  Text('主题', style: theme.textTheme.labelMedium),
+                  const SizedBox(height: 6),
+                  _GlassOptionSelector<ViewerThemeChoice>(
+                    values: const [
+                      ViewerThemeChoice.system,
+                      ViewerThemeChoice.galleryDark,
+                      ViewerThemeChoice.galleryLight,
+                    ],
+                    labels: const ['系统', '暗色', '亮色'],
+                    selected: themeChoice,
+                    onSelected: onThemeChanged,
+                  ),
+                  const SizedBox(height: 12),
+                  Text('布局', style: theme.textTheme.labelMedium),
+                  const SizedBox(height: 6),
+                  _GlassOptionSelector<GalleryLayoutPreset>(
+                    values: const [
+                      GalleryLayoutPreset.compact,
+                      GalleryLayoutPreset.standard,
+                      GalleryLayoutPreset.spacious,
+                    ],
+                    labels: const ['紧凑', '默认', '宽阔'],
+                    selected: layoutPreset,
+                    onSelected: onLayoutPresetChanged,
+                  ),
                 ],
               ),
             ),
@@ -240,6 +276,54 @@ class _BrowserOptionsMenu extends StatelessWidget {
         onPressed: () =>
             controller.isOpen ? controller.close() : controller.open(),
         icon: const Icon(Icons.tune_rounded),
+      ),
+    );
+  }
+}
+
+class _GlassOptionSelector<T> extends StatelessWidget {
+  const _GlassOptionSelector({
+    required this.values,
+    required this.labels,
+    required this.selected,
+    required this.onSelected,
+    this.icons,
+  })  : assert(values.length == labels.length),
+        assert(icons == null || icons.length == values.length);
+
+  final List<T> values;
+  final List<String> labels;
+  final List<IconData>? icons;
+  final T selected;
+  final ValueChanged<T> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedIndex = values.indexOf(selected);
+    return SizedBox(
+      width: double.infinity,
+      child: GlassSegmentedControl(
+        height: 40,
+        useOwnLayer: true,
+        quality: ImageFilter.isShaderFilterSupported
+            ? GlassQuality.premium
+            : GlassQuality.minimal,
+        settings: const LiquidGlassSettings(
+          blur: 8,
+          thickness: 20,
+          saturation: 1.2,
+          lightIntensity: .5,
+          chromaticAberration: .01,
+        ),
+        segments: [
+          for (var index = 0; index < values.length; index++)
+            GlassSegment(
+              label: labels[index],
+              icon: icons == null ? null : Icon(icons![index], size: 16),
+            ),
+        ],
+        selectedIndex: selectedIndex < 0 ? 0 : selectedIndex,
+        onSegmentSelected: (index) => onSelected(values[index]),
       ),
     );
   }

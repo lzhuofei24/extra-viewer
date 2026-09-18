@@ -37,6 +37,10 @@ class CollectionBrowserPage extends StatelessWidget {
     required this.onDisplayModeChanged,
     required this.onGridLayoutChanged,
     required this.onListStyleChanged,
+    required this.themeChoice,
+    required this.onThemeChanged,
+    required this.layoutPreset,
+    required this.onLayoutPresetChanged,
     required this.immersiveBrowsing,
     required this.onToggleImmersiveBrowsing,
     required this.selectionMode,
@@ -89,6 +93,10 @@ class CollectionBrowserPage extends StatelessWidget {
   final ValueChanged<BrowserDisplayMode> onDisplayModeChanged;
   final ValueChanged<BrowserGridLayout> onGridLayoutChanged;
   final ValueChanged<BrowserListStyle> onListStyleChanged;
+  final ViewerThemeChoice themeChoice;
+  final ValueChanged<ViewerThemeChoice> onThemeChanged;
+  final GalleryLayoutPreset layoutPreset;
+  final ValueChanged<GalleryLayoutPreset> onLayoutPresetChanged;
   final bool immersiveBrowsing;
   final VoidCallback onToggleImmersiveBrowsing;
   final bool selectionMode;
@@ -369,6 +377,10 @@ class CollectionBrowserPage extends StatelessWidget {
                   onDisplayModeChanged: onDisplayModeChanged,
                   onGridLayoutChanged: onGridLayoutChanged,
                   onListStyleChanged: onListStyleChanged,
+                  themeChoice: themeChoice,
+                  onThemeChanged: onThemeChanged,
+                  layoutPreset: layoutPreset,
+                  onLayoutPresetChanged: onLayoutPresetChanged,
                   immersiveBrowsing: immersiveBrowsing,
                   onToggleImmersiveBrowsing: onToggleImmersiveBrowsing,
                   selectionMode: selectionMode,
@@ -718,6 +730,10 @@ class _PathBar extends StatelessWidget {
     required this.onDisplayModeChanged,
     required this.onGridLayoutChanged,
     required this.onListStyleChanged,
+    required this.themeChoice,
+    required this.onThemeChanged,
+    required this.layoutPreset,
+    required this.onLayoutPresetChanged,
     required this.immersiveBrowsing,
     required this.onToggleImmersiveBrowsing,
     required this.selectionMode,
@@ -741,6 +757,10 @@ class _PathBar extends StatelessWidget {
   final ValueChanged<BrowserDisplayMode> onDisplayModeChanged;
   final ValueChanged<BrowserGridLayout> onGridLayoutChanged;
   final ValueChanged<BrowserListStyle> onListStyleChanged;
+  final ViewerThemeChoice themeChoice;
+  final ValueChanged<ViewerThemeChoice> onThemeChanged;
+  final GalleryLayoutPreset layoutPreset;
+  final ValueChanged<GalleryLayoutPreset> onLayoutPresetChanged;
   final bool immersiveBrowsing;
   final VoidCallback onToggleImmersiveBrowsing;
   final bool selectionMode;
@@ -767,6 +787,10 @@ class _PathBar extends StatelessWidget {
       onDisplayModeChanged: onDisplayModeChanged,
       onGridLayoutChanged: onGridLayoutChanged,
       onListStyleChanged: onListStyleChanged,
+      themeChoice: themeChoice,
+      onThemeChanged: onThemeChanged,
+      layoutPreset: layoutPreset,
+      onLayoutPresetChanged: onLayoutPresetChanged,
       onSearch: onSearchNodes,
       immersive: immersiveBrowsing,
       onToggleImmersive: onToggleImmersiveBrowsing,

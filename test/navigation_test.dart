@@ -24,7 +24,7 @@ void main() {
       ),
     ));
 
-    for (final label in ['目录', '分类', '最近', '管理', '设置']) {
+    for (final label in ['目录', '分类', '最近', '管理', '日志']) {
       expect(find.text(label), findsOneWidget);
     }
 
@@ -64,19 +64,18 @@ void main() {
       ),
     ));
 
-    for (final label in ['目录', '分类', '最近', '管理', '设置']) {
+    for (final label in ['目录', '分类', '最近', '管理', '日志']) {
       expect(find.text(label), findsOneWidget);
     }
     expect(find.byType(FloatingGlassSurface), findsOneWidget);
     expect(find.byTooltip('收起功能栏'), findsNothing);
 
-    await tester.tap(find.text('设置'));
-    expect(selectedSection, AppSection.settings);
+    await tester.tap(find.text('日志'));
+    expect(selectedSection, AppSection.logs);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('diagnostics is selected as settings in bottom navigation',
-      (tester) async {
+  testWidgets('diagnostics is selected in bottom navigation', (tester) async {
     final handle = tester.ensureSemantics();
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
@@ -90,7 +89,7 @@ void main() {
     ));
 
     expect(
-      find.bySemanticsLabel('设置'),
+      find.bySemanticsLabel('日志'),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);

@@ -50,7 +50,6 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
   Timer? _progressSaveTimer;
   Object? _loadError;
   bool _controlsVisible = true;
-  bool _toolbarCollapsed = false;
 
   @override
   void initState() {
@@ -252,64 +251,21 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
                 ),
               ),
               Positioned(
-                left: MediaQuery.sizeOf(context).width / 6,
-                width: MediaQuery.sizeOf(context).width * 2 / 3,
-                bottom: 20,
-                height: MediaQuery.sizeOf(context).height * .10,
+                left: 12,
+                right: 12,
+                bottom: 12,
                 child: _VideoOverlayVisibility(
                   visible: _controlsVisible,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .surface
-                          .withValues(alpha: .2),
-                    ),
-                    child: _VideoProgressTouchZone(player: _player),
-                  ),
-                ),
-              ),
-              Positioned(
-                right: 0,
-                bottom: MediaQuery.sizeOf(context).width >= 900 ? 84 : 160,
-                child: _VideoOverlayVisibility(
-                  visible: _controlsVisible,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .surface
-                          .withValues(alpha: .86),
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(10),
-                        bottomLeft: Radius.circular(10),
-                      ),
-                      boxShadow: const [
-                        BoxShadow(blurRadius: 10, color: Color(0x33000000)),
-                      ],
-                    ),
-                    child: SizedBox(
-                      height: 48,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _compactIconButton(
-                            tooltip: _toolbarCollapsed ? '展开工具栏' : '收起工具栏',
-                            onPressed: () => setState(
-                              () => _toolbarCollapsed = !_toolbarCollapsed,
-                            ),
-                            iconWidget: const CollapseGripIcon(),
-                          ),
-                          if (!_toolbarCollapsed)
-                            _PlaybackActionRow(
-                              player: _player,
-                              onBack: widget.onReturnToSource,
-                              onPrevious: widget.onPrevious,
-                              onNext: widget.onNext,
-                              onDirectoryRoot: widget.onDirectoryRoot,
-                              onShowDetails: widget.onShowDetails,
-                            ),
-                        ],
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 900),
+                      child: _VideoControlBar(
+                        player: _player,
+                        onBack: widget.onReturnToSource,
+                        onPrevious: widget.onPrevious,
+                        onNext: widget.onNext,
+                        onDirectoryRoot: widget.onDirectoryRoot,
+                        onShowDetails: widget.onShowDetails,
                       ),
                     ),
                   ),
@@ -336,6 +292,55 @@ class _VideoPlayerPreviewState extends State<_VideoPlayerPreview> {
         setState(() => _controlsVisible = false);
       }
     });
+  }
+}
+
+class _VideoControlBar extends StatelessWidget {
+  const _VideoControlBar({
+    required this.player,
+    this.onBack,
+    this.onPrevious,
+    this.onNext,
+    this.onDirectoryRoot,
+    this.onShowDetails,
+  });
+
+  final Player player;
+  final VoidCallback? onBack;
+  final VoidCallback? onPrevious;
+  final VoidCallback? onNext;
+  final VoidCallback? onDirectoryRoot;
+  final VoidCallback? onShowDetails;
+
+  @override
+  Widget build(BuildContext context) {
+    return FloatingGlassSurface(
+      borderRadius: 24,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            height: 38,
+            child: _VideoProgressTouchZone(player: player),
+          ),
+          SizedBox(
+            height: 48,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: _PlaybackActionRow(
+                player: player,
+                onBack: onBack,
+                onPrevious: onPrevious,
+                onNext: onNext,
+                onDirectoryRoot: onDirectoryRoot,
+                onShowDetails: onShowDetails,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

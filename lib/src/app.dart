@@ -43,7 +43,6 @@ import 'ui/music_page.dart';
 import 'ui/media_shelf_page.dart';
 import 'ui/now_playing_page.dart';
 import 'ui/node_preview_picker.dart';
-import 'ui/settings_page.dart';
 import 'ui/diagnostics_page.dart';
 import 'ui/dialogs/app_dialogs.dart';
 import 'ui/widgets/app_widgets.dart';
@@ -80,8 +79,6 @@ class _BestViewerAppState extends State<BestViewerApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Extra Viewer',
-      builder: (context, child) => FloatingGlassPreference(
-          transparency: _preferences.value.glassTransparency, child: child!),
       debugShowCheckedModeBanner: false,
       theme: AppTokens.themeFor(ViewerThemeChoice.galleryLight),
       darkTheme: AppTokens.themeFor(ViewerThemeChoice.galleryDark),
@@ -2636,6 +2633,10 @@ class _AppShellState extends State<AppShell> {
             widget.preferences.setBrowser(displayMode: value);
           },
           onListStyleChanged: _setListStyle,
+          themeChoice: widget.preferences.value.themeChoice,
+          onThemeChanged: widget.preferences.setTheme,
+          layoutPreset: widget.preferences.value.layoutPreset,
+          onLayoutPresetChanged: widget.preferences.setLayoutPreset,
           onGridLayoutChanged: (value) {
             setState(() => _browserState = _browserState.copyWith(
                   gridLayout: value,
@@ -2691,6 +2692,10 @@ class _AppShellState extends State<AppShell> {
           onDisplayModeChanged: _setShelfDisplayMode,
           onGridLayoutChanged: _setShelfGridLayout,
           onListStyleChanged: _setListStyle,
+          themeChoice: widget.preferences.value.themeChoice,
+          onThemeChanged: widget.preferences.setTheme,
+          layoutPreset: widget.preferences.value.layoutPreset,
+          onLayoutPresetChanged: widget.preferences.setLayoutPreset,
           currentSection: _section,
           onSectionChanged: _navigateToSection,
         ),
@@ -2705,6 +2710,10 @@ class _AppShellState extends State<AppShell> {
           onDisplayModeChanged: _setShelfDisplayMode,
           onGridLayoutChanged: _setShelfGridLayout,
           onListStyleChanged: _setListStyle,
+          themeChoice: widget.preferences.value.themeChoice,
+          onThemeChanged: widget.preferences.setTheme,
+          layoutPreset: widget.preferences.value.layoutPreset,
+          onLayoutPresetChanged: widget.preferences.setLayoutPreset,
           currentSection: _section,
           onSectionChanged: _navigateToSection,
         ),
@@ -2719,6 +2728,10 @@ class _AppShellState extends State<AppShell> {
           onDisplayModeChanged: _setShelfDisplayMode,
           onGridLayoutChanged: _setShelfGridLayout,
           onListStyleChanged: _setListStyle,
+          themeChoice: widget.preferences.value.themeChoice,
+          onThemeChanged: widget.preferences.setTheme,
+          layoutPreset: widget.preferences.value.layoutPreset,
+          onLayoutPresetChanged: widget.preferences.setLayoutPreset,
           currentSection: _section,
           onSectionChanged: _navigateToSection,
         ),
@@ -2767,15 +2780,6 @@ class _AppShellState extends State<AppShell> {
                 _showCreateCustomNode(parentOverride: root),
           ),
         ),
-      AppSection.settings => SettingsPage(
-          glassTransparency: widget.preferences.value.glassTransparency,
-          onGlassTransparencyChanged: widget.preferences.setGlassTransparency,
-          onOpenDiagnostics: () => _navigateToSection(AppSection.logs),
-          themeChoice: widget.preferences.value.themeChoice,
-          layoutPreset: widget.preferences.value.layoutPreset,
-          onThemeChanged: widget.preferences.setTheme,
-          onLayoutPresetChanged: widget.preferences.setLayoutPreset,
-        ),
       AppSection.logs => DiagnosticsPage(
           database: _database!,
           log: AppDiagnosticLog.instance,
@@ -2784,28 +2788,8 @@ class _AppShellState extends State<AppShell> {
           progress: _scanProgress,
         ),
     };
-    final tabs = <Widget>[];
-    if (_section == AppSection.logs) {
-      tabs.add(TextButton.icon(
-          onPressed: () => _navigateToSection(AppSection.settings),
-          icon: const Icon(Icons.arrow_back),
-          label: const Text('返回设置')));
-    }
-    final presentedPage = tabs.isEmpty
+    final body = _readError == null || _section == AppSection.logs
         ? pageBody
-        : Column(children: [
-            Padding(
-                padding: const EdgeInsets.all(12),
-                child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Column(
-                        mainAxisSize: MainAxisSize.min, children: tabs))),
-            Expanded(child: pageBody),
-          ]);
-    final body = _readError == null ||
-            _section == AppSection.settings ||
-            _section == AppSection.logs
-        ? presentedPage
         : Column(
             children: [
               ReadUnavailableBanner(
@@ -2813,7 +2797,7 @@ class _AppShellState extends State<AppShell> {
                 retrying: _readRetrying,
                 onRetry: _retryReadWorker,
               ),
-              Expanded(child: presentedPage),
+              Expanded(child: pageBody),
             ],
           );
 

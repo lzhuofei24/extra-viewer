@@ -1,5 +1,7 @@
 import 'package:best_viewer/src/ui/browser_state.dart';
 import 'package:best_viewer/src/ui/browser_toolbar.dart';
+import 'package:best_viewer/src/ui/design_tokens.dart';
+import 'package:best_viewer/src/ui/gallery_layout_settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -15,6 +17,10 @@ void main() {
           onDisplayModeChanged: (_) {},
           onGridLayoutChanged: (_) {},
           onListStyleChanged: (_) {},
+          themeChoice: ViewerThemeChoice.system,
+          onThemeChanged: (_) {},
+          layoutPreset: GalleryLayoutPreset.standard,
+          onLayoutPresetChanged: (_) {},
           onSearch: () {},
           onToggleImmersive: () {},
           onToggleSelection: () {},
@@ -25,6 +31,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('浏览选项'), findsOneWidget);
     expect(find.text('样式'), findsOneWidget);
+    expect(find.text('主题'), findsOneWidget);
+    expect(find.text('布局'), findsOneWidget);
     expect(find.text('新建分类'), findsNothing);
     await tester.tap(find.byTooltip('浏览选项'));
     await tester.pumpAndSettle();
@@ -44,6 +52,10 @@ void main() {
           onDisplayModeChanged: (_) {},
           onGridLayoutChanged: (_) {},
           onListStyleChanged: (_) {},
+          themeChoice: ViewerThemeChoice.system,
+          onThemeChanged: (_) {},
+          layoutPreset: GalleryLayoutPreset.standard,
+          onLayoutPresetChanged: (_) {},
         ),
       ),
     ));
@@ -51,7 +63,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('显示'), findsOneWidget);
     expect(find.text('文本'), findsOneWidget);
-    expect(find.text('紧凑'), findsOneWidget);
+    expect(find.text('紧凑'), findsNWidgets(2));
     expect(find.text('正常'), findsOneWidget);
     expect(find.text('卡片对齐方式'), findsNothing);
   });
