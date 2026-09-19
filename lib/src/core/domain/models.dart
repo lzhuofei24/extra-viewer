@@ -284,12 +284,14 @@ class RulePageCursor {
     this.secondary,
     required this.entityId,
     required this.consumed,
+    this.sessionId,
   });
 
   final Object primary;
   final Object? secondary;
   final String entityId;
   final int consumed;
+  final String? sessionId;
 }
 
 class RuleResultPage {
@@ -994,8 +996,12 @@ class RecursiveEntityPageCursor {
   const RecursiveEntityPageCursor({
     required this.hierarchyPath,
     required this.entityCursor,
+    this.sessionId,
+    this.ordinal = 0,
   });
 
   final String hierarchyPath;
   final EntityPageCursor entityCursor;
+  final String? sessionId;
+  final int ordinal;
 }

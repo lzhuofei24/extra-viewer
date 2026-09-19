@@ -14,6 +14,7 @@ void main() {
         'CREATE TABLE document_preview_versions(entity_id TEXT PRIMARY KEY, source_revision INTEGER NOT NULL)');
     raw.execute(
         "INSERT INTO document_preview_versions VALUES ('preserved', 7)");
+    raw.userVersion = 10;
     database.migrate();
     final row = raw.select('SELECT * FROM document_preview_versions').single;
     expect(row['entity_id'], 'preserved');

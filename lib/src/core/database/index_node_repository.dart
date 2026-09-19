@@ -182,7 +182,7 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
         '''
         INSERT OR IGNORE INTO index_node_entities
         (index_node_id, entity_id, sort_name, created_at)
-        SELECT ?, id, lower(name), ? FROM entities WHERE id = ?
+        SELECT ?, id, lower(name), ? FROM entity_details WHERE id = ?
         ''',
         [indexNodeId, nowMillis(), entityId],
       );
@@ -204,7 +204,7 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
     final statement = database.db.prepare('''
       INSERT OR IGNORE INTO index_node_entities
       (index_node_id, entity_id, sort_name, created_at)
-      SELECT ?, id, lower(name), ? FROM entities WHERE id = ?
+      SELECT ?, id, lower(name), ? FROM entity_details WHERE id = ?
     ''');
     final touchedNodes = <String>{};
     final now = nowMillis();
@@ -257,7 +257,7 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
       final statement = database.db.prepare('''
           INSERT OR IGNORE INTO index_node_entities
           (index_node_id, entity_id, sort_name, created_at)
-          SELECT ?, id, lower(name), ? FROM entities WHERE id = ?
+          SELECT ?, id, lower(name), ? FROM entity_details WHERE id = ?
       ''');
       final now = nowMillis();
       try {
@@ -364,7 +364,7 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
       ''');
       final entityLinkInsert = database.db.prepare('''
         INSERT OR IGNORE INTO index_node_entities(index_node_id, entity_id, sort_name, created_at)
-        SELECT ?, id, lower(name), ? FROM entities WHERE id = ?
+        SELECT ?, id, lower(name), ? FROM entity_details WHERE id = ?
       ''');
 
       String uniqueName(String parentId, String proposedName) {
@@ -597,7 +597,7 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
         SELECT closure.ancestor_id AS id, COUNT(DISTINCT entity.id) AS entity_count
         FROM closure
         LEFT JOIN index_node_entities link ON link.index_node_id = closure.id
-        LEFT JOIN entities entity
+        LEFT JOIN entity_details entity
           ON entity.id = link.entity_id AND entity.archived = 0
         GROUP BY closure.ancestor_id
       )
@@ -654,7 +654,7 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
               SELECT n.id FROM index_nodes n JOIN subtree s ON n.parent_id = s.id
             )
             SELECT DISTINCT e.* FROM index_node_entities l
-            JOIN entities e ON e.id = l.entity_id
+            JOIN entity_details e ON e.id = l.entity_id
             WHERE l.index_node_id IN (SELECT id FROM subtree)
             AND e.archived = 0
             ORDER BY $orderBy
@@ -694,7 +694,7 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
     if (limit != null) parameters.add(limit + 1);
     final rows = database.db.select(
       '''
-      SELECT e.* FROM entities e
+      SELECT e.* FROM entity_details e
       WHERE e.archived = 0
         AND e.media_type IN ($typePlaceholders)
         ${cursor == null ? '' : 'AND (${cursor.sql})'}
@@ -723,7 +723,7 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
     final safeLimit = limit.clamp(1, 500).toInt();
     final rows = database.db.select(
       '''
-      SELECT e.* FROM entities e
+      SELECT e.* FROM entity_details e
       WHERE e.archived = 0
         AND (? = '' OR instr(lower(e.name), ?) > 0)
       ORDER BY ${_entityOrderBy(EntitySortMode.nameAsc)}
@@ -760,7 +760,7 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
     final rows = database.db.select(
       '''
       SELECT e.* FROM index_node_entities l
-      JOIN entities e ON e.id = l.entity_id
+      JOIN entity_details e ON e.id = l.entity_id
       WHERE l.index_node_id = ?
       AND e.archived = 0
       ${cursor == null ? '' : 'AND (${cursor.sql})'}
@@ -827,7 +827,7 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
       )
       SELECT e.*, entity_nodes.hierarchy_path AS recursive_hierarchy_path
       FROM entity_nodes
-      JOIN entities e ON e.id = entity_nodes.entity_id
+      JOIN entity_details e ON e.id = entity_nodes.entity_id
       WHERE e.archived = 0
       ${after == null ? '' : 'AND (entity_nodes.hierarchy_path > ? OR (entity_nodes.hierarchy_path = ? AND (${entityCursor!.sql})) )'}
       ORDER BY entity_nodes.hierarchy_path ASC, $orderBy

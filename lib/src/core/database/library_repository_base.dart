@@ -39,7 +39,7 @@ class LibraryRepositoryBase {
       }
       final referenced = kind == 'entity'
           ? database.db.select(
-              'SELECT 1 FROM entities WHERE thumbnail_key = ? LIMIT 1',
+              'SELECT 1 FROM entity_details WHERE thumbnail_key = ? LIMIT 1',
               [key]).isNotEmpty
           : database.db.select(
               'SELECT 1 FROM node_preview_assets WHERE asset_key = ? LIMIT 1',
@@ -66,6 +66,8 @@ class LibraryRepositoryBase {
         continue;
       }
       writeTransaction(() {
+        database.db
+            .execute('DELETE FROM preview_assets WHERE asset_key=?', [key]);
         if (kind == 'entity') {
           database.db.execute(
               'DELETE FROM thumbnail_assets WHERE asset_key = ?', [key]);
@@ -187,7 +189,7 @@ class LibraryRepositoryBase {
       final batch = ids.sublist(offset, end);
       final placeholders = List<String>.filled(batch.length, '?').join(',');
       final rows = database.db.select(
-        'SELECT id FROM entities WHERE id IN ($placeholders)',
+        'SELECT id FROM entity_details WHERE id IN ($placeholders)',
         batch,
       );
       result.addAll(rows.map((row) => row['id'] as String));
@@ -322,7 +324,7 @@ class LibraryRepositoryBase {
 
   Entity? getEntity(String id) {
     final rows =
-        database.db.select('SELECT * FROM entities WHERE id = ?', [id]);
+        database.db.select('SELECT * FROM entity_details WHERE id = ?', [id]);
     if (rows.isEmpty) return null;
     return _entityFromRow(rows.first, thumbnailStore);
   }
@@ -369,14 +371,14 @@ WITH RECURSIVE closure(ancestor_id, id) AS (
 direct_counts AS (
   SELECT link.index_node_id AS id, COUNT(DISTINCT entity.id) AS count
   FROM index_node_entities link
-  JOIN entities entity ON entity.id = link.entity_id AND entity.archived = 0
+  JOIN entity_details entity ON entity.id = link.entity_id AND entity.archived = 0
   GROUP BY link.index_node_id
 ),
 descendant_counts AS (
   SELECT closure.ancestor_id AS id, COUNT(DISTINCT entity.id) AS count
   FROM closure
   LEFT JOIN index_node_entities link ON link.index_node_id = closure.id
-  LEFT JOIN entities entity
+  LEFT JOIN entity_details entity
     ON entity.id = link.entity_id AND entity.archived = 0
   GROUP BY closure.ancestor_id
 ),
@@ -422,14 +424,14 @@ WITH RECURSIVE subtree(id) AS (
 ), direct_counts AS (
   SELECT link.index_node_id AS id, COUNT(DISTINCT entity.id) AS count
   FROM index_node_entities link
-  JOIN entities entity ON entity.id = link.entity_id AND entity.archived = 0
+  JOIN entity_details entity ON entity.id = link.entity_id AND entity.archived = 0
   WHERE link.index_node_id IN (SELECT id FROM subtree)
   GROUP BY link.index_node_id
 ), descendant_counts AS (
   SELECT closure.ancestor_id AS id, COUNT(DISTINCT entity.id) AS count
   FROM closure
   LEFT JOIN index_node_entities link ON link.index_node_id = closure.id
-  LEFT JOIN entities entity
+  LEFT JOIN entity_details entity
     ON entity.id = link.entity_id AND entity.archived = 0
   GROUP BY closure.ancestor_id
 ), child_counts AS (
@@ -456,14 +458,14 @@ WITH RECURSIVE subtree(id) AS (
 ), direct_counts AS (
   SELECT link.index_node_id AS id, COUNT(DISTINCT entity.id) AS count
   FROM index_node_entities link
-  JOIN entities entity ON entity.id = link.entity_id AND entity.archived = 0
+  JOIN entity_details entity ON entity.id = link.entity_id AND entity.archived = 0
   WHERE link.index_node_id IN (SELECT id FROM subtree)
   GROUP BY link.index_node_id
 ), descendant_counts AS (
   SELECT closure.ancestor_id AS id, COUNT(DISTINCT entity.id) AS count
   FROM closure
   LEFT JOIN index_node_entities link ON link.index_node_id = closure.id
-  LEFT JOIN entities entity
+  LEFT JOIN entity_details entity
     ON entity.id = link.entity_id AND entity.archived = 0
   GROUP BY closure.ancestor_id
 ), child_counts AS (
@@ -516,9 +518,7 @@ LEFT JOIN child_counts ON child_counts.id = node.id
         WITH RECURSIVE dependencies(source_id, dependent_id) AS (
           SELECT id, parent_id FROM index_nodes WHERE parent_id IS NOT NULL
           UNION
-          SELECT json_extract(CASE WHEN item.type = 'object' THEN item.value ELSE '{}' END, '\$.nodeId'), override.node_id
-          FROM node_preview_overrides override,
-            json_each(CASE WHEN json_valid(override.items_json) THEN override.items_json ELSE '[]' END) item
+          SELECT target_node_id, node_id FROM node_preview_override_items WHERE target_node_id IS NOT NULL
         ), descendants(id) AS (
           SELECT id FROM index_nodes WHERE id = ?
           UNION SELECT node.id FROM index_nodes node JOIN descendants ON node.parent_id = descendants.id
@@ -556,7 +556,7 @@ LEFT JOIN child_counts ON child_counts.id = node.id
   void _deleteUnreferencedThumbnailFiles(Iterable<String> keys) {
     for (final key in keys.toSet()) {
       final referenced = database.db.select(
-        'SELECT thumbnail_format FROM entities WHERE thumbnail_key = ? LIMIT 1',
+        'SELECT thumbnail_format FROM entity_details WHERE thumbnail_key = ? LIMIT 1',
         [key],
       );
       if (referenced.isNotEmpty) continue;
@@ -586,7 +586,7 @@ LEFT JOIN child_counts ON child_counts.id = node.id
       )
       SELECT DISTINCT entity.thumbnail_key
       FROM index_node_entities link
-      JOIN entities entity ON entity.id = link.entity_id
+      JOIN entity_details entity ON entity.id = link.entity_id
       WHERE link.index_node_id IN (SELECT id FROM subtree)
         AND entity.thumbnail_key IS NOT NULL
     ''', nodeIds.toList(growable: false));

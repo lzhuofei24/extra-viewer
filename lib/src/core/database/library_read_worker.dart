@@ -8,6 +8,7 @@ import '../domain/models.dart';
 import '../thumbnails/thumbnail_store.dart';
 import '../../modules/library/library_queries.dart';
 import 'node_search_query.dart';
+import 'browse_sessions.dart';
 
 enum RecursiveReadScope { node, directoryHome, collectionHome }
 
@@ -28,6 +29,14 @@ class LibraryReadWorker implements LibraryQueries {
   final ReceivePort _exitPort;
   Future<void>? _closeFuture;
   Object? _terminalError;
+  final Set<Completer<Map<Object?, Object?>>> _pending = {};
+
+  void _fail(Object error) {
+    _terminalError ??= error;
+    for (final pending in _pending.toList()) {
+      if (!pending.isCompleted) pending.completeError(error);
+    }
+  }
 
   static Future<LibraryReadWorker> start({
     required String databasePath,
@@ -49,7 +58,7 @@ class LibraryReadWorker implements LibraryQueries {
         );
       } else {
         terminalError = StateError('Read worker isolate error: $message');
-        worker?._terminalError = terminalError;
+        worker?._fail(terminalError!);
       }
     });
     exitPort.listen((_) {
@@ -57,7 +66,7 @@ class LibraryReadWorker implements LibraryQueries {
         ready.completeError(StateError('Read worker exited during startup'));
       } else {
         terminalError ??= StateError('Read worker isolate exited');
-        worker?._terminalError = terminalError;
+        worker?._fail(terminalError!);
       }
     });
     final isolate = await Isolate.spawn(
@@ -155,6 +164,7 @@ class LibraryReadWorker implements LibraryQueries {
       'cursorSecondary': after?.secondary,
       'cursorEntityId': after?.entityId,
       'consumed': after?.consumed ?? 0,
+      'sessionId': after?.sessionId,
       'limit': limit,
     });
     final cursor = response['ruleCursor'] as Map<Object?, Object?>?;
@@ -171,6 +181,7 @@ class LibraryReadWorker implements LibraryQueries {
               secondary: cursor['secondary'],
               entityId: cursor['entityId']! as String,
               consumed: cursor['consumed']! as int,
+              sessionId: cursor['sessionId'] as String?,
             ),
     );
   }
@@ -210,6 +221,8 @@ class LibraryReadWorker implements LibraryQueries {
       'nodeId': nodeId,
       'sortMode': sortMode.name,
       'hierarchyPath': after?.hierarchyPath,
+      'sessionId': after?.sessionId,
+      'ordinal': after?.ordinal ?? 0,
       'cursorPrimary': after?.entityCursor.primary,
       'cursorSecondary': after?.entityCursor.secondary,
       'cursorEntityId': after?.entityCursor.entityId,
@@ -314,17 +327,27 @@ class LibraryReadWorker implements LibraryQueries {
     final terminalError = _terminalError;
     if (terminalError != null) throw terminalError;
     final response = ReceivePort();
+    final pending = Completer<Map<Object?, Object?>>();
+    _pending.add(pending);
+    final subscription = response.listen((message) {
+      if (!pending.isCompleted) {
+        pending.complete(message as Map<Object?, Object?>);
+      }
+    });
     _sendPort.send(<String, Object?>{
       ...request,
       'replyPort': response.sendPort,
     });
     late final Map<Object?, Object?> message;
     try {
-      message = (await response.first.timeout(const Duration(seconds: 30)))
-          as Map<Object?, Object?>;
+      message = await pending.future.timeout(const Duration(seconds: 30));
     } on TimeoutException {
+      _isolate.kill(priority: Isolate.immediate);
+      _fail(StateError('Read worker timed out; reopen the library'));
       throw StateError('Read worker request timed out');
     } finally {
+      _pending.remove(pending);
+      await subscription.cancel();
       response.close();
     }
     if (message['ok'] != true) {
@@ -340,6 +363,7 @@ class LibraryReadWorker implements LibraryQueries {
   }
 
   Future<void> _closeImpl() async {
+    _fail(StateError('Read worker closed'));
     final response = ReceivePort();
     _sendPort.send(<String, Object?>{
       'type': 'close',
@@ -393,6 +417,8 @@ class LibraryReadPage {
           ? null
           : RecursiveEntityPageCursor(
               hierarchyPath: hierarchyPath,
+              sessionId: message['sessionId'] as String?,
+              ordinal: message['ordinal'] as int? ?? 0,
               entityCursor: EntityPageCursor(
                 sortMode: EntitySortMode.values.byName(cursorSortMode),
                 primary: cursorPrimary,
@@ -410,6 +436,7 @@ void _readWorkerMain(Map<String, Object> config) {
   final readyPort = config['readyPort']! as SendPort;
   final database = sqlite3.open(databasePath, mode: OpenMode.readOnly);
   database.execute('PRAGMA cache_size = -8192');
+  final sessions = BrowseSessions(database);
   final requestPort = ReceivePort();
   readyPort.send(requestPort.sendPort);
   requestPort.listen((message) {
@@ -442,7 +469,7 @@ void _readWorkerMain(Map<String, Object> config) {
       if (request['type'] == 'rulePage') {
         replyPort.send({
           'ok': true,
-          ..._loadRulePage(database, storageDirectoryPath, request),
+          ..._loadRulePage(database, storageDirectoryPath, request, sessions),
         });
         return;
       }
@@ -459,7 +486,7 @@ void _readWorkerMain(Map<String, Object> config) {
               RuleSortMode.values.byName(rule['default_sort'] as String);
           final rows = database.select('''
             SELECT * FROM (
-              SELECT e.* FROM entities e WHERE ${query.whereSql}
+              SELECT e.* FROM entity_details e WHERE ${query.whereSql}
               ORDER BY ${_ruleOrderBy(sort)} LIMIT ?
             ) WHERE media_type IN ('image', 'video')
             ORDER BY source_modified_at_ms DESC, id ASC LIMIT 1
@@ -482,7 +509,7 @@ void _readWorkerMain(Map<String, Object> config) {
         'directPage' =>
           _loadDirectPage(database, storageDirectoryPath, request),
         'recursivePage' =>
-          _loadRecursivePage(database, storageDirectoryPath, request),
+          _loadRecursivePage(database, storageDirectoryPath, request, sessions),
         'indexRoots' => _loadIndexRoots(database, request),
         'nodePath' => _loadNodePath(database, request),
         'nodeSummaries' => _loadNodeSummaries(database, request),
@@ -499,6 +526,8 @@ void _readWorkerMain(Map<String, Object> config) {
         'entities': page.entities,
         'hasMore': page.hasMore,
         'recursiveHierarchyPath': page.recursiveHierarchyPath,
+        'sessionId': page.sessionId,
+        'ordinal': page.ordinal,
         'cursorPrimary': page.cursorPrimary,
         'cursorSecondary': page.cursorSecondary,
         'cursorEntityId': page.cursorEntityId,
@@ -530,12 +559,10 @@ List<Map<String, Object?>> _loadRules(Database database) {
   ''');
   return rows.map((row) {
     final query = _ruleQuery(row, DateTime.now().millisecondsSinceEpoch);
-    final count = database
-        .select(
-          'SELECT COUNT(*) AS count FROM entities e WHERE ${query.whereSql}',
-          query.parameters,
-        )
-        .single['count'] as int;
+    final count = database.select(
+      'SELECT COUNT(*) AS count FROM (SELECT 1 FROM entities e WHERE ${query.whereSql} LIMIT ?)',
+      [...query.parameters, row['max_results']],
+    ).single['count'] as int;
     return _ruleToMessage(row, count.clamp(0, row['max_results'] as int));
   }).toList(growable: false);
 }
@@ -544,6 +571,7 @@ Map<String, Object?> _loadRulePage(
   Database database,
   String storageDirectoryPath,
   Map<Object?, Object?> request,
+  BrowseSessions sessions,
 ) {
   final rows = database.select('''
     SELECT node.*, rule.entity_types_json, rule.extensions_json,
@@ -567,31 +595,26 @@ Map<String, Object?> _loadRulePage(
       : RuleSortMode.values.byName(rule['default_sort'] as String);
   final consumed = request['consumed'] as int? ?? 0;
   final maxResults = rule['max_results'] as int;
-  final requestedLimit = (request['limit'] as int? ?? 60).clamp(1, 60);
-  final limit =
-      requestedLimit.clamp(0, (maxResults - consumed).clamp(0, maxResults));
-  if (limit == 0) {
+  final limit = (request['limit'] as int? ?? 60).clamp(1, 60);
+  if (rule['scope_state'] == 'missing') {
     return const {
       'entities': <Object?>[],
       'hasMore': false,
       'ruleCursor': null
     };
   }
-  final query = _ruleQuery(rule, DateTime.now().millisecondsSinceEpoch);
-  final cursor = _ruleCursorCondition(request, sort);
-  final parameters = <Object?>[
-    ...query.parameters,
-    if (cursor != null) ...cursor.parameters,
-    limit + 1,
-  ];
-  final entityRows = database.select('''
-    SELECT e.* FROM entities e
-    WHERE ${query.whereSql}
-    ${cursor == null ? '' : 'AND (${cursor.sql})'}
-    ORDER BY ${_ruleOrderBy(sort)}
-    LIMIT ?
-  ''', parameters);
-  final hasMore = entityRows.length > limit && consumed + limit < maxResults;
+  final scope = 'rule:${request['ruleNodeId']}:${sort.name}';
+  var sessionId = request['sessionId'] as String?;
+  if (sessionId == null) {
+    if (consumed != 0) throw StateError('浏览会话已失效，请刷新');
+    final query = _ruleQuery(rule, DateTime.now().millisecondsSinceEpoch);
+    sessionId = sessions.create(scope, '''SELECT e.id FROM entities e
+      WHERE ${query.whereSql} ORDER BY ${_ruleOrderBy(sort)} LIMIT ?''',
+        [...query.parameters, maxResults]);
+  }
+  sessions.validate(sessionId, scope);
+  final entityRows = sessions.page(sessionId, consumed, limit);
+  final hasMore = entityRows.length > limit;
   final visible = entityRows.take(limit).toList(growable: false);
   final last = visible.isEmpty ? null : visible.last;
   return {
@@ -604,7 +627,8 @@ Map<String, Object?> _loadRulePage(
         : {
             ..._ruleCursorValues(last, sort),
             'entityId': last['id'],
-            'consumed': consumed + visible.length,
+            'consumed': last['session_ordinal'],
+            'sessionId': sessionId,
           },
   };
 }
@@ -621,7 +645,7 @@ Map<String, Object?> _loadRuleFilterOptions(
   parameters.addAll(selected);
   final rows = database.select('''
     SELECT media_type, lower(format) AS extension
-    FROM entities
+    FROM entity_details
     WHERE archived = 0 AND format <> '' $typeFilter
     GROUP BY media_type, lower(format)
     ORDER BY media_type, extension
@@ -721,45 +745,6 @@ String _ruleOrderBy(RuleSortMode sort) => switch (sort) {
       RuleSortMode.size => 'e.size DESC, e.id ASC',
     };
 
-({String sql, List<Object> parameters})? _ruleCursorCondition(
-    Map<Object?, Object?> request, RuleSortMode sort) {
-  final primary = request['cursorPrimary'];
-  final id = request['cursorEntityId'] as String?;
-  if (primary == null || id == null) return null;
-  final secondary = request['cursorSecondary'];
-  return switch (sort) {
-    RuleSortMode.openCount => (
-        sql: '(e.open_count < ? OR (e.open_count = ? AND '
-            '(COALESCE(e.last_opened_at, 0) < ? OR '
-            '(COALESCE(e.last_opened_at, 0) = ? AND e.id > ?))))',
-        parameters: <Object>[
-          primary,
-          primary,
-          secondary ?? 0,
-          secondary ?? 0,
-          id
-        ],
-      ),
-    RuleSortMode.name => (
-        sql: '(e.name COLLATE NOCASE > ? OR '
-            '(e.name = ? COLLATE NOCASE AND e.id > ?))',
-        parameters: <Object>[primary, primary, id],
-      ),
-    RuleSortMode.lastOpened =>
-      _descendingRuleCursor('COALESCE(e.last_opened_at, 0)', primary, id),
-    RuleSortMode.modified =>
-      _descendingRuleCursor('e.source_modified_at_ms', primary, id),
-    RuleSortMode.size => _descendingRuleCursor('e.size', primary, id),
-  };
-}
-
-({String sql, List<Object> parameters}) _descendingRuleCursor(
-        String column, Object primary, String id) =>
-    (
-      sql: '($column < ? OR ($column = ? AND e.id > ?))',
-      parameters: <Object>[primary, primary, id],
-    );
-
 Map<String, Object?> _ruleCursorValues(Row row, RuleSortMode sort) =>
     switch (sort) {
       RuleSortMode.lastOpened => {
@@ -856,7 +841,7 @@ _RawReadPage _loadDirectPage(
   final entityRows = database.select(
     '''
     SELECT entity.* FROM index_node_entities link
-    JOIN entities entity ON entity.id = link.entity_id
+    JOIN entity_details entity ON entity.id = link.entity_id
     WHERE link.index_node_id = ?
     AND entity.archived = 0
     ${cursor == null ? '' : 'AND (${cursor.sql})'}
@@ -1244,7 +1229,7 @@ _RawReadPage _loadEntity(
   Map<Object?, Object?> request,
 ) {
   final rows = database.select(
-    'SELECT * FROM entities WHERE id = ? LIMIT 1',
+    'SELECT * FROM entity_details WHERE id = ? LIMIT 1',
     [request['entityId']! as String],
   );
   return _RawReadPage(
@@ -1261,6 +1246,7 @@ _RawReadPage _loadRecursivePage(
   Database database,
   String storageDirectoryPath,
   Map<Object?, Object?> request,
+  BrowseSessions sessions,
 ) {
   final scope = request['scope'] as String? ?? 'node';
   final nodeId = request['nodeId'] as String?;
@@ -1274,20 +1260,19 @@ _RawReadPage _loadRecursivePage(
     _ => throw ArgumentError('Invalid recursive scope'),
   };
   final sortName = request['sortMode']! as String;
-  final hierarchyPath = request['hierarchyPath'] as String?;
-  final cursor = _workerCursorCondition(request, sortName);
-  final limit = request['limit'] as int?;
+  final limit = (request['limit'] as int? ?? 60).clamp(1, 60);
   final parameters = <Object>[
     if (scope == 'node') nodeId!,
-    if (hierarchyPath != null && cursor != null) ...[
-      hierarchyPath,
-      hierarchyPath,
-      ...cursor.parameters,
-    ],
   ];
-  final limitSql = limit == null ? '' : 'LIMIT ?';
-  if (limit != null) parameters.add(limit + 1);
-  final rows = database.select(
+  if (scope == 'node' &&
+      database
+          .select('SELECT 1 FROM index_nodes WHERE id=?', [nodeId]).isEmpty) {
+    throw StateError('浏览目录已删除');
+  }
+  final sessionScope = 'recursive:$scope:$nodeId:$sortName';
+  var sessionId = request['sessionId'] as String?;
+  sessionId ??= sessions.create(
+    sessionScope,
     '''
     WITH RECURSIVE subtree(id, hierarchy_path) AS (
       SELECT id,
@@ -1309,17 +1294,17 @@ _RawReadPage _loadRecursivePage(
       JOIN subtree ON subtree.id = link.index_node_id
       GROUP BY link.entity_id
     )
-    SELECT entity.*, entity_nodes.hierarchy_path AS recursive_hierarchy_path
+    SELECT entity.id
     FROM entity_nodes
     JOIN entities entity ON entity.id = entity_nodes.entity_id
     WHERE entity.archived = 0
-    ${hierarchyPath == null || cursor == null ? '' : 'AND (entity_nodes.hierarchy_path > ? OR (entity_nodes.hierarchy_path = ? AND (${cursor.sql})))'}
     ORDER BY entity_nodes.hierarchy_path ASC, ${_orderBy(sortName)}
-    $limitSql
     ''',
     parameters,
   );
-  final hasMore = limit != null && rows.length > limit;
+  sessions.validate(sessionId, sessionScope);
+  final rows = sessions.page(sessionId, request['ordinal'] as int? ?? 0, limit);
+  final hasMore = rows.length > limit;
   final visibleRows = hasMore ? rows.sublist(0, limit) : rows;
   final last = visibleRows.isEmpty ? null : visibleRows.last;
   final cursorValues = last == null ? null : _cursorValues(last, sortName);
@@ -1329,7 +1314,9 @@ _RawReadPage _loadRecursivePage(
         .map((row) => _entityToMap(row, storageDirectoryPath))
         .toList(growable: false),
     hasMore: hasMore,
-    recursiveHierarchyPath: last?['recursive_hierarchy_path'] as String?,
+    recursiveHierarchyPath: last == null ? null : '',
+    sessionId: sessionId,
+    ordinal: last?['session_ordinal'] as int? ?? 0,
     cursorPrimary: cursorValues?.primary,
     cursorSecondary: cursorValues?.secondary,
     cursorEntityId: last?['id'] as String?,
@@ -1344,6 +1331,8 @@ class _RawReadPage {
     required this.hasMore,
     this.nodes,
     this.recursiveHierarchyPath,
+    this.sessionId,
+    this.ordinal = 0,
     this.cursorPrimary,
     this.cursorSecondary,
     this.cursorEntityId,
@@ -1359,6 +1348,8 @@ class _RawReadPage {
   final bool hasMore;
   final List<Map<String, Object?>>? nodes;
   final String? recursiveHierarchyPath;
+  final String? sessionId;
+  final int ordinal;
   final Object? cursorPrimary;
   final Object? cursorSecondary;
   final String? cursorEntityId;

@@ -44,7 +44,7 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
     final existingRows = existingLookupCompleted || knownExisting != null
         ? const <Row>[]
         : database.db.select(
-            'SELECT * FROM entities WHERE path = ? LIMIT 1',
+            'SELECT * FROM entity_details WHERE path = ? LIMIT 1',
             [normalizedPath],
           );
     final nextThumbnailStatus = _defaultThumbnailStatusFor(entityType);
@@ -88,12 +88,7 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
         '''
         UPDATE entities
         SET source_revision = source_revision + CASE WHEN hash != ? OR size != ? THEN 1 ELSE 0 END,
-            name = ?, format = ?, media_type = ?, hash = ?, metadata_preview = ?,
-            thumbnail_status = ?, thumbnail_key = CASE WHEN ? = 'success' THEN thumbnail_key ELSE NULL END,
-            thumbnail_format = CASE WHEN ? = 'success' THEN thumbnail_format ELSE NULL END,
-            thumbnail_width = CASE WHEN ? = 'success' THEN thumbnail_width ELSE NULL END,
-            thumbnail_height = CASE WHEN ? = 'success' THEN thumbnail_height ELSE NULL END,
-            thumbnail_error = CASE WHEN ? = 'failed' THEN thumbnail_error ELSE NULL END,
+            name = ?, format = ?, media_type = ?, hash = ?,
             size = ?, source_created_at_ms = ?, source_modified_at_ms = ?, duration_ms = ?,
             directory_root_id = ?, local_path = ?, updated_at = ?
         WHERE id = ?
@@ -105,13 +100,6 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
           normalizedFormat,
           entityType.value,
           normalizedHash,
-          normalizedPreview,
-          thumbnailReset.value,
-          requiresRuntimePreview ? 'none' : 'success',
-          requiresRuntimePreview ? 'none' : 'success',
-          requiresRuntimePreview ? 'none' : 'success',
-          requiresRuntimePreview ? 'none' : 'success',
-          thumbnailReset.value,
           size,
           sourceCreatedAtMs,
           sourceModifiedAtMs,
@@ -122,6 +110,23 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
           existing.id,
         ],
       );
+      database.db.execute('''UPDATE entity_previews SET metadata_preview=?,
+        thumbnail_status=?, thumbnail_error=CASE WHEN ?='failed' THEN thumbnail_error ELSE NULL END,
+        thumbnail_key=CASE WHEN ? THEN NULL ELSE thumbnail_key END,
+        thumbnail_format=CASE WHEN ? THEN NULL ELSE thumbnail_format END,
+        thumbnail_width=CASE WHEN ? THEN NULL ELSE thumbnail_width END,
+        thumbnail_height=CASE WHEN ? THEN NULL ELSE thumbnail_height END,
+        updated_at=? WHERE entity_id=?''', [
+        normalizedPreview,
+        thumbnailReset.value,
+        thumbnailReset.value,
+        requiresRuntimePreview,
+        requiresRuntimePreview,
+        requiresRuntimePreview,
+        requiresRuntimePreview,
+        now,
+        existing.id
+      ]);
       final thumbnailKey =
           !requiresRuntimePreview ? existing.thumbnailKey : null;
       final thumbnailFormat =
@@ -178,10 +183,9 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
     database.db.execute(
       '''
       INSERT INTO entities
-      (id, path, local_path, name, format, media_type, hash, metadata_preview,
-       thumbnail_status, thumbnail_key, thumbnail_format, thumbnail_width, thumbnail_height, thumbnail_error, size,
+      (id, path, local_path, name, format, media_type, hash, size,
        source_created_at_ms, source_modified_at_ms, duration_ms, directory_root_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ''',
       [
         id,
@@ -191,13 +195,6 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
         normalizedFormat,
         entityType.value,
         normalizedHash,
-        normalizedPreview,
-        nextThumbnailStatus.value,
-        null,
-        null,
-        null,
-        null,
-        null,
         size,
         sourceCreatedAtMs,
         sourceModifiedAtMs,
@@ -207,6 +204,9 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
         now,
       ],
     );
+    database.db.execute('''UPDATE entity_previews SET metadata_preview=?,
+      thumbnail_status=? WHERE entity_id=?''',
+        [normalizedPreview, nextThumbnailStatus.value, id]);
     return EntityUpsertResult(
       entity: Entity(
         id: id,
@@ -241,7 +241,7 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
 
   Entity? getEntityByPath(String path) {
     final rows = database.db.select(
-      'SELECT * FROM entities WHERE path = ? LIMIT 1',
+      'SELECT * FROM entity_details WHERE path = ? LIMIT 1',
       [_normalizeEntityPath(path)],
     );
     if (rows.isEmpty) return null;
@@ -261,7 +261,7 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
       final batch = normalizedPaths.sublist(offset, end);
       final placeholders = List<String>.filled(batch.length, '?').join(',');
       final rows = database.db.select(
-        'SELECT * FROM entities WHERE path IN ($placeholders)',
+        'SELECT * FROM entity_details WHERE path IN ($placeholders)',
         batch,
       );
       for (final row in rows) {
@@ -282,7 +282,7 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
       final batch = ids.sublist(offset, end);
       final placeholders = List<String>.filled(batch.length, '?').join(',');
       final rows = database.db.select(
-        'SELECT * FROM entities WHERE id IN ($placeholders)',
+        'SELECT * FROM entity_details WHERE id IN ($placeholders)',
         batch,
       );
       for (final row in rows) {
@@ -307,7 +307,7 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
 
   bool hasEntityForPath(String path) {
     final rows = database.db.select(
-      'SELECT 1 FROM entities WHERE path = ? LIMIT 1',
+      'SELECT 1 FROM entity_details WHERE path = ? LIMIT 1',
       [_normalizeEntityPath(path)],
     );
     return rows.isNotEmpty;
@@ -339,12 +339,15 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
     _enqueueBackgroundWrite(
       'save_playback_state',
       '''
-      UPDATE entities
-      SET last_position_ms = ?, duration_ms = ?, updated_at = ?
-      WHERE id = ?
+      INSERT INTO entity_progress(entity_id,last_position_ms,updated_at) VALUES(?,?,?)
+      ON CONFLICT(entity_id) DO UPDATE SET last_position_ms=excluded.last_position_ms,
+        updated_at=excluded.updated_at
       ''',
-      [safePositionMs, safeDurationMs, nowMillis(), entityId],
+      [entityId, safePositionMs, nowMillis()],
     );
+    database.db.execute(
+        'UPDATE entities SET duration_ms=? WHERE id=? AND duration_ms IS NOT ?',
+        [safeDurationMs, entityId, safeDurationMs]);
   }
 
   void saveReaderState({
@@ -361,14 +364,14 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
     _enqueueBackgroundWrite(
       'save_reader_state',
       '''
-      UPDATE entities
-      SET reader_scroll_offset = COALESCE(?, reader_scroll_offset),
-          zoom_scale = COALESCE(?, zoom_scale),
-          extra_state_json = COALESCE(?, extra_state_json),
-          updated_at = ?
-      WHERE id = ?
+      INSERT INTO entity_progress(entity_id,reader_scroll_offset,zoom_scale,extra_state_json,updated_at)
+      VALUES(?,?,?,?,?) ON CONFLICT(entity_id) DO UPDATE SET
+        reader_scroll_offset=COALESCE(excluded.reader_scroll_offset,reader_scroll_offset),
+        zoom_scale=COALESCE(excluded.zoom_scale,zoom_scale),
+        extra_state_json=COALESCE(excluded.extra_state_json,extra_state_json),
+        updated_at=excluded.updated_at
       ''',
-      [safeScrollOffset, safeZoomScale, extraStateJson, nowMillis(), entityId],
+      [entityId, safeScrollOffset, safeZoomScale, extraStateJson, nowMillis()],
     );
   }
 
@@ -403,7 +406,7 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
         : 'AND media_type IN (${List<String>.filled(types.length, '?').join(', ')})';
     final rows = database.db.select(
       '''
-      SELECT * FROM entities
+      SELECT * FROM entity_details
       WHERE archived = 0 AND last_opened_at IS NOT NULL
       $typePlaceholders
       ORDER BY last_opened_at DESC
@@ -417,7 +420,7 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
   List<EntityListItem> listRecentlyModifiedEntities({int limit = 12}) {
     final rows = database.db.select(
       '''
-      SELECT * FROM entities
+      SELECT * FROM entity_details
       WHERE archived = 0
       ORDER BY source_modified_at_ms DESC
       LIMIT ?

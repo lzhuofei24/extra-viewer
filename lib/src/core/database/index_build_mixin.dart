@@ -38,13 +38,10 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
           '''
           INSERT INTO entities(
             id, path, local_path, name, format, media_type, hash,
-            metadata_preview, thumbnail_status, thumbnail_key,
-            thumbnail_format, thumbnail_width, thumbnail_height,
-            thumbnail_error, size, source_created_at_ms,
+            size, source_created_at_ms,
             source_modified_at_ms, duration_ms, directory_root_id,
             created_at, updated_at
-          ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'none', NULL, NULL, NULL,
-                    NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ''',
           [
             entityId,
@@ -53,7 +50,6 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
             item.format,
             item.entityType.value,
             details.$1,
-            details.$5,
             details.$2,
             details.$3,
             details.$4,
@@ -83,12 +79,6 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
           UPDATE entities
           SET source_revision = source_revision + CASE WHEN hash != ? OR size != ? THEN 1 ELSE 0 END,
               name = ?, format = ?, media_type = ?, hash = ?,
-              metadata_preview = ?, thumbnail_status = ?,
-              thumbnail_key = CASE WHEN ? THEN thumbnail_key ELSE NULL END,
-              thumbnail_format = CASE WHEN ? THEN thumbnail_format ELSE NULL END,
-              thumbnail_width = CASE WHEN ? THEN thumbnail_width ELSE NULL END,
-              thumbnail_height = CASE WHEN ? THEN thumbnail_height ELSE NULL END,
-              thumbnail_error = CASE WHEN ? THEN thumbnail_error ELSE NULL END,
               size = ?, source_created_at_ms = ?, source_modified_at_ms = ?,
               duration_ms = ?, directory_root_id = ?, local_path = NULL,
               updated_at = ?
@@ -101,13 +91,6 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
             item.format,
             item.entityType.value,
             details.$1,
-            details.$5 ?? current.contentExcerpt,
-            status,
-            preserveFields ? 1 : 0,
-            preserveFields ? 1 : 0,
-            preserveFields ? 1 : 0,
-            preserveFields ? 1 : 0,
-            status == ThumbnailStatus.failed.value ? 1 : 0,
             details.$2,
             details.$3,
             details.$4,
@@ -117,12 +100,31 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
             entityId,
           ],
         ));
+        statements.add(LibraryWriteStatement('''UPDATE entity_previews SET
+          thumbnail_status=?, thumbnail_error=CASE WHEN ? THEN thumbnail_error ELSE NULL END,
+          thumbnail_key=CASE WHEN ? THEN thumbnail_key ELSE NULL END,
+          thumbnail_format=CASE WHEN ? THEN thumbnail_format ELSE NULL END,
+          thumbnail_width=CASE WHEN ? THEN thumbnail_width ELSE NULL END,
+          thumbnail_height=CASE WHEN ? THEN thumbnail_height ELSE NULL END,
+          updated_at=? WHERE entity_id=?''', [
+          status,
+          status == ThumbnailStatus.failed.value,
+          preserveFields,
+          preserveFields,
+          preserveFields,
+          preserveFields,
+          now,
+          entityId
+        ]));
       }
+      statements.add(LibraryWriteStatement('''UPDATE entity_previews
+        SET metadata_preview=COALESCE(?,metadata_preview) WHERE entity_id=?''',
+          [details.$5, entityId]));
       statements.add(LibraryWriteStatement(
         '''
         INSERT OR IGNORE INTO index_node_entities(
           index_node_id, entity_id, sort_name, created_at
-        ) SELECT ?, id, lower(name), ? FROM entities WHERE id = ?
+        ) SELECT ?, id, lower(name), ? FROM entity_details WHERE id = ?
         ''',
         [node.id, now, entityId],
       ));
@@ -406,7 +408,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
     }
     final directoryRoot = root!;
     final entityCount = database.db.select(
-      'SELECT COUNT(*) AS count FROM entities WHERE directory_root_id = ?',
+      'SELECT COUNT(*) AS count FROM entity_details WHERE directory_root_id = ?',
       [rootId],
     ).single['count'] as int;
     final conflictCount = database.db.select(
@@ -427,7 +429,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
         JOIN index_roots ON child.parent_id = index_roots.node_id
       )
       SELECT COUNT(DISTINCT e.id) AS count
-      FROM entities e
+      FROM entity_details e
       JOIN index_node_entities link ON link.entity_id = e.id
       WHERE e.directory_root_id = ?
         AND link.index_node_id NOT IN (SELECT id FROM subtree)
@@ -448,7 +450,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
         FROM index_nodes child JOIN index_roots ON child.parent_id = index_roots.node_id
       ), conflict_entities AS (
         SELECT DISTINCT e.id, e.name, e.path
-        FROM entities e
+        FROM entity_details e
         JOIN index_node_entities link ON link.entity_id = e.id
         WHERE e.directory_root_id = ?
           AND link.index_node_id NOT IN (SELECT id FROM subtree)
@@ -501,7 +503,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
     final thumbnailRows = database.db.select(
       '''
       SELECT thumbnail_key, thumbnail_format
-      FROM entities
+      FROM entity_details
       WHERE directory_root_id = ?
         AND thumbnail_key IS NOT NULL
         AND thumbnail_format IS NOT NULL
@@ -516,7 +518,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
       )
       SELECT DISTINCT link.index_node_id AS node_id
       FROM index_node_entities link
-      JOIN entities entity ON entity.id = link.entity_id
+      JOIN entity_details entity ON entity.id = link.entity_id
       WHERE entity.directory_root_id = ?
         AND link.index_node_id NOT IN (SELECT id FROM subtree)
     ''', [rootId, rootId]);
@@ -536,7 +538,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
         )
         DELETE FROM index_node_entities
         WHERE entity_id IN (
-          SELECT id FROM entities WHERE directory_root_id = ?
+          SELECT id FROM entity_details WHERE directory_root_id = ?
         )
         AND index_node_id NOT IN (SELECT id FROM subtree)
         ''',
@@ -579,7 +581,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
           JOIN subtree parent ON child.parent_id = parent.id
         )
         INSERT OR IGNORE INTO stale_scan_entities(id)
-        SELECT entity.id FROM entities entity JOIN index_node_entities link
+        SELECT entity.id FROM entity_details entity JOIN index_node_entities link
           ON link.entity_id = entity.id
         WHERE link.index_node_id IN (SELECT id FROM subtree)
           AND entity.directory_root_id = ?

@@ -17,12 +17,10 @@ void main() {
         library.createCollectionWithEntities(name: 'first', entityIds: []);
     final second =
         library.createCollectionWithEntities(name: 'second', entityIds: []);
-    db.db.execute(
-        'INSERT INTO node_preview_overrides(node_id, items_json, updated_at) VALUES (?, ?, 0)',
-        [second.id, '[{"kind":"image","nodeId":"${first.id}"}]']);
-    db.db.execute(
-        'INSERT INTO node_preview_overrides(node_id, items_json, updated_at) VALUES (?, ?, 0)',
-        [first.id, '[{"kind":"image","nodeId":"${second.id}"}]']);
+    library.setNodePreviewOverride(
+        second.id, '[{"kind":"image","nodeId":"${first.id}"}]');
+    library.setNodePreviewOverride(
+        first.id, '[{"kind":"image","nodeId":"${second.id}"}]');
     db.db.execute('DELETE FROM node_preview_dirty');
     library.markIndexNodePreviewDirty(first.id, reason: 'changed');
     expect(library.listDirtyPreviewRoots().keys,

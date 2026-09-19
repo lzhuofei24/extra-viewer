@@ -61,7 +61,7 @@ mixin NodePreviewRepositoryMixin on LibraryRepositoryBase {
       '''
       SELECT link.index_node_id AS preview_node_id, entity.*
       FROM index_node_entities link
-      JOIN entities entity ON entity.id = link.entity_id
+      JOIN entity_details entity ON entity.id = link.entity_id
       WHERE link.index_node_id IN ($entityPlaceholders)
         AND entity.archived = 0
       ORDER BY link.index_node_id, entity.name COLLATE NOCASE, entity.id
@@ -97,7 +97,7 @@ mixin NodePreviewRepositoryMixin on LibraryRepositoryBase {
       final entityIdPlaceholders =
           List.filled(overrideEntityIds.length, '?').join(', ');
       final rows = database.db.select(
-        'SELECT * FROM entities WHERE id IN ($entityIdPlaceholders)',
+        'SELECT * FROM entity_details WHERE id IN ($entityIdPlaceholders)',
         overrideEntityIds,
       );
       for (final row in rows) {
@@ -264,6 +264,20 @@ mixin NodePreviewRepositoryMixin on LibraryRepositoryBase {
             height,
             nowMillis()
           ]);
+          registerPreviewAsset(
+              database.db, ticket.assetKey, 'node', signature, {
+            'stacked': (
+              path: _nodePreviewAssetPath(ticket.assetKey, 'webp'),
+              width: width,
+              height: height
+            ),
+            'square': (
+              path: portraitNodePreviewAssetPathFor(
+                  storageDirectoryPath, ticket.assetKey, 'webp'),
+              width: null,
+              height: null
+            )
+          });
           database.db.execute(
               "DELETE FROM retired_preview_assets WHERE kind = 'node' AND asset_key = ?",
               [ticket.assetKey]);
@@ -310,7 +324,7 @@ mixin NodePreviewRepositoryMixin on LibraryRepositoryBase {
     final entityRows = database.db.select('''
       SELECT entity.*
       FROM index_node_entities link
-      JOIN entities entity ON entity.id = link.entity_id
+      JOIN entity_details entity ON entity.id = link.entity_id
       WHERE link.index_node_id = ? AND entity.archived = 0
       ORDER BY entity.name COLLATE NOCASE, entity.id
     ''', [nodeId]);
@@ -398,7 +412,7 @@ mixin NodePreviewRepositoryMixin on LibraryRepositoryBase {
           e.thumbnail_height AS thumbnail_height
         FROM index_node_entities link
         JOIN subtree ON subtree.id = link.index_node_id
-        JOIN entities e ON e.id = link.entity_id
+        JOIN entity_details e ON e.id = link.entity_id
         WHERE e.archived = 0
         UNION ALL
         SELECT
@@ -476,16 +490,15 @@ mixin NodePreviewRepositoryMixin on LibraryRepositoryBase {
 
   void setNodePreviewOverride(String nodeId, String itemsJson) {
     writeTransaction(() {
+      final items = jsonDecode(itemsJson) as List;
       database.db.execute(
-        '''
-        INSERT INTO node_preview_overrides(node_id, items_json, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(node_id) DO UPDATE SET
-          items_json = excluded.items_json,
-          updated_at = excluded.updated_at
-        ''',
-        [nodeId, itemsJson, nowMillis()],
-      );
+          'DELETE FROM node_preview_override_items WHERE node_id=?', [nodeId]);
+      for (var i = 0; i < items.length; i++) {
+        final item = items[i] as Map;
+        database.db.execute(
+            'INSERT INTO node_preview_override_items VALUES(?,?,?,?,?)',
+            [nodeId, i, item['entityId'], item['nodeId'], jsonEncode(item)]);
+      }
       markIndexNodePreviewDirty(nodeId, reason: 'preview_override_set');
     });
   }
@@ -493,7 +506,7 @@ mixin NodePreviewRepositoryMixin on LibraryRepositoryBase {
   void clearNodePreviewOverride(String nodeId) {
     writeTransaction(() {
       database.db.execute(
-        'DELETE FROM node_preview_overrides WHERE node_id = ?',
+        'DELETE FROM node_preview_override_items WHERE node_id = ?',
         [nodeId],
       );
       markIndexNodePreviewDirty(nodeId, reason: 'preview_override_cleared');

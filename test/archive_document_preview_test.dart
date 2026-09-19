@@ -145,7 +145,7 @@ void main() {
     final prepared =
         await ArchivePreviewPipeline(library).prepare(entity, file);
     db.db.execute(
-        'UPDATE entities SET preview_revision = preview_revision + 1 WHERE id = ?',
+        'UPDATE entity_previews SET preview_revision = preview_revision + 1 WHERE entity_id = ?',
         [entity.id]);
     builds.completeDocumentPreviewWork(job.id,
         {entity.id: (state: LibraryBuildWorkState.completed, error: null)},

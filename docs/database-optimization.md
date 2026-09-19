@@ -39,5 +39,14 @@ SAF permission and removable-media acceptance remain device-only checks.
   dirty statistics, verified unique snapshots and aligned rule indexes.
 - Validation: static analysis passed; complete suite passed (174 tests).
   The frequent query plan no longer contains a temporary sort B-tree.
-- Remaining: schema 11/12, bounded sessions, split read scheduling, local
-  statistics publication and expanded performance/device acceptance.
+- Schema 11: progress and preview fields moved out of entities; read-only
+  entity_details projects existing DTOs without duplicated storage. Cover
+  references are ordered foreign-key rows; asset files have explicit variants.
+- Rule and recursive browsing use bounded SQLite temporary ordered-ID sessions
+  (six sessions, 128 MiB page limit) instead of recomputing every page. These
+  currently run in the existing reader; separate scheduling remains pending.
+- Read-worker exit/close now fails all pending requests immediately.
+- Validation after these changes: full suite passed (180 tests).
+- Remaining: schema 12 integration, split read scheduling, summary invalidation,
+  local statistics publication, node/search pagination, node view_type removal,
+  migration-chain hardening and expanded performance/device acceptance.

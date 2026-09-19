@@ -9,12 +9,14 @@ import 'schema_v7.dart';
 import 'schema_v8.dart';
 import 'schema_v9.dart';
 import 'schema_v10.dart';
+import 'schema_v11.dart';
+import 'preview_asset_catalog.dart';
 
 /// SQLite storage and additive migrations, owned by database workers.
 class AppDatabase {
   AppDatabase._(this.db, this.storageDirectoryPath, this.databasePath);
 
-  static const currentSchemaVersion = 10;
+  static const currentSchemaVersion = 11;
 
   final Database db;
   final String storageDirectoryPath;
@@ -116,7 +118,6 @@ class AppDatabase {
 
     final version = db.userVersion;
     if (version == currentSchemaVersion) {
-      _ensurePreviewSchema();
       db.execute('PRAGMA optimize;');
       return;
     }
@@ -141,10 +142,18 @@ class AppDatabase {
       try {
         if (version == 5) db.execute(schemaV6Upgrade);
         if (version <= 6) db.execute(schemaV7Upgrade);
-        _ensurePreviewSchema();
+        if (version < 11) _ensurePreviewSchema();
         if (version <= 7) db.execute(schemaV8Upgrade);
-        _ensureSchemaV9();
-        migrateSchemaV10(db);
+        if (version < 10) {
+          _ensureSchemaV9();
+          migrateSchemaV10(db);
+        }
+        migrateSchemaV11(db);
+        if (db
+            .select('PRAGMA table_info(entities)')
+            .any((r) => r['name'] == 'path')) {
+          createPreviewAssetCatalog(db, storageDirectoryPath);
+        }
         _verifySchemaIntegrity();
         db.userVersion = currentSchemaVersion;
         db.execute('COMMIT');
@@ -167,6 +176,8 @@ class AppDatabase {
       db.execute(schemaV8Upgrade);
       _ensureSchemaV9();
       migrateSchemaV10(db);
+      migrateSchemaV11(db);
+      createPreviewAssetCatalog(db, storageDirectoryPath);
       _verifySchemaIntegrity();
       db.userVersion = currentSchemaVersion;
       db.execute('COMMIT;');

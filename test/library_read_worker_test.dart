@@ -151,6 +151,7 @@ void main() {
         {
           'kind': 'visual',
           'title': 'custom.jpg',
+          'nodeId': root.id,
           'thumbnailKey': 'cd456',
           'thumbnailFormat': 'webp',
           'aspectRatio': 1.1,

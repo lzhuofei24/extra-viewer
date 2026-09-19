@@ -133,7 +133,7 @@ class LibraryBuildRepository implements BuildAccess {
     library.writeTransaction(() {
       final now = nowMillis();
       library.database.db.execute(
-          "UPDATE entities SET thumbnail_status = 'failed', thumbnail_error = '上次预览生成已中断' WHERE thumbnail_status = 'pending'");
+          "UPDATE entity_previews SET thumbnail_status = 'failed', thumbnail_error = '上次预览生成已中断' WHERE thumbnail_status = 'pending'");
       library.database.db.execute('''
         UPDATE library_build_jobs
         SET status = 'paused', updated_at = ?
@@ -485,7 +485,7 @@ class LibraryBuildRepository implements BuildAccess {
       )
       SELECT ?, entity.id, 'pending', 0, ?
       FROM index_node_entities link
-      JOIN entities entity ON entity.id = link.entity_id
+      JOIN entity_details entity ON entity.id = link.entity_id
       WHERE link.index_node_id IN (SELECT id FROM subtree)
         AND entity.media_type IN ('image', 'video')
         AND (
@@ -505,7 +505,7 @@ class LibraryBuildRepository implements BuildAccess {
         final db = library.database.db;
         const selected =
             '''SELECT work.entity_id FROM library_entity_preview_work work
-      JOIN entities entity ON entity.id = work.entity_id WHERE work.job_id = ?
+      JOIN entity_details entity ON entity.id = work.entity_id WHERE work.job_id = ?
         AND entity.format IN ('epub', 'docx') AND work.state IN ('pending', 'processing')''';
         final count = db.select('SELECT COUNT(*) AS count FROM ($selected)',
             [jobId]).single['count'] as int;
@@ -557,7 +557,7 @@ class LibraryBuildRepository implements BuildAccess {
       )
       SELECT ?, entity.id, 'pending', 0, ?
       FROM index_node_entities link
-      JOIN entities entity ON entity.id = link.entity_id
+      JOIN entity_details entity ON entity.id = link.entity_id
       WHERE link.index_node_id IN (SELECT id FROM subtree)
         AND entity.media_type IN ('text', 'external_link')
         AND NOT EXISTS (SELECT 1 FROM document_preview_versions preview
@@ -686,7 +686,7 @@ class LibraryBuildRepository implements BuildAccess {
           }
           if (value.coverRevision != null) {
             final current = library.database.db.select(
-                'SELECT 1 FROM entities WHERE id = ? AND source_revision = ? AND preview_revision = ?',
+                'SELECT 1 FROM entity_details WHERE id = ? AND source_revision = ? AND preview_revision = ?',
                 [entry.key, value.sourceRevision, value.coverRevision]);
             if (current.isEmpty) {
               resolved[entry.key] =
@@ -705,22 +705,18 @@ class LibraryBuildRepository implements BuildAccess {
                 (state: LibraryBuildWorkState.failed, error: '文档封面已改变，请重试');
             continue;
           }
-          library.database.db.execute(
-              '''UPDATE entities SET metadata_preview = ?,
+          library.database.db.execute('''UPDATE entities SET
           duration_ms = COALESCE(?, duration_ms), updated_at = ?
           WHERE id = ? AND source_revision = ?''',
-              [
-                value.excerpt,
-                value.durationMs,
-                nowMillis(),
-                entry.key,
-                value.sourceRevision
-              ]);
+              [value.durationMs, nowMillis(), entry.key, value.sourceRevision]);
           if (library.database.db.updatedRows == 0) {
             resolved[entry.key] =
                 (state: LibraryBuildWorkState.failed, error: '文档已改变，请重试');
             continue;
           }
+          library.database.db.execute(
+              'UPDATE entity_previews SET metadata_preview=?, updated_at=? WHERE entity_id=?',
+              [value.excerpt, nowMillis(), entry.key]);
           library.database.db.execute(
               '''INSERT INTO document_preview_versions(entity_id, source_revision, cover_revision)
           VALUES (?, ?, ?) ON CONFLICT(entity_id) DO UPDATE SET source_revision = excluded.source_revision,

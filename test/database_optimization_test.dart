@@ -7,6 +7,96 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 void main() {
+  test('rule sessions keep membership and order while visits and files change',
+      () async {
+    final dir = Directory.systemTemp.createTempSync('stable_rule_');
+    final db = AppDatabase.openAtPath('${dir.path}/library.db');
+    final repo = LibraryRepository(db);
+    for (var i = 0; i < 5; i++) {
+      db.db.execute(
+          '''INSERT INTO entities(id,path,name,format,media_type,hash,size,
+        source_created_at_ms,source_modified_at_ms,created_at,updated_at,open_count)
+        VALUES(?,?,?,'jpg','image','hash',1,0,0,0,0,?)''',
+          ['e$i', '/e$i', 'e$i', 10 - i]);
+    }
+    final reader = await LibraryReadWorker.start(
+        databasePath: db.databasePath!, storageDirectoryPath: dir.path);
+    try {
+      final first = await reader.loadRulePage(
+          ruleNodeId: 'system-rule-frequent', limit: 2);
+      expect(first.items.map((e) => e.id), ['e0', 'e1']);
+      db.db.execute("UPDATE entities SET open_count=100 WHERE id='e4'");
+      db.db.execute("DELETE FROM entities WHERE id='e2'");
+      final second = await reader.loadRulePage(
+          ruleNodeId: 'system-rule-frequent', after: first.cursor, limit: 2);
+      expect(second.items.map((e) => e.id), ['e3', 'e4']);
+      expect(second.hasMore, isFalse);
+      repo.markOpened('e3');
+      final refreshed = await reader.loadRulePage(
+          ruleNodeId: 'system-rule-frequent', limit: 2);
+      expect(refreshed.items.first.id, 'e4');
+    } finally {
+      await reader.close();
+      db.close();
+      dir.deleteSync(recursive: true);
+    }
+  });
+  test('progress is stored separately and does not invalidate metadata', () {
+    final db = AppDatabase.openInMemory();
+    addTearDown(db.close);
+    db.db.execute(
+        '''INSERT INTO entities(id,path,name,format,media_type,hash,size,
+      source_created_at_ms,source_modified_at_ms,created_at,updated_at)
+      VALUES('progress','/progress','progress','mp4','video','hash',1,0,0,0,0)''');
+    flushQueryRevisions(db.db);
+    final before = db.db
+        .select("SELECT revision FROM query_revisions WHERE domain='metadata'")
+        .single['revision'];
+    final repo = LibraryRepository(db);
+    repo.savePlaybackState(
+        entityId: 'progress', positionMs: 42, durationMs: 100);
+    repo.saveReaderState(
+        entityId: 'progress',
+        scrollOffset: 12,
+        zoomScale: 2,
+        extraStateJson: '{"anchor":"a"}');
+    flushQueryRevisions(db.db);
+    expect(
+        db.db
+            .select(
+                "SELECT revision FROM query_revisions WHERE domain='metadata'")
+            .single['revision'],
+        before);
+    expect(repo.getEntity('progress')!.lastPositionMs, 42);
+    expect(repo.getEntity('progress')!.readerScrollOffset, 12);
+    expect(db.db.select('PRAGMA table_info(entities)').map((r) => r['name']),
+        isNot(contains('last_position_ms')));
+    expect(db.db.select('SELECT * FROM entity_progress'), hasLength(1));
+  });
+
+  test('cover references preserve order and follow target deletion', () {
+    final db = AppDatabase.openInMemory();
+    addTearDown(db.close);
+    final repo = LibraryRepository(db);
+    final root = repo.ensureCollectionIndexRoot('cover');
+    final first = repo.createCustomNode(parentId: root.id, name: 'first');
+    final second = repo.createCustomNode(parentId: root.id, name: 'second');
+    repo.setNodePreviewOverride(
+        root.id, '[{"nodeId":"${second.id}"},{"nodeId":"${first.id}"}]');
+    expect(repo.getNodePreviewOverride(root.id), contains(second.id));
+    expect(
+        db.db
+            .select(
+                'SELECT target_node_id FROM node_preview_override_items ORDER BY ordinal')
+            .first['target_node_id'],
+        second.id);
+    db.db.execute('DELETE FROM index_nodes WHERE id=?', [second.id]);
+    expect(repo.getNodePreviewOverride(root.id), isNot(contains(second.id)));
+    expect(
+        db.db.select(
+            'SELECT * FROM node_preview_dirty WHERE node_id=?', [root.id]),
+        isNotEmpty);
+  });
   test('deleting a scope cannot turn a rule into an unrestricted query',
       () async {
     final dir = Directory.systemTemp.createTempSync('rule_scope_');
