@@ -46,7 +46,7 @@ void main() {
     raw.userVersion = 5;
     final database = AppDatabase.openForTesting(raw);
     addTearDown(database.close);
-    expect(raw.userVersion, 9);
+    expect(raw.userVersion, AppDatabase.currentSchemaVersion);
     expect(raw.select('SELECT name FROM entities').single['name'], 'keep');
     final job = raw.select('SELECT * FROM library_build_jobs').single;
     expect(job['scope_node_id'], 'root');
@@ -72,7 +72,7 @@ void main() {
     database.migrate();
     addTearDown(database.close);
 
-    expect(raw.userVersion, 9);
+    expect(raw.userVersion, AppDatabase.currentSchemaVersion);
     expect(
       raw.select(
           "SELECT rowid FROM index_node_search WHERE index_node_search MATCH '银狼资'"),
@@ -170,7 +170,7 @@ void main() {
 
     database.migrate();
 
-    expect(raw.userVersion, 9);
+    expect(raw.userVersion, AppDatabase.currentSchemaVersion);
     expect(
       raw.select('SELECT id FROM index_nodes WHERE id = ?', [directory.id]),
       isNotEmpty,
@@ -247,6 +247,7 @@ void main() {
         .select("SELECT * FROM index_nodes WHERE system_key = 'favorites'")
         .single;
     final favoriteId = favorite['id'] as String;
+    raw.execute('DROP TRIGGER protect_system_node_update');
     raw.execute(
       'UPDATE index_nodes SET system_key = NULL, is_protected = 0, sort_order = 0 WHERE id = ?',
       [favoriteId],

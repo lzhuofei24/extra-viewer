@@ -8,12 +8,13 @@ import 'schema_v6.dart';
 import 'schema_v7.dart';
 import 'schema_v8.dart';
 import 'schema_v9.dart';
+import 'schema_v10.dart';
 
 /// SQLite storage and additive migrations, owned by database workers.
 class AppDatabase {
   AppDatabase._(this.db, this.storageDirectoryPath, this.databasePath);
 
-  static const currentSchemaVersion = 9;
+  static const currentSchemaVersion = 10;
 
   final Database db;
   final String storageDirectoryPath;
@@ -111,22 +112,29 @@ class AppDatabase {
     db.execute('PRAGMA journal_mode = WAL;');
     db.execute('PRAGMA busy_timeout = 3000;');
     db.execute('PRAGMA synchronous = NORMAL;');
+    db.execute('PRAGMA cache_size = -16384;');
 
     final version = db.userVersion;
     if (version == currentSchemaVersion) {
-      db.execute(_schema);
       _ensurePreviewSchema();
-      _ensureSchemaV9();
-      _verifySchemaIntegrity();
       db.execute('PRAGMA optimize;');
       return;
     }
-    if (version >= 5 && version <= 8) {
+    if (version >= 5 && version < currentSchemaVersion) {
       final path = databasePath;
       if (path != null) {
-        final backup = '$path.schema$version.backup';
-        if (!File(backup).existsSync()) {
-          db.execute('VACUUM INTO ?', [backup]);
+        final backup =
+            '$path.schema$version.${DateTime.now().microsecondsSinceEpoch}.backup';
+        db.execute('VACUUM INTO ?', [backup]);
+        final snapshot = sqlite3.open(backup, mode: OpenMode.readOnly);
+        try {
+          if (snapshot.userVersion != version ||
+              snapshot.select('PRAGMA integrity_check').single.values.single !=
+                  'ok') {
+            throw StateError('Migration snapshot validation failed: $backup');
+          }
+        } finally {
+          snapshot.dispose();
         }
       }
       db.execute('BEGIN IMMEDIATE');
@@ -136,6 +144,7 @@ class AppDatabase {
         _ensurePreviewSchema();
         if (version <= 7) db.execute(schemaV8Upgrade);
         _ensureSchemaV9();
+        migrateSchemaV10(db);
         _verifySchemaIntegrity();
         db.userVersion = currentSchemaVersion;
         db.execute('COMMIT');
@@ -157,6 +166,7 @@ class AppDatabase {
       _ensurePreviewSchema();
       db.execute(schemaV8Upgrade);
       _ensureSchemaV9();
+      migrateSchemaV10(db);
       _verifySchemaIntegrity();
       db.userVersion = currentSchemaVersion;
       db.execute('COMMIT;');
@@ -238,6 +248,8 @@ class AppDatabase {
     if (nodeCount != searchCount) {
       throw StateError('Node search index is inconsistent');
     }
+    db.execute(
+        "INSERT INTO index_node_search(index_node_search, rank) VALUES('integrity-check', 1)");
   }
 
   bool _hasUserTables() {

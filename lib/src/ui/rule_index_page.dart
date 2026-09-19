@@ -163,7 +163,11 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
             else if (rule == null)
               _homeSliver()
             else if (_controller.items.isEmpty)
-              const SliverFillRemaining(child: Center(child: Text('没有符合规则的文件')))
+              SliverFillRemaining(
+                  child: Center(
+                      child: Text(_controller.activeRule?.scopeMissing == true
+                          ? '原目录或分类已删除，请编辑规则重新选择范围'
+                          : '没有符合规则的文件')))
             else
               BrowserEntitySliver(
                   entities: _controller.items,

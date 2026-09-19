@@ -33,4 +33,11 @@ SAF permission and removable-media acceptance remain device-only checks.
 
 ## Status
 
-- Baseline recorded; implementation in progress.
+- Baseline committed as f3ee5d5.
+- Schema 10 safety/index phase: explicit missing scopes, database-protected
+  system nodes, ancestry-cycle guard, metadata/rule guards, revision batching,
+  dirty statistics, verified unique snapshots and aligned rule indexes.
+- Validation: static analysis passed; complete suite passed (174 tests).
+  The frequent query plan no longer contains a temporary sort B-tree.
+- Remaining: schema 11/12, bounded sessions, split read scheduling, local
+  statistics publication and expanded performance/device acceptance.

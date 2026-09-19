@@ -248,6 +248,7 @@ class RuleDefinition {
     this.entityTypes = const <EntityType>[],
     this.extensions = const <String>[],
     this.scopeNodeId,
+    this.scopeMissing = false,
     this.minSize,
     this.maxSize,
     this.modifiedWithinDays,
@@ -263,6 +264,7 @@ class RuleDefinition {
   final List<EntityType> entityTypes;
   final List<String> extensions;
   final String? scopeNodeId;
+  final bool scopeMissing;
   final int? minSize;
   final int? maxSize;
   final int? modifiedWithinDays;

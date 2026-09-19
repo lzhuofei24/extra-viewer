@@ -172,12 +172,13 @@ mixin RuleRepositoryMixin on LibraryRepositoryBase {
       INSERT INTO index_rules
       (node_id, entity_types_json, extensions_json, scope_node_id, min_size,
        max_size, modified_within_days, opened_within_days, default_sort,
-       max_results, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       max_results, updated_at, scope_state)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(node_id) DO UPDATE SET
         entity_types_json = excluded.entity_types_json,
         extensions_json = excluded.extensions_json,
         scope_node_id = excluded.scope_node_id,
+        scope_state = excluded.scope_state,
         min_size = excluded.min_size,
         max_size = excluded.max_size,
         modified_within_days = excluded.modified_within_days,
@@ -198,6 +199,7 @@ mixin RuleRepositoryMixin on LibraryRepositoryBase {
         defaultSort.name,
         maxResults,
         now,
+        scopeNodeId == null ? 'all' : 'node',
       ],
     );
   }
@@ -251,7 +253,7 @@ mixin RuleRepositoryMixin on LibraryRepositoryBase {
     final rows = database.db.select(
       '''
       SELECT node.*, rule.entity_types_json, rule.extensions_json,
-             rule.scope_node_id, rule.min_size, rule.max_size,
+             rule.scope_node_id, rule.scope_state, rule.min_size, rule.max_size,
              rule.modified_within_days, rule.opened_within_days,
              rule.default_sort, rule.max_results, rule.built_in_kind,
              rule.updated_at AS rule_updated_at
@@ -277,6 +279,7 @@ RuleDefinition _ruleFromRow(Row row) {
         .toList(growable: false),
     extensions: strings('extensions_json'),
     scopeNodeId: row['scope_node_id'] as String?,
+    scopeMissing: row['scope_state'] == 'missing',
     minSize: row['min_size'] as int?,
     maxSize: row['max_size'] as int?,
     modifiedWithinDays: row['modified_within_days'] as int?,

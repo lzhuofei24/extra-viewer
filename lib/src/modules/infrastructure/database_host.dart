@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
 import '../../core/database/app_database.dart';
+import '../../core/database/schema_v10.dart';
 import '../../core/database/library_repository.dart';
 import '../../core/database/library_build_repository.dart';
 import '../library/library_dispatch.dart';
@@ -307,10 +308,15 @@ Future<Object?> _command(
   db.execute('BEGIN IMMEDIATE');
   try {
     final result = await action();
+    flushQueryRevisions(db);
     db.execute('INSERT INTO database_command_receipts VALUES (?, ?, ?)',
         [commandId, 0, now]);
-    db.execute('DELETE FROM database_command_receipts WHERE committed_at < ?',
-        [oldest]);
+    if (now - _lastReceiptCleanup >= const Duration(hours: 1).inMilliseconds) {
+      db.execute('''DELETE FROM database_command_receipts WHERE request_id IN (
+        SELECT request_id FROM database_command_receipts WHERE committed_at < ?
+        ORDER BY committed_at LIMIT 1000)''', [oldest]);
+      _lastReceiptCleanup = now;
+    }
     db.execute('COMMIT');
     return result;
   } catch (_) {
@@ -318,6 +324,8 @@ Future<Object?> _command(
     rethrow;
   }
 }
+
+int _lastReceiptCleanup = 0;
 
 int _batch(Database db, List<LibraryWriteStatement> statements) {
   final prepared = <String, PreparedStatement>{};

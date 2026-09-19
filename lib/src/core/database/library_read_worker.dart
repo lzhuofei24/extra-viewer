@@ -409,6 +409,7 @@ void _readWorkerMain(Map<String, Object> config) {
   final storageDirectoryPath = config['storageDirectoryPath']! as String;
   final readyPort = config['readyPort']! as SendPort;
   final database = sqlite3.open(databasePath, mode: OpenMode.readOnly);
+  database.execute('PRAGMA cache_size = -8192');
   final requestPort = ReceivePort();
   readyPort.send(requestPort.sendPort);
   requestPort.listen((message) {
@@ -517,7 +518,7 @@ void _readWorkerMain(Map<String, Object> config) {
 List<Map<String, Object?>> _loadRules(Database database) {
   final rows = database.select('''
     SELECT node.*, rule.entity_types_json, rule.extensions_json,
-           rule.scope_node_id, rule.min_size, rule.max_size,
+           rule.scope_node_id, rule.scope_state, rule.min_size, rule.max_size,
            rule.modified_within_days, rule.opened_within_days,
            rule.default_sort, rule.max_results, rule.built_in_kind,
            rule.updated_at AS rule_updated_at
@@ -546,7 +547,7 @@ Map<String, Object?> _loadRulePage(
 ) {
   final rows = database.select('''
     SELECT node.*, rule.entity_types_json, rule.extensions_json,
-           rule.scope_node_id, rule.min_size, rule.max_size,
+           rule.scope_node_id, rule.scope_state, rule.min_size, rule.max_size,
            rule.modified_within_days, rule.opened_within_days,
            rule.default_sort, rule.max_results, rule.built_in_kind,
            rule.updated_at AS rule_updated_at
@@ -653,6 +654,7 @@ class _RuleQueryParts {
 
 _RuleQueryParts _ruleQuery(Row rule, int nowMs) {
   final clauses = <String>['e.archived = 0'];
+  if (rule['scope_state'] == 'missing') clauses.add('0');
   final parameters = <Object?>[];
   final builtIn = rule['built_in_kind'] as String?;
   if (builtIn == BuiltInRuleKind.frequent.name) {
@@ -787,6 +789,7 @@ Map<String, Object?> _ruleToMessage(Row row, int? resultCount) => {
       'entityTypes': (jsonDecode(row['entity_types_json'] as String) as List),
       'extensions': (jsonDecode(row['extensions_json'] as String) as List),
       'scopeNodeId': row['scope_node_id'],
+      'scopeMissing': row['scope_state'] == 'missing',
       'minSize': row['min_size'],
       'maxSize': row['max_size'],
       'modifiedWithinDays': row['modified_within_days'],
@@ -808,6 +811,7 @@ RuleDefinition _ruleFromMessage(Map<Object?, Object?> map) {
         .toList(growable: false),
     extensions: (map['extensions'] as List<Object?>).cast<String>(),
     scopeNodeId: map['scopeNodeId'] as String?,
+    scopeMissing: map['scopeMissing'] == true,
     minSize: map['minSize'] as int?,
     maxSize: map['maxSize'] as int?,
     modifiedWithinDays: map['modifiedWithinDays'] as int?,
