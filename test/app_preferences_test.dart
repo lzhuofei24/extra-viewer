@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:best_viewer/src/core/domain/models.dart';
 import 'package:best_viewer/src/ui/app_preferences.dart';
 import 'package:best_viewer/src/ui/browser_state.dart';
@@ -8,79 +9,100 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-
-  test('preferences use defaults and persist browser choices and preset',
+  test('browser choices and independent layout counts survive restart',
       () async {
     SharedPreferences.setMockInitialValues({});
-    final store = SharedPreferencesAppPreferencesStore(
-        await SharedPreferences.getInstance());
+    final prefs = await SharedPreferences.getInstance();
+    final store = SharedPreferencesAppPreferencesStore(prefs);
     final initial = await store.load();
-    expect(initial.themeChoice, ViewerThemeChoice.system);
-    expect(initial.sortMode, EntitySortMode.nameAsc);
-    expect(initial.displayMode, BrowserDisplayMode.grid);
-    expect(initial.gridLayout, BrowserGridLayout.equalHeight);
-    expect(initial.layoutPreset, GalleryLayoutPreset.standard);
-    expect(initial.folderCoverStyle, FolderCoverStyle.automatic);
     expect(initial.layout, const GalleryLayoutSettings());
-
+    final layout = initial.layout.copyWith(
+        portraitEqualWidthColumns: 7,
+        landscapeEqualWidthColumns: 5,
+        portraitSquareColumns: 2,
+        landscapeSquareColumns: 6,
+        portraitEqualHeightRows: 4,
+        landscapeEqualHeightRows: 3,
+        portraitFolderColumns: 2,
+        landscapeFolderColumns: 5,
+        landscapeListColumns: 2);
     await store.save(initial.copyWith(
-      themeChoice: ViewerThemeChoice.galleryDark,
-      sortMode: EntitySortMode.sizeDesc,
-      displayMode: BrowserDisplayMode.list,
-      gridLayout: BrowserGridLayout.square,
-      listStyle: BrowserListStyle.compact,
-      folderCoverStyle: FolderCoverStyle.stacked,
-      layoutPreset: GalleryLayoutPreset.compact,
-    ));
-    final restored = await store.load();
+        layout: layout,
+        themeChoice: ViewerThemeChoice.galleryDark,
+        sortMode: EntitySortMode.sizeDesc,
+        displayMode: BrowserDisplayMode.list,
+        gridLayout: BrowserGridLayout.square,
+        listStyle: BrowserListStyle.compact,
+        folderCoverStyle: FolderCoverStyle.stacked));
+    final restored = await SharedPreferencesAppPreferencesStore(prefs).load();
+    expect(restored.layout, layout);
     expect(restored.themeChoice, ViewerThemeChoice.galleryDark);
     expect(restored.sortMode, EntitySortMode.sizeDesc);
-    expect(restored.displayMode, BrowserDisplayMode.list);
-    expect(restored.gridLayout, BrowserGridLayout.square);
     expect(restored.listStyle, BrowserListStyle.compact);
     expect(restored.folderCoverStyle, FolderCoverStyle.stacked);
-    expect(restored.layoutPreset, GalleryLayoutPreset.compact);
-    expect(restored.layout.portraitFolderColumns, 4);
+    expect(restored.gridLayout, BrowserGridLayout.square);
   });
 
-  test('invalid and old granular values use the standard preset', () async {
+  test('old presets are ignored and invalid counts clamp or fall back',
+      () async {
     SharedPreferences.setMockInitialValues({
-      'preferences.theme': 'removed-theme',
-      'preferences.browser.display': 'removed-display',
+      'preferences.gallery.preset': 'compact',
       'preferences.browser.layout': 'adaptive',
-      'preferences.gallery.preset': 'removed-preset',
-      'preferences.gallery.page_margin': 24.0,
+      'preferences.gallery.counts.v1': jsonEncode({
+        'portraitEqualWidthColumns': 0,
+        'landscapeSquareColumns': 99,
+        'portraitEqualHeightRows': 'bad',
+        'landscapeListColumns': 9,
+      }),
     });
-    final store = SharedPreferencesAppPreferencesStore(
-        await SharedPreferences.getInstance());
-    final value = await store.load();
-    expect(value.themeChoice, ViewerThemeChoice.system);
-    expect(value.displayMode, BrowserDisplayMode.grid);
+    final value = await SharedPreferencesAppPreferencesStore(
+            await SharedPreferences.getInstance())
+        .load();
     expect(value.gridLayout, BrowserGridLayout.equalHeight);
-    expect(value.listStyle, BrowserListStyle.normal);
-    expect(value.layoutPreset, GalleryLayoutPreset.standard);
-    expect(value.layout.pageMargin, 8);
+    expect(value.layout.portraitEqualWidthColumns, 1);
+    expect(value.layout.landscapeSquareColumns, 8);
+    expect(value.layout.portraitEqualHeightRows, 3);
+    expect(value.layout.landscapeListColumns, 3);
+    expect(value.layout.cardGap, 8);
   });
 
-  test('controller serializes preset changes independently', () async {
+  test('corrupt layout preferences recover without losing theme', () async {
+    SharedPreferences.setMockInitialValues({
+      'preferences.theme': 'galleryDark',
+      'preferences.gallery.counts.v1': 'invalid json',
+    });
+    final value = await SharedPreferencesAppPreferencesStore(
+            await SharedPreferences.getInstance())
+        .load();
+    expect(value.layout, const GalleryLayoutSettings());
+    expect(value.themeChoice, ViewerThemeChoice.galleryDark);
+  });
+
+  test('controller serializes count changes without replacing browser choices',
+      () async {
     final store = MemoryAppPreferencesStore();
     final controller = await AppPreferencesController.load(store);
-    controller.setTheme(ViewerThemeChoice.galleryLight);
     controller.setBrowser(displayMode: BrowserDisplayMode.list);
-    controller.setLayoutPreset(GalleryLayoutPreset.spacious);
+    controller
+        .setLayout(controller.value.layout.copyWith(portraitFolderColumns: 2));
+    controller
+        .setLayout(controller.value.layout.copyWith(landscapeListColumns: 1));
     await controller.flush();
-    expect(store.value.themeChoice, ViewerThemeChoice.galleryLight);
     expect(store.value.displayMode, BrowserDisplayMode.list);
-    expect(store.value.layoutPreset, GalleryLayoutPreset.spacious);
     expect(store.value.layout.portraitFolderColumns, 2);
+    expect(store.value.layout.landscapeListColumns, 1);
+    controller.dispose();
   });
 
-  test('layout preset values match the product density contract', () {
-    expect(GalleryLayoutPreset.compact.settings.portraitFolderColumns, 4);
-    expect(GalleryLayoutPreset.standard.settings.portraitFolderColumns, 3);
-    expect(GalleryLayoutPreset.spacious.settings.portraitFolderColumns, 2);
-    expect(GalleryLayoutPreset.compact.settings.folderHeight, 240);
-    expect(GalleryLayoutPreset.standard.settings.folderHeight, 320);
-    expect(GalleryLayoutPreset.spacious.settings.folderHeight, 400);
+  test('equal-height density uses viewport and orientation', () {
+    const layout = GalleryLayoutSettings();
+    expect(layout.equalHeight(isPortrait: true, viewportHeight: 900),
+        (900 - 16 - 16) / 3);
+    expect(layout.equalHeight(isPortrait: false, viewportHeight: 500),
+        (500 - 16 - 8) / 2);
+    expect(
+        layout.equalHeight(
+            isPortrait: true, viewportHeight: 900, immersive: true),
+        (900 - 16 - 2) / 3);
   });
 }

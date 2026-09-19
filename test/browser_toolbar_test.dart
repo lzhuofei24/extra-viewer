@@ -22,8 +22,8 @@ void main() {
           onFolderCoverChanged: (_) {},
           themeChoice: ViewerThemeChoice.system,
           onThemeChanged: (_) {},
-          layoutPreset: GalleryLayoutPreset.standard,
-          onLayoutPresetChanged: (_) {},
+          layoutSettings: const GalleryLayoutSettings(),
+          onLayoutChanged: (_) {},
           onSearch: () {},
           onToggleImmersive: () {},
           onToggleSelection: () {},
@@ -54,7 +54,7 @@ void main() {
     expect(find.text('主题'), findsOneWidget);
     expect(find.text('布局'), findsOneWidget);
     expect(find.text('新建分类'), findsNothing);
-    await tester.tap(find.byTooltip('浏览选项'));
+    await tester.tapAt(const Offset(20, 580));
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.more_vert_rounded), findsNothing);
     expect(find.byTooltip('选择模式'), findsOneWidget);
@@ -75,8 +75,8 @@ void main() {
           onListStyleChanged: (_) {},
           themeChoice: ViewerThemeChoice.system,
           onThemeChanged: (_) {},
-          layoutPreset: GalleryLayoutPreset.standard,
-          onLayoutPresetChanged: (_) {},
+          layoutSettings: const GalleryLayoutSettings(),
+          onLayoutChanged: (_) {},
         ),
       ),
     ));
@@ -85,7 +85,7 @@ void main() {
     expect(find.text('显示'), findsOneWidget);
     expect(find.text('文件夹封面'), findsNothing);
     expect(find.text('文本'), findsOneWidget);
-    expect(find.text('紧凑'), findsNWidgets(2));
+    expect(find.text('紧凑'), findsOneWidget);
     expect(find.text('正常'), findsOneWidget);
     expect(find.text('卡片对齐方式'), findsNothing);
   });

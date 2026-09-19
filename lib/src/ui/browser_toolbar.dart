@@ -32,8 +32,10 @@ class BrowserToolbar extends StatelessWidget {
     required this.onListStyleChanged,
     required this.themeChoice,
     required this.onThemeChanged,
-    required this.layoutPreset,
-    required this.onLayoutPresetChanged,
+    required this.layoutSettings,
+    this.showFiles = true,
+    this.showFolders = true,
+    required this.onLayoutChanged,
     this.onFolderCoverChanged,
     this.onSearch,
     this.onAdd,
@@ -57,8 +59,9 @@ class BrowserToolbar extends StatelessWidget {
   final ValueChanged<BrowserListStyle> onListStyleChanged;
   final ViewerThemeChoice themeChoice;
   final ValueChanged<ViewerThemeChoice> onThemeChanged;
-  final GalleryLayoutPreset layoutPreset;
-  final ValueChanged<GalleryLayoutPreset> onLayoutPresetChanged;
+  final GalleryLayoutSettings layoutSettings;
+  final bool showFiles, showFolders;
+  final ValueChanged<GalleryLayoutSettings> onLayoutChanged;
   final ValueChanged<FolderCoverStyle>? onFolderCoverChanged;
   final VoidCallback? onSearch;
   final VoidCallback? onAdd;
@@ -114,8 +117,10 @@ class BrowserToolbar extends StatelessWidget {
                 onListStyleChanged: onListStyleChanged,
                 themeChoice: themeChoice,
                 onThemeChanged: onThemeChanged,
-                layoutPreset: layoutPreset,
-                onLayoutPresetChanged: onLayoutPresetChanged,
+                layoutSettings: layoutSettings,
+                showFiles: showFiles,
+                showFolders: showFolders,
+                onLayoutChanged: onLayoutChanged,
               ),
             ],
           );
@@ -171,8 +176,10 @@ class _BrowserOptionsMenu extends StatelessWidget {
     required this.onListStyleChanged,
     required this.themeChoice,
     required this.onThemeChanged,
-    required this.layoutPreset,
-    required this.onLayoutPresetChanged,
+    required this.layoutSettings,
+    this.showFiles = true,
+    this.showFolders = true,
+    required this.onLayoutChanged,
   });
 
   final bool allowSorting, allowGridStyle;
@@ -185,8 +192,63 @@ class _BrowserOptionsMenu extends StatelessWidget {
   final ValueChanged<BrowserListStyle> onListStyleChanged;
   final ViewerThemeChoice themeChoice;
   final ValueChanged<ViewerThemeChoice> onThemeChanged;
-  final GalleryLayoutPreset layoutPreset;
-  final ValueChanged<GalleryLayoutPreset> onLayoutPresetChanged;
+  final GalleryLayoutSettings layoutSettings;
+  final bool showFiles, showFolders;
+  final ValueChanged<GalleryLayoutSettings> onLayoutChanged;
+
+  List<Widget> _layoutControls(BuildContext context) {
+    final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
+    final settings = layoutSettings;
+    if (browserState.displayMode == BrowserDisplayMode.list) {
+      return [
+        if (portrait)
+          const Text('每行 1 项（竖屏）', style: TextStyle(color: Colors.black))
+        else
+          _LayoutCountControl(
+              label: '每行数量',
+              value: settings.landscapeListColumns,
+              max: 3,
+              onChanged: (v) =>
+                  onLayoutChanged(settings.copyWith(landscapeListColumns: v))),
+      ];
+    }
+    return [
+      if (showFiles && allowGridStyle) ...[
+        const Text('文件布局', style: TextStyle(color: Colors.black)),
+        if (browserState.gridLayout == BrowserGridLayout.equalHeight)
+          _LayoutCountControl(
+              label: '每屏行数',
+              value: settings.equalHeightRows(isPortrait: portrait),
+              max: 6,
+              onChanged: (v) => onLayoutChanged(portrait
+                  ? settings.copyWith(portraitEqualHeightRows: v)
+                  : settings.copyWith(landscapeEqualHeightRows: v)))
+        else if (browserState.gridLayout == BrowserGridLayout.equalWidth)
+          _LayoutCountControl(
+              label: '每行数量',
+              value: settings.equalWidthColumns(isPortrait: portrait),
+              onChanged: (v) => onLayoutChanged(portrait
+                  ? settings.copyWith(portraitEqualWidthColumns: v)
+                  : settings.copyWith(landscapeEqualWidthColumns: v)))
+        else
+          _LayoutCountControl(
+              label: '每行数量',
+              value: settings.squareColumns(isPortrait: portrait),
+              onChanged: (v) => onLayoutChanged(portrait
+                  ? settings.copyWith(portraitSquareColumns: v)
+                  : settings.copyWith(landscapeSquareColumns: v))),
+      ],
+      if (showFolders) ...[
+        const Text('文件夹布局', style: TextStyle(color: Colors.black)),
+        _LayoutCountControl(
+            label: '每行数量',
+            value: settings.folderColumns(isPortrait: portrait),
+            onChanged: (v) => onLayoutChanged(portrait
+                ? settings.copyWith(portraitFolderColumns: v)
+                : settings.copyWith(landscapeFolderColumns: v))),
+      ],
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -240,6 +302,32 @@ class _BrowserOptionsMenu extends StatelessWidget {
                     ),
                     const SizedBox(height: 12),
                   ],
+                  Text('主题', style: labelStyle),
+                  const SizedBox(height: 6),
+                  _GlassOptionSelector<ViewerThemeChoice>(
+                    values: const [
+                      ViewerThemeChoice.system,
+                      ViewerThemeChoice.galleryDark,
+                      ViewerThemeChoice.galleryLight,
+                    ],
+                    labels: const ['系统', '暗色', '亮色'],
+                    selected: themeChoice,
+                    onSelected: onThemeChanged,
+                  ),
+                  const SizedBox(height: 12),
+                  if (browserState.displayMode == BrowserDisplayMode.grid &&
+                      onFolderCoverChanged != null &&
+                      showFolders) ...[
+                    Text('文件夹封面', style: labelStyle),
+                    const SizedBox(height: 6),
+                    _GlassOptionSelector<FolderCoverStyle>(
+                      values: FolderCoverStyle.values,
+                      labels: const ['自动', '方形', '叠加'],
+                      selected: browserState.folderCoverStyle,
+                      onSelected: onFolderCoverChanged!,
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   Text('显示', style: labelStyle),
                   const SizedBox(height: 6),
                   _GlassOptionSelector<BrowserDisplayMode>(
@@ -284,43 +372,9 @@ class _BrowserOptionsMenu extends StatelessWidget {
                       ),
                     const SizedBox(height: 12),
                   ],
-                  if (browserState.displayMode == BrowserDisplayMode.grid &&
-                      onFolderCoverChanged != null) ...[
-                    Text('文件夹封面', style: labelStyle),
-                    const SizedBox(height: 6),
-                    _GlassOptionSelector<FolderCoverStyle>(
-                      values: FolderCoverStyle.values,
-                      labels: const ['自动', '方形', '叠加'],
-                      selected: browserState.folderCoverStyle,
-                      onSelected: onFolderCoverChanged!,
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  Text('主题', style: labelStyle),
-                  const SizedBox(height: 6),
-                  _GlassOptionSelector<ViewerThemeChoice>(
-                    values: const [
-                      ViewerThemeChoice.system,
-                      ViewerThemeChoice.galleryDark,
-                      ViewerThemeChoice.galleryLight,
-                    ],
-                    labels: const ['系统', '暗色', '亮色'],
-                    selected: themeChoice,
-                    onSelected: onThemeChanged,
-                  ),
-                  const SizedBox(height: 12),
                   Text('布局', style: labelStyle),
                   const SizedBox(height: 6),
-                  _GlassOptionSelector<GalleryLayoutPreset>(
-                    values: const [
-                      GalleryLayoutPreset.compact,
-                      GalleryLayoutPreset.standard,
-                      GalleryLayoutPreset.spacious,
-                    ],
-                    labels: const ['紧凑', '默认', '宽阔'],
-                    selected: layoutPreset,
-                    onSelected: onLayoutPresetChanged,
-                  ),
+                  ..._layoutControls(context),
                 ],
               ),
             ),
@@ -387,4 +441,45 @@ class _GlassOptionSelector<T> extends StatelessWidget {
       ),
     );
   }
+}
+
+class _LayoutCountControl extends StatelessWidget {
+  const _LayoutCountControl(
+      {required this.label,
+      required this.value,
+      required this.onChanged,
+      this.max = 8});
+  final String label;
+  final int value, max;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        alignment: WrapAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(color: Colors.black)),
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            IconButton(
+                tooltip: '减少$label',
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                onPressed: value > 1 ? () => onChanged(value - 1) : null,
+                icon: const Icon(Icons.remove),
+                color: Colors.black),
+            Semantics(
+                value: '$value',
+                child: SizedBox(
+                    width: 28,
+                    child: Text('$value',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.black)))),
+            IconButton(
+                tooltip: '增加$label',
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                onPressed: value < max ? () => onChanged(value + 1) : null,
+                icon: const Icon(Icons.add),
+                color: Colors.black),
+          ]),
+        ],
+      );
 }

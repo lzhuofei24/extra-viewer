@@ -1,106 +1,65 @@
 import 'package:flutter/foundation.dart';
 
-enum GalleryLayoutPreset {
-  compact('紧凑'),
-  standard('默认'),
-  spacious('宽阔');
-
-  const GalleryLayoutPreset(this.label);
-
-  final String label;
-
-  GalleryLayoutSettings get settings => switch (this) {
-        GalleryLayoutPreset.compact => const GalleryLayoutSettings(
-            pageMargin: 4,
-            cardGap: 4,
-            cardRadius: 8,
-            portraitEqualWidthColumns: 4,
-            landscapeEqualWidthColumns: 6,
-            portraitSquareColumns: 4,
-            landscapeSquareColumns: 5,
-            equalHeightTarget: 300,
-            folderHeight: 240,
-            portraitFolderColumns: 4,
-          ),
-        GalleryLayoutPreset.standard => const GalleryLayoutSettings(),
-        GalleryLayoutPreset.spacious => const GalleryLayoutSettings(
-            pageMargin: 16,
-            cardGap: 16,
-            cardRadius: 24,
-            portraitEqualWidthColumns: 2,
-            landscapeEqualWidthColumns: 3,
-            portraitSquareColumns: 2,
-            landscapeSquareColumns: 2,
-            equalHeightTarget: 500,
-            folderHeight: 400,
-            portraitFolderColumns: 2,
-          ),
-      };
-}
-
 @immutable
 class GalleryLayoutSettings {
   const GalleryLayoutSettings({
-    this.pageMargin = defaultPageMargin,
-    this.cardGap = defaultCardGap,
-    this.cardRadius = defaultCardRadius,
-    this.portraitEqualWidthColumns = defaultPortraitEqualWidthColumns,
-    this.landscapeEqualWidthColumns = defaultLandscapeEqualWidthColumns,
-    this.portraitSquareColumns = defaultPortraitSquareColumns,
-    this.landscapeSquareColumns = defaultLandscapeSquareColumns,
-    this.equalHeightTarget = defaultEqualHeightTarget,
-    this.folderHeight = defaultFolderHeight,
-    this.portraitFolderColumns = defaultPortraitFolderColumns,
+    this.portraitEqualWidthColumns = 3,
+    this.landscapeEqualWidthColumns = 4,
+    this.portraitSquareColumns = 3,
+    this.landscapeSquareColumns = 4,
+    this.portraitEqualHeightRows = 3,
+    this.landscapeEqualHeightRows = 2,
+    this.portraitFolderColumns = 3,
+    this.landscapeFolderColumns = 4,
+    this.landscapeListColumns = 3,
   });
 
-  static const double defaultPageMargin = 8;
-  static const double defaultCardGap = 8;
-  static const double defaultCardRadius = 16;
-  static const int defaultPortraitEqualWidthColumns = 3;
-  static const int defaultLandscapeEqualWidthColumns = 4;
-  static const int defaultPortraitSquareColumns = 3;
-  static const int defaultLandscapeSquareColumns = 3;
-  static const double defaultEqualHeightTarget = 400;
-  static const double defaultFolderHeight = 320;
-  static const int defaultPortraitFolderColumns = 3;
-
+  final double pageMargin = 8;
+  final double cardGap = 8;
+  final double cardRadius = 16;
   static const double immersiveMargin = 2;
   static const double immersiveGap = 1;
   static const double immersiveRadius = 2;
-
-  final double pageMargin;
-  final double cardGap;
-  final double cardRadius;
   final int portraitEqualWidthColumns;
   final int landscapeEqualWidthColumns;
   final int portraitSquareColumns;
   final int landscapeSquareColumns;
-  final double equalHeightTarget;
-  final double folderHeight;
+  final int portraitEqualHeightRows;
+  final int landscapeEqualHeightRows;
   final int portraitFolderColumns;
+  final int landscapeFolderColumns;
+  final int landscapeListColumns;
 
   int equalWidthColumns({required bool isPortrait}) =>
       isPortrait ? portraitEqualWidthColumns : landscapeEqualWidthColumns;
-
   int squareColumns({required bool isPortrait}) =>
       isPortrait ? portraitSquareColumns : landscapeSquareColumns;
+  int folderColumns({required bool isPortrait}) =>
+      isPortrait ? portraitFolderColumns : landscapeFolderColumns;
+  int equalHeightRows({required bool isPortrait}) =>
+      isPortrait ? portraitEqualHeightRows : landscapeEqualHeightRows;
+  double equalHeight(
+      {required bool isPortrait,
+      required double viewportHeight,
+      bool immersive = false}) {
+    final rows = equalHeightRows(isPortrait: isPortrait);
+    final gap = immersive ? immersiveGap : cardGap;
+    return ((viewportHeight - 2 * pageMargin - (rows - 1) * gap) / rows)
+        .clamp(48.0, double.infinity);
+  }
 
   GalleryLayoutSettings copyWith({
-    double? pageMargin,
-    double? cardGap,
-    double? cardRadius,
     int? portraitEqualWidthColumns,
     int? landscapeEqualWidthColumns,
     int? portraitSquareColumns,
     int? landscapeSquareColumns,
-    double? equalHeightTarget,
-    double? folderHeight,
+    int? portraitEqualHeightRows,
+    int? landscapeEqualHeightRows,
     int? portraitFolderColumns,
+    int? landscapeFolderColumns,
+    int? landscapeListColumns,
   }) =>
       GalleryLayoutSettings(
-        pageMargin: pageMargin ?? this.pageMargin,
-        cardGap: cardGap ?? this.cardGap,
-        cardRadius: cardRadius ?? this.cardRadius,
         portraitEqualWidthColumns:
             portraitEqualWidthColumns ?? this.portraitEqualWidthColumns,
         landscapeEqualWidthColumns:
@@ -109,49 +68,61 @@ class GalleryLayoutSettings {
             portraitSquareColumns ?? this.portraitSquareColumns,
         landscapeSquareColumns:
             landscapeSquareColumns ?? this.landscapeSquareColumns,
-        equalHeightTarget: equalHeightTarget ?? this.equalHeightTarget,
-        folderHeight: folderHeight ?? this.folderHeight,
+        portraitEqualHeightRows:
+            portraitEqualHeightRows ?? this.portraitEqualHeightRows,
+        landscapeEqualHeightRows:
+            landscapeEqualHeightRows ?? this.landscapeEqualHeightRows,
         portraitFolderColumns:
             portraitFolderColumns ?? this.portraitFolderColumns,
-      );
+        landscapeFolderColumns:
+            landscapeFolderColumns ?? this.landscapeFolderColumns,
+        landscapeListColumns: landscapeListColumns ?? this.landscapeListColumns,
+      ).normalized();
 
-  GalleryLayoutSettings normalized() => GalleryLayoutSettings(
-        pageMargin: pageMargin.clamp(0, 24),
-        cardGap: cardGap.clamp(0, 24),
-        cardRadius: cardRadius.clamp(0, 32),
-        portraitEqualWidthColumns: portraitEqualWidthColumns.clamp(1, 8),
-        landscapeEqualWidthColumns: landscapeEqualWidthColumns.clamp(1, 8),
-        portraitSquareColumns: portraitSquareColumns.clamp(1, 8),
-        landscapeSquareColumns: landscapeSquareColumns.clamp(1, 8),
-        equalHeightTarget: equalHeightTarget.clamp(160, 600),
-        folderHeight: folderHeight.clamp(140, 480),
-        portraitFolderColumns: portraitFolderColumns.clamp(1, 8),
-      );
+  Map<String, int> toMap() => {
+        'portraitEqualWidthColumns': portraitEqualWidthColumns,
+        'landscapeEqualWidthColumns': landscapeEqualWidthColumns,
+        'portraitSquareColumns': portraitSquareColumns,
+        'landscapeSquareColumns': landscapeSquareColumns,
+        'portraitEqualHeightRows': portraitEqualHeightRows,
+        'landscapeEqualHeightRows': landscapeEqualHeightRows,
+        'portraitFolderColumns': portraitFolderColumns,
+        'landscapeFolderColumns': landscapeFolderColumns,
+        'landscapeListColumns': landscapeListColumns,
+      };
+
+  factory GalleryLayoutSettings.fromMap(Map<String, Object?> values) {
+    int read(String key, int fallback, int max) {
+      final value = values[key];
+      return value is int ? value.clamp(1, max) : fallback;
+    }
+
+    return GalleryLayoutSettings(
+      portraitEqualWidthColumns: read('portraitEqualWidthColumns', 3, 8),
+      landscapeEqualWidthColumns: read('landscapeEqualWidthColumns', 4, 8),
+      portraitSquareColumns: read('portraitSquareColumns', 3, 8),
+      landscapeSquareColumns: read('landscapeSquareColumns', 4, 8),
+      portraitEqualHeightRows: read('portraitEqualHeightRows', 3, 6),
+      landscapeEqualHeightRows: read('landscapeEqualHeightRows', 2, 6),
+      portraitFolderColumns: read('portraitFolderColumns', 3, 8),
+      landscapeFolderColumns: read('landscapeFolderColumns', 4, 8),
+      landscapeListColumns: read('landscapeListColumns', 3, 3),
+    );
+  }
+  GalleryLayoutSettings normalized() => GalleryLayoutSettings.fromMap(toMap());
 
   @override
   bool operator ==(Object other) =>
       other is GalleryLayoutSettings &&
-      other.pageMargin == pageMargin &&
-      other.cardGap == cardGap &&
-      other.cardRadius == cardRadius &&
       other.portraitEqualWidthColumns == portraitEqualWidthColumns &&
       other.landscapeEqualWidthColumns == landscapeEqualWidthColumns &&
       other.portraitSquareColumns == portraitSquareColumns &&
       other.landscapeSquareColumns == landscapeSquareColumns &&
-      other.equalHeightTarget == equalHeightTarget &&
-      other.folderHeight == folderHeight &&
-      other.portraitFolderColumns == portraitFolderColumns;
-
+      other.portraitEqualHeightRows == portraitEqualHeightRows &&
+      other.landscapeEqualHeightRows == landscapeEqualHeightRows &&
+      other.portraitFolderColumns == portraitFolderColumns &&
+      other.landscapeFolderColumns == landscapeFolderColumns &&
+      other.landscapeListColumns == landscapeListColumns;
   @override
-  int get hashCode => Object.hash(
-      pageMargin,
-      cardGap,
-      cardRadius,
-      portraitEqualWidthColumns,
-      landscapeEqualWidthColumns,
-      portraitSquareColumns,
-      landscapeSquareColumns,
-      equalHeightTarget,
-      folderHeight,
-      portraitFolderColumns);
+  int get hashCode => Object.hashAll(toMap().values);
 }

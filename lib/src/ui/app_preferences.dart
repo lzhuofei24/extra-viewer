@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -17,7 +18,7 @@ class AppPreferencesData {
     this.gridLayout = BrowserGridLayout.equalHeight,
     this.folderCoverStyle = FolderCoverStyle.automatic,
     this.listStyle = BrowserListStyle.normal,
-    this.layoutPreset = GalleryLayoutPreset.standard,
+    this.layout = const GalleryLayoutSettings(),
   });
 
   final ViewerThemeChoice themeChoice;
@@ -26,8 +27,7 @@ class AppPreferencesData {
   final BrowserGridLayout gridLayout;
   final FolderCoverStyle folderCoverStyle;
   final BrowserListStyle listStyle;
-  final GalleryLayoutPreset layoutPreset;
-  GalleryLayoutSettings get layout => layoutPreset.settings;
+  final GalleryLayoutSettings layout;
 
   AppPreferencesData copyWith({
     ViewerThemeChoice? themeChoice,
@@ -36,7 +36,7 @@ class AppPreferencesData {
     BrowserGridLayout? gridLayout,
     BrowserListStyle? listStyle,
     FolderCoverStyle? folderCoverStyle,
-    GalleryLayoutPreset? layoutPreset,
+    GalleryLayoutSettings? layout,
   }) =>
       AppPreferencesData(
         themeChoice: themeChoice ?? this.themeChoice,
@@ -45,7 +45,7 @@ class AppPreferencesData {
         gridLayout: gridLayout ?? this.gridLayout,
         folderCoverStyle: folderCoverStyle ?? this.folderCoverStyle,
         listStyle: listStyle ?? this.listStyle,
-        layoutPreset: layoutPreset ?? this.layoutPreset,
+        layout: layout ?? this.layout,
       );
 }
 
@@ -69,7 +69,18 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
   static const _layoutKey = 'preferences.browser.layout';
   static const _folderCoverKey = 'preferences.browser.folderCover';
   static const _listStyleKey = 'preferences.browser.listStyle';
-  static const _galleryPresetKey = 'preferences.gallery.preset';
+  static const _galleryLayoutKey = 'preferences.gallery.counts.v1';
+
+  GalleryLayoutSettings _loadLayout() {
+    try {
+      final raw = jsonDecode(_preferences.getString(_galleryLayoutKey) ?? '{}');
+      return raw is Map<String, dynamic>
+          ? GalleryLayoutSettings.fromMap(raw)
+          : const GalleryLayoutSettings();
+    } catch (_) {
+      return const GalleryLayoutSettings();
+    }
+  }
 
   @override
   Future<AppPreferencesData> load() async => AppPreferencesData(
@@ -99,11 +110,7 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
             FolderCoverStyle.automatic),
         listStyle: _enumValue(BrowserListStyle.values,
             _preferences.getString(_listStyleKey), BrowserListStyle.normal),
-        layoutPreset: _enumValue(
-          GalleryLayoutPreset.values,
-          _preferences.getString(_galleryPresetKey),
-          GalleryLayoutPreset.standard,
-        ),
+        layout: _loadLayout(),
       );
 
   @override
@@ -115,7 +122,8 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
       _preferences.setString(_layoutKey, value.gridLayout.name),
       _preferences.setString(_folderCoverKey, value.folderCoverStyle.name),
       _preferences.setString(_listStyleKey, value.listStyle.name),
-      _preferences.setString(_galleryPresetKey, value.layoutPreset.name),
+      _preferences.setString(
+          _galleryLayoutKey, jsonEncode(value.layout.normalized().toMap())),
     ]);
   }
 }
@@ -169,8 +177,8 @@ class AppPreferencesController extends ChangeNotifier {
         folderCoverStyle: folderCoverStyle,
       ));
 
-  void setLayoutPreset(GalleryLayoutPreset value) =>
-      _update(_value.copyWith(layoutPreset: value));
+  void setLayout(GalleryLayoutSettings value) =>
+      _update(_value.copyWith(layout: value.normalized()));
 
   Future<void> flush() => _pendingWrite;
 

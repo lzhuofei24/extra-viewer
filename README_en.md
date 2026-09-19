@@ -75,10 +75,10 @@ The top floating **浏览选项** panel controls the current browsing experience
 - Card styles: equal height, equal width, or square.
 - List styles: text-only, compact, or normal.
 - Select the theme: system, light, or dark.
-- Select the layout density: compact, standard, or spacious.
+- Adjust columns for equal-width and square cards, or rows per screen for equal-height cards. Folder columns are configured separately.
 - Select folder covers: automatic, square, or stacked.
 
-Automatic folder covers use square compositions in portrait orientation and stacked covers in landscape orientation. In portrait mode, folder grids use 4 columns for compact, 3 for standard, and 2 for spacious. The chosen browsing preferences are saved locally.
+Automatic folder covers use square compositions in portrait orientation and stacked covers in landscape orientation. Counts are saved independently for each card style and orientation. Lists always use one column in portrait and support one to three columns in landscape. Browsing preferences are saved locally.
 
 Other browsing behavior is designed for repeated use:
 

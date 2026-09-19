@@ -90,10 +90,11 @@ void main() {
           modifiedAtMs: 1,
           thumbnailStatus: ThumbnailStatus.failed),
     };
-    for (final preset in GalleryLayoutPreset.values) {
+    for (final columns in [2, 3, 4]) {
       final requests = <String>[];
       await pumpRulePage(tester, queries,
-          preset: preset, onThumbnail: (e) => requests.add(e.id));
+          layout: GalleryLayoutSettings(portraitFolderColumns: columns),
+          onThumbnail: (e) => requests.add(e.id));
       expect(find.byType(BrowserNodeGridSliver), findsOneWidget);
       expect(find.byType(IndexNodePreviewCard), findsNWidgets(2));
       expect(find.byType(EntityArtwork), findsNWidgets(2));
@@ -101,7 +102,7 @@ void main() {
       expect(
           (grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount)
               .crossAxisCount,
-          preset.settings.portraitFolderColumns);
+          columns);
       expect(requests, contains('image'));
       expect(requests, isNot(contains('failed')));
       expect(find.byTooltip('新建规则'), findsOneWidget);
@@ -349,7 +350,7 @@ Future<void> pumpRulePage(WidgetTester tester, Queries queries,
     ValueChanged<bool>? onSelection,
     ValueChanged<BrowserState>? onBrowserChanged,
     ValueChanged<EntityListItem>? onThumbnail,
-    GalleryLayoutPreset preset = GalleryLayoutPreset.standard,
+    GalleryLayoutSettings layout = const GalleryLayoutSettings(),
     double textScale = 1}) async {
   final prefs = AppPreferencesController.memory();
   addTearDown(prefs.dispose);
@@ -362,7 +363,7 @@ Future<void> pumpRulePage(WidgetTester tester, Queries queries,
           body: RuleIndexPage(
         queries: queries,
         browserState: state,
-        layoutSettings: preset.settings,
+        layoutSettings: layout,
         preferences: prefs,
         onOpenEntity: (_, __) {},
         onThumbnailNeeded: onThumbnail ?? (_) {},

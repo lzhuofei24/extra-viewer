@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'browser_state.dart';
 
 class BrowserListMetrics {
-  static int columns(BuildContext context) =>
-      MediaQuery.orientationOf(context) == Orientation.portrait ? 1 : 3;
+  static int columns(BuildContext context, {int landscapeColumns = 3}) =>
+      MediaQuery.orientationOf(context) == Orientation.portrait
+          ? 1
+          : landscapeColumns.clamp(1, 3);
   static double previewSize(BrowserListStyle style) => switch (style) {
         BrowserListStyle.text => 0,
         BrowserListStyle.compact => 36,
@@ -25,17 +27,20 @@ class BrowserListMetrics {
 class BrowserListSliver extends StatelessWidget {
   const BrowserListSliver(
       {super.key,
+      this.landscapeColumns = 3,
       required this.count,
       required this.style,
       required this.padding,
       required this.itemBuilder});
+  final int landscapeColumns;
   final int count;
   final BrowserListStyle style;
   final double padding;
   final IndexedWidgetBuilder itemBuilder;
   @override
   Widget build(BuildContext context) {
-    final columns = BrowserListMetrics.columns(context);
+    final columns =
+        BrowserListMetrics.columns(context, landscapeColumns: landscapeColumns);
     final rows = (count + columns - 1) ~/ columns;
     return SliverPadding(
       padding: EdgeInsets.fromLTRB(padding, padding, padding, 0),

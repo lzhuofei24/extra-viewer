@@ -41,9 +41,13 @@ class JustifiedEntityGallerySliver extends StatelessWidget {
     final horizontalPadding = immersive
         ? GalleryLayoutSettings.immersiveMargin
         : layoutSettings.pageMargin;
-    final targetHeight = layoutSettings.equalHeightTarget;
     return SliverLayoutBuilder(
       builder: (context, constraints) {
+        final targetHeight = layoutSettings.equalHeight(
+          isPortrait: MediaQuery.orientationOf(context) == Orientation.portrait,
+          viewportHeight: constraints.viewportMainAxisExtent,
+          immersive: immersive,
+        );
         final rows = JustifiedGalleryLayout.calculate(
           items: entities,
           availableWidth: constraints.crossAxisExtent - horizontalPadding * 2,

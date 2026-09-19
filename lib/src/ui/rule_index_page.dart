@@ -206,6 +206,8 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
   }
 
   Widget _toolbar(RuleDefinition? rule) => BrowserToolbar(
+        showFiles: rule != null,
+        showFolders: rule == null,
         leading: BrowserPathRail(
             currentNode: rule?.node,
             path: [if (rule != null) rule.node],
@@ -231,8 +233,8 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
             .onBrowserStateChanged(widget.browserState.copyWith(listStyle: v)),
         themeChoice: widget.preferences.value.themeChoice,
         onThemeChanged: widget.preferences.setTheme,
-        layoutPreset: widget.preferences.value.layoutPreset,
-        onLayoutPresetChanged: widget.preferences.setLayoutPreset,
+        layoutSettings: widget.preferences.value.layout,
+        onLayoutChanged: widget.preferences.setLayout,
         onSearch: widget.onSearch,
         onFolderCoverChanged: rule == null
             ? (value) => widget.onBrowserStateChanged(
@@ -256,6 +258,7 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
   Widget _homeSliver() {
     if (widget.browserState.displayMode == BrowserDisplayMode.list) {
       return BrowserListSliver(
+          landscapeColumns: widget.layoutSettings.landscapeListColumns,
           count: _controller.rules.length,
           style: widget.browserState.listStyle,
           padding: widget.layoutSettings.pageMargin,

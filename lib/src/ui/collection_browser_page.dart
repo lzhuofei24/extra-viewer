@@ -43,8 +43,7 @@ class CollectionBrowserPage extends StatelessWidget {
     required this.onListStyleChanged,
     required this.themeChoice,
     required this.onThemeChanged,
-    required this.layoutPreset,
-    required this.onLayoutPresetChanged,
+    required this.onLayoutChanged,
     required this.immersiveBrowsing,
     required this.onToggleImmersiveBrowsing,
     required this.selectionMode,
@@ -105,8 +104,7 @@ class CollectionBrowserPage extends StatelessWidget {
   final ValueChanged<BrowserListStyle> onListStyleChanged;
   final ViewerThemeChoice themeChoice;
   final ValueChanged<ViewerThemeChoice> onThemeChanged;
-  final GalleryLayoutPreset layoutPreset;
-  final ValueChanged<GalleryLayoutPreset> onLayoutPresetChanged;
+  final ValueChanged<GalleryLayoutSettings> onLayoutChanged;
   final bool immersiveBrowsing;
   final VoidCallback onToggleImmersiveBrowsing;
   final bool selectionMode;
@@ -192,6 +190,8 @@ class CollectionBrowserPage extends StatelessWidget {
                     if (hasNodes && currentNode == null)
                       (listMode
                           ? _NodeListSliver(
+                              landscapeColumns:
+                                  layoutSettings.landscapeListColumns,
                               style: browserState.listStyle,
                               previews: nodePreviews,
                               nodes: visibleNodes,
@@ -219,6 +219,8 @@ class CollectionBrowserPage extends StatelessWidget {
                     if (hasNodes && currentNode != null)
                       listMode
                           ? _NodeListSliver(
+                              landscapeColumns:
+                                  layoutSettings.landscapeListColumns,
                               style: browserState.listStyle,
                               previews: nodePreviews,
                               nodes: childNodes,
@@ -326,6 +328,11 @@ class CollectionBrowserPage extends StatelessWidget {
         ),
       ),
       toolbar: _PathBar(
+        showFiles: immersiveBrowsing ||
+            entities.isNotEmpty ||
+            (currentNode != null && childNodes.isEmpty),
+        showFolders: !immersiveBrowsing &&
+            (childNodes.isNotEmpty || currentNode == null),
         onAdd: onAdd,
         onFolderCoverChanged: onFolderCoverChanged,
         addLabel: addLabel,
@@ -341,8 +348,8 @@ class CollectionBrowserPage extends StatelessWidget {
         onListStyleChanged: onListStyleChanged,
         themeChoice: themeChoice,
         onThemeChanged: onThemeChanged,
-        layoutPreset: layoutPreset,
-        onLayoutPresetChanged: onLayoutPresetChanged,
+        layoutSettings: layoutSettings,
+        onLayoutChanged: onLayoutChanged,
         immersiveBrowsing: immersiveBrowsing,
         onToggleImmersiveBrowsing: onToggleImmersiveBrowsing,
         selectionMode: selectionMode,
@@ -406,6 +413,8 @@ class CollectionBrowserPage extends StatelessWidget {
 
 class _PathBar extends StatelessWidget {
   const _PathBar({
+    required this.showFiles,
+    required this.showFolders,
     this.onSearchNodes,
     this.onFolderCoverChanged,
     this.onAdd,
@@ -421,8 +430,8 @@ class _PathBar extends StatelessWidget {
     required this.onListStyleChanged,
     required this.themeChoice,
     required this.onThemeChanged,
-    required this.layoutPreset,
-    required this.onLayoutPresetChanged,
+    required this.layoutSettings,
+    required this.onLayoutChanged,
     required this.immersiveBrowsing,
     required this.onToggleImmersiveBrowsing,
     required this.selectionMode,
@@ -436,6 +445,7 @@ class _PathBar extends StatelessWidget {
     required this.onCreateNode,
   });
 
+  final bool showFiles, showFolders;
   final IndexNode? currentNode;
   final List<IndexNode> path;
   final VoidCallback? onSearchNodes;
@@ -451,8 +461,8 @@ class _PathBar extends StatelessWidget {
   final ValueChanged<BrowserListStyle> onListStyleChanged;
   final ViewerThemeChoice themeChoice;
   final ValueChanged<ViewerThemeChoice> onThemeChanged;
-  final GalleryLayoutPreset layoutPreset;
-  final ValueChanged<GalleryLayoutPreset> onLayoutPresetChanged;
+  final GalleryLayoutSettings layoutSettings;
+  final ValueChanged<GalleryLayoutSettings> onLayoutChanged;
   final bool immersiveBrowsing;
   final VoidCallback onToggleImmersiveBrowsing;
   final bool selectionMode;
@@ -468,6 +478,9 @@ class _PathBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BrowserToolbar(
+      showFiles: showFiles,
+      showFolders: showFolders,
+      allowGridStyle: showFiles,
       leading: BrowserPathRail(
         currentNode: currentNode,
         path: path,
@@ -481,8 +494,8 @@ class _PathBar extends StatelessWidget {
       onListStyleChanged: onListStyleChanged,
       themeChoice: themeChoice,
       onThemeChanged: onThemeChanged,
-      layoutPreset: layoutPreset,
-      onLayoutPresetChanged: onLayoutPresetChanged,
+      layoutSettings: layoutSettings,
+      onLayoutChanged: onLayoutChanged,
       onSearch: onSearchNodes,
       onAdd: onAdd,
       onFolderCoverChanged: onFolderCoverChanged,
@@ -583,7 +596,8 @@ bool _rootTabMatchesNode(BrowserRootTab tab, IndexNode node) {
 
 class _NodeListSliver extends StatelessWidget {
   const _NodeListSliver(
-      {required this.nodes,
+      {required this.landscapeColumns,
+      required this.nodes,
       required this.summaries,
       required this.previews,
       required this.style,
@@ -596,6 +610,7 @@ class _NodeListSliver extends StatelessWidget {
   final List<IndexNode> nodes;
   final Map<String, IndexNodeSummary> summaries;
   final Map<String, IndexNodePreview> previews;
+  final int landscapeColumns;
   final BrowserListStyle style;
   final ValueChanged<IndexNode> onOpenNode,
       onToggleNodeSelection,
@@ -605,6 +620,7 @@ class _NodeListSliver extends StatelessWidget {
   final double horizontalPadding;
   @override
   Widget build(BuildContext context) => BrowserListSliver(
+      landscapeColumns: landscapeColumns,
       count: nodes.length,
       style: style,
       padding: horizontalPadding,

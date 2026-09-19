@@ -2997,7 +2997,6 @@ class _AppShellState extends State<AppShell> {
           hasMoreEntities: _entitiesHasMore,
           loadingMoreEntities: _loadingMoreEntities,
           browserState: _browserState,
-          layoutSettings: widget.preferences.value.layout,
           onOpenRootIndex: _openRootIndex,
           onSortChanged: (value) {
             setState(
@@ -3013,8 +3012,8 @@ class _AppShellState extends State<AppShell> {
           onListStyleChanged: _setListStyle,
           themeChoice: widget.preferences.value.themeChoice,
           onThemeChanged: widget.preferences.setTheme,
-          layoutPreset: widget.preferences.value.layoutPreset,
-          onLayoutPresetChanged: widget.preferences.setLayoutPreset,
+          layoutSettings: widget.preferences.value.layout,
+          onLayoutChanged: widget.preferences.setLayout,
           onGridLayoutChanged: (value) {
             setState(() => _browserState = _browserState.copyWith(
                   gridLayout: value,

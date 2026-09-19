@@ -1,3 +1,4 @@
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:flutter/material.dart';
 import '../core/domain/models.dart';
 import 'gallery_layout_settings.dart';
@@ -97,7 +98,6 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
   Widget build(BuildContext context) {
     final gap = layoutSettings.cardGap;
     final margin = layoutSettings.pageMargin;
-    final targetHeight = layoutSettings.folderHeight;
     final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
     final square = folderCoverStyle == FolderCoverStyle.square ||
         (folderCoverStyle == FolderCoverStyle.automatic && portrait);
@@ -106,9 +106,7 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
         padding: EdgeInsets.fromLTRB(margin, 0, margin, margin),
         sliver: SliverGrid.builder(
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: portrait
-                ? layoutSettings.portraitFolderColumns
-                : layoutSettings.landscapeSquareColumns,
+            crossAxisCount: layoutSettings.folderColumns(isPortrait: portrait),
             mainAxisSpacing: gap,
             crossAxisSpacing: gap,
           ),
@@ -120,51 +118,15 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
         ),
       );
     }
-    return SliverLayoutBuilder(
-      builder: (context, constraints) {
-        final rows = _FixedHeightNodeRows.calculate(
-          nodes: nodes,
-          availableWidth: constraints.crossAxisExtent - margin * 2,
-          height: targetHeight,
-          gap: gap,
-          aspectRatio: (node) =>
-              coverAspectRatio?.call(node) ??
-              indexNodePreviewAspectRatio(previews[node.id]),
-        );
-        return SliverPadding(
-          padding: EdgeInsets.fromLTRB(margin, 0, margin, margin),
-          sliver: SliverList.builder(
-            itemCount: rows.length,
-            itemBuilder: (context, rowIndex) {
-              final row = rows[rowIndex];
-              return Padding(
-                padding: EdgeInsets.only(bottom: gap),
-                child: SizedBox(
-                  height: targetHeight,
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        for (var index = 0; index < row.nodes.length; index++)
-                          Padding(
-                            padding: EdgeInsets.only(
-                              right: index == row.nodes.length - 1 ? 0 : gap,
-                            ),
-                            child: SizedBox(
-                              width: row.widths[index],
-                              height: targetHeight,
-                              child: _nodeCard(row.nodes[index]),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        );
-      },
+    return SliverPadding(
+      padding: EdgeInsets.fromLTRB(margin, 0, margin, margin),
+      sliver: SliverMasonryGrid.count(
+        crossAxisCount: layoutSettings.folderColumns(isPortrait: portrait),
+        mainAxisSpacing: gap,
+        crossAxisSpacing: gap,
+        childCount: nodes.length,
+        itemBuilder: (context, index) => _nodeCard(nodes[index]),
+      ),
     );
   }
 
@@ -188,56 +150,6 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
       internalGap: layoutSettings.cardGap,
     );
   }
-}
-
-class _FixedHeightNodeRows {
-  const _FixedHeightNodeRows._();
-
-  static List<_FixedHeightNodeRow> calculate({
-    required List<IndexNode> nodes,
-    required double availableWidth,
-    required double height,
-    required double gap,
-    required double Function(IndexNode node) aspectRatio,
-  }) {
-    if (nodes.isEmpty || availableWidth <= 0 || height <= 0) return const [];
-    final rows = <_FixedHeightNodeRow>[];
-    final pending = <IndexNode>[];
-    final widths = <double>[];
-    var occupiedWidth = 0.0;
-
-    void commit() {
-      if (pending.isEmpty) return;
-      rows.add(_FixedHeightNodeRow(
-        nodes: List.unmodifiable(pending),
-        widths: List.unmodifiable(widths),
-      ));
-      pending.clear();
-      widths.clear();
-      occupiedWidth = 0;
-    }
-
-    for (final node in nodes) {
-      final width = (aspectRatio(node).clamp(.12, 8) * height).toDouble();
-      final requiredWidth = pending.isEmpty ? width : gap + width;
-      if (pending.isNotEmpty &&
-          occupiedWidth + requiredWidth > availableWidth) {
-        commit();
-      }
-      pending.add(node);
-      widths.add(width);
-      occupiedWidth += pending.length == 1 ? width : gap + width;
-    }
-    commit();
-    return rows;
-  }
-}
-
-class _FixedHeightNodeRow {
-  const _FixedHeightNodeRow({required this.nodes, required this.widths});
-
-  final List<IndexNode> nodes;
-  final List<double> widths;
 }
 
 class IndexNodePreviewCard extends StatelessWidget {
