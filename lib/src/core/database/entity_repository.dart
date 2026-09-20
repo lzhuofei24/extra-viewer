@@ -388,17 +388,62 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
         scrollOffset == null ? null : (scrollOffset < 0 ? 0.0 : scrollOffset);
     final safeZoomScale =
         zoomScale == null || zoomScale <= 0 ? null : zoomScale;
+    Map<String, dynamic>? settings;
+    Map<String, dynamic>? anchor;
+    if (extraStateJson != null) {
+      settings = (jsonDecode(extraStateJson) as Map).cast<String, dynamic>();
+      final value = settings['readingPosition'];
+      if (value is Map &&
+          value['version'] == 1 &&
+          const ['pdf', 'reflow'].contains(value['kind'])) {
+        anchor = value.cast<String, dynamic>();
+        settings.remove('readingPosition');
+        if (anchor['kind'] == 'pdf') settings.remove('pdfPage');
+      } else if (value != null) {
+        throw ArgumentError('Unsupported reading position');
+      }
+    }
     _enqueueBackgroundWrite(
       'save_reader_state',
       '''
-      INSERT INTO entity_progress(entity_id,reader_scroll_offset,zoom_scale,extra_state_json,updated_at)
-      VALUES(?,?,?,?,?) ON CONFLICT(entity_id) DO UPDATE SET
+      INSERT INTO entity_progress(entity_id,reader_scroll_offset,zoom_scale,settings_json,updated_at,
+        reading_kind,reading_version,document_revision,chapter_index,chapter_title,page_index,
+        block_index,block_key,block_fraction,reading_mode,reading_offset)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(entity_id) DO UPDATE SET
         reader_scroll_offset=COALESCE(excluded.reader_scroll_offset,reader_scroll_offset),
         zoom_scale=COALESCE(excluded.zoom_scale,zoom_scale),
-        extra_state_json=COALESCE(excluded.extra_state_json,extra_state_json),
+        settings_json=COALESCE(excluded.settings_json,settings_json),
+        reading_kind=COALESCE(excluded.reading_kind,reading_kind),
+        reading_version=COALESCE(excluded.reading_version,reading_version),
+        document_revision=COALESCE(excluded.document_revision,document_revision),
+        chapter_index=CASE WHEN excluded.reading_kind IS NULL THEN chapter_index ELSE excluded.chapter_index END,
+        chapter_title=CASE WHEN excluded.reading_kind IS NULL THEN chapter_title ELSE excluded.chapter_title END,
+        page_index=CASE WHEN excluded.reading_kind IS NULL THEN page_index ELSE excluded.page_index END,
+        block_index=CASE WHEN excluded.reading_kind IS NULL THEN block_index ELSE excluded.block_index END,
+        block_key=CASE WHEN excluded.reading_kind IS NULL THEN block_key ELSE excluded.block_key END,
+        block_fraction=CASE WHEN excluded.reading_kind IS NULL THEN block_fraction ELSE excluded.block_fraction END,
+        reading_mode=CASE WHEN excluded.reading_kind IS NULL THEN reading_mode ELSE excluded.reading_mode END,
+        reading_offset=CASE WHEN excluded.reading_kind IS NULL THEN reading_offset ELSE excluded.reading_offset END,
         updated_at=excluded.updated_at
       ''',
-      [entityId, safeScrollOffset, safeZoomScale, extraStateJson, nowMillis()],
+      [
+        entityId,
+        safeScrollOffset,
+        safeZoomScale,
+        settings == null ? null : jsonEncode(settings),
+        nowMillis(),
+        anchor?['kind'],
+        anchor?['version'],
+        anchor?['sourceRevision'],
+        anchor?['chapter'],
+        anchor?['chapterTitle'],
+        anchor?['page'],
+        anchor?['block'],
+        anchor?['blockKey'],
+        anchor?['blockFraction'],
+        anchor?['mode'],
+        anchor?['scrollOffset']
+      ],
     );
   }
 

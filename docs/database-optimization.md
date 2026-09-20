@@ -1,5 +1,33 @@
 # Database optimization execution record
 
+## Current storage policy (schema 14)
+
+The user explicitly discarded old library data and migration requirements.
+Schema 14 directly creates schema_current.dart; schema 6-13 migration scripts,
+legacy asset registration and upgrade/snapshot tests have been removed.
+Recognized older file-backed libraries are reset on first open, together with
+their exact app-generated database sidecars, backups and preview caches. A
+reset marker permits retry after interruption. Current-version libraries and
+unknown/future databases are not automatically reset. Original source files,
+signing keys and appearance preferences are not cleanup targets.
+
+Reading state now stores document revision, chapter, page, block anchor and
+offset in typed columns. Only remaining reader preferences use settings_json;
+entity_details reconstructs the existing UI DTO without dual-writing anchors.
+Boolean/range/enumeration CHECK constraints and parent-type guards are part of
+the fresh schema. System favorites and five rules are seeded exactly once.
+
+The sections below are historical implementation evidence, not the current
+migration policy. Migration-chain preservation/fault acceptance is cancelled.
+The broader runtime performance and asset-lease tasks remain separate work.
+
+Validation: static analysis passed, all 194 current tests passed, and signed
+Android arm64 Release APK built successfully. No device was connected. The
+explicit desktop legacy-data deletion command was rejected by automatic
+approval policy ("blocked by policy"); those desktop files were not deleted.
+Device data will only be reset when this version opens an older recognized
+library. No push or installation was performed.
+
 ## Scope
 
 Preserve entity IDs, user relationships, rules, playback/reading state and

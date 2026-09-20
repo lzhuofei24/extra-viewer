@@ -1,25 +1,13 @@
 import 'dart:io';
-
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/sqlite3.dart';
+import 'schema_current.dart';
 
-import 'schema_v6.dart';
-import 'schema_v7.dart';
-import 'schema_v8.dart';
-import 'schema_v9.dart';
-import 'schema_v10.dart';
-import 'schema_v11.dart';
-import 'schema_v12.dart';
-import 'schema_v13.dart';
-import 'preview_asset_catalog.dart';
-
-/// SQLite storage and additive migrations, owned by database workers.
+/// App-owned storage. This release starts a new library without migration.
 class AppDatabase {
   AppDatabase._(this.db, this.storageDirectoryPath, this.databasePath);
-
-  static const currentSchemaVersion = 13;
-
+  static const currentSchemaVersion = 14;
   final Database db;
   final String storageDirectoryPath;
   final String? databasePath;
@@ -27,75 +15,158 @@ class AppDatabase {
 
   static Future<AppDatabase> open() async {
     final dir = await getApplicationSupportDirectory();
-    await dir.create(recursive: true);
-    return _openAtPath(p.join(dir.path, 'best_viewer.db'), dir.path);
+    return openAtPath(p.join(dir.path, 'best_viewer.db'));
   }
 
-  static AppDatabase openInMemory() {
-    final dir = Directory.systemTemp.createTempSync('best_viewer_test_');
-    return _openDatabase(sqlite3.openInMemory(), dir.path, null);
-  }
+  static AppDatabase openInMemory() => openForTesting(sqlite3.openInMemory());
+  static AppDatabase openForTesting(Database database) => _initialize(database,
+      Directory.systemTemp.createTempSync('best_viewer_test_').path, null);
+  static AppDatabase openAtPathForTesting(String path) => openAtPath(path);
 
-  static AppDatabase openForTesting(Database database) {
-    final dir = Directory.systemTemp.createTempSync('best_viewer_test_');
-    return _openDatabase(database, dir.path, null);
-  }
-
-  static AppDatabase openAtPathForTesting(String dbPath) {
-    return openAtPath(dbPath);
-  }
-
-  static AppDatabase openAtPath(String dbPath) {
-    final file = File(dbPath);
+  static AppDatabase openAtPath(String path) {
+    final file = File(p.normalize(p.absolute(path)));
     file.parent.createSync(recursive: true);
-    return _openAtPathSync(file.path, file.parent.path);
+    final pendingReset = File('${file.path}.reset-pending');
+    if (pendingReset.existsSync()) {
+      _clearOwnedStorage(file.path);
+      pendingReset.deleteSync();
+    }
+    var database = sqlite3.open(file.path);
+    final old = database.userVersion > 0 &&
+        database.userVersion < currentSchemaVersion &&
+        database
+            .select(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entities'")
+            .isNotEmpty &&
+        database
+            .select(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='index_nodes'")
+            .isNotEmpty;
+    if (old) {
+      database.dispose();
+      pendingReset.writeAsStringSync('14', flush: true);
+      _clearOwnedStorage(file.path);
+      pendingReset.deleteSync();
+      database = sqlite3.open(file.path);
+    }
+    return _initialize(database, file.parent.path, file.path);
   }
 
-  static Future<AppDatabase> _openAtPath(
-      String databasePath, String root) async {
-    return _openAtPathSync(databasePath, root);
-  }
-
-  static AppDatabase _openAtPathSync(String databasePath, String root) {
-    return _openDatabase(sqlite3.open(databasePath), root, databasePath);
-  }
-
-  static AppDatabase _openDatabase(
-    Database database,
-    String storageDirectoryPath,
-    String? databasePath,
-  ) {
-    final appDb = AppDatabase._(database, storageDirectoryPath, databasePath);
+  static AppDatabase _initialize(Database database, String root, String? path) {
+    final app = AppDatabase._(database, root, path);
     try {
-      appDb.migrate();
-      return appDb;
+      database.execute('''PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;
+        PRAGMA busy_timeout=3000; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-16384;''');
+      if (database.userVersion == currentSchemaVersion) return app;
+      final populated = database
+          .select(
+              "SELECT 1 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1")
+          .isNotEmpty;
+      if (database.userVersion != 0 || populated) {
+        throw AppDatabaseResetRequired(database.userVersion);
+      }
+      database.execute('BEGIN IMMEDIATE');
+      try {
+        database.execute(currentSchemaSql);
+        _seedSystemNodes(database);
+        database.execute('DELETE FROM query_revision_dirty');
+        if (database.select('PRAGMA foreign_key_check').isNotEmpty) {
+          throw StateError('Invalid fresh database foreign keys');
+        }
+        database.execute(
+            "INSERT INTO index_node_search(index_node_search,rank) VALUES('integrity-check',1)");
+        database.userVersion = currentSchemaVersion;
+        database.execute('COMMIT');
+      } catch (_) {
+        database.execute('ROLLBACK');
+        rethrow;
+      }
+      return app;
     } catch (_) {
-      appDb.close();
+      app.close();
       rethrow;
     }
   }
 
-  /// Removes only app-owned database and generated cache files. It never
-  /// touches user selected source folders, including removable storage.
+  static void _seedSystemNodes(Database db) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    void node(String id, String? parent, String name, String type, String? key,
+        int order) {
+      db.execute(
+          '''INSERT INTO index_nodes(id,parent_id,name,node_type,system_key,
+        is_protected,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)''',
+          [id, parent, name, type, key, key == null ? 0 : 1, order, now, now]);
+    }
+
+    node('system-root', null, 'Root', 'root', null, 0);
+    node('system-favorites', 'system-root', '收藏', 'category_index_root',
+        'favorites', -1000);
+    node('system-rules', 'system-root', '规则', 'rule_index_root', 'rules', -900);
+    final rules = [
+      ('frequent', '常用', '[]'),
+      ('recentImages', '最近图片', '["image"]'),
+      ('recentVideos', '最近视频', '["video"]'),
+      ('recentText', '最近文本', '["text","external_link"]'),
+      ('recentMusic', '最近音乐', '["audio"]')
+    ];
+    for (var i = 0; i < rules.length; i++) {
+      final (key, name, types) = rules[i];
+      final id = 'system-rule-$key';
+      node(id, 'system-rules', name, 'rule', 'rule.$key', i);
+      db.execute(
+          '''INSERT INTO index_rules(node_id,entity_types_json,extensions_json,
+        default_sort,max_results,built_in_kind,updated_at) VALUES(?,?,'[]',?,1000,?,?)''',
+          [
+            id,
+            types,
+            key == 'frequent' ? 'openCount' : 'lastOpened',
+            key,
+            now
+          ]);
+    }
+  }
+
   static Future<void> resetLocalIndexStorage() async {
     final dir = await getApplicationSupportDirectory();
-    final databasePath = p.join(dir.path, 'best_viewer.db');
-    final files = <File>[
-      File(databasePath),
-      File('$databasePath-wal'),
-      File('$databasePath-shm'),
-    ];
-    for (final file in files) {
-      if (await file.exists()) await file.delete();
+    _clearOwnedStorage(p.join(dir.path, 'best_viewer.db'));
+  }
+
+  static void _clearOwnedStorage(String databasePath) {
+    final root = p.dirname(databasePath);
+    final name = p.basename(databasePath);
+    // Only exact generated names in the database's own directory are removed.
+    for (final entry in Directory(root).listSync(followLinks: false)) {
+      if (entry is! File) continue;
+      final leaf = p.basename(entry.path);
+      final backup =
+          RegExp('^${RegExp.escape(name)}' r'\.schema[0-9]+\.[0-9]+\.backup$')
+              .hasMatch(leaf);
+      if ([name, '$name-wal', '$name-shm', '$name-journal'].contains(leaf) ||
+          backup ||
+          RegExp(r'^browse-\d+\.cache\.db(?:-wal|-shm|\.lock)?$')
+              .hasMatch(leaf)) {
+        entry.deleteSync();
+      }
     }
-    for (final name in const [
+    for (final leaf in [
       'thumbnails',
+      'node_previews',
       'audio_waveforms',
       'reader_cache'
     ]) {
-      final cache = Directory(p.join(dir.path, name));
-      if (await cache.exists()) await cache.delete(recursive: true);
+      final target = p.normalize(p.join(root, leaf));
+      if (!p.isWithin(root, target)) {
+        throw StateError('Invalid cache cleanup path');
+      }
+      if (FileSystemEntity.typeSync(target, followLinks: false) ==
+          FileSystemEntityType.directory) {
+        Directory(target).deleteSync(recursive: true);
+      }
     }
+  }
+
+  void checkpointWriteAheadLog() {
+    db.select('PRAGMA wal_checkpoint(PASSIVE)');
   }
 
   void close() {
@@ -103,453 +174,11 @@ class AppDatabase {
     _closed = true;
     db.dispose();
   }
-
-  /// Flushes pages that are no longer needed by active readers without
-  /// blocking them. Large index tasks call this at stable boundaries so WAL
-  /// files do not keep growing until the next application restart.
-  void checkpointWriteAheadLog() {
-    db.select('PRAGMA wal_checkpoint(PASSIVE)');
-  }
-
-  void migrate() {
-    db.execute('PRAGMA foreign_keys = ON;');
-    db.execute('PRAGMA journal_mode = WAL;');
-    db.execute('PRAGMA busy_timeout = 3000;');
-    db.execute('PRAGMA synchronous = NORMAL;');
-    db.execute('PRAGMA cache_size = -16384;');
-
-    final version = db.userVersion;
-    if (version == currentSchemaVersion) {
-      db.execute('PRAGMA optimize;');
-      return;
-    }
-    if (version >= 5 && version < currentSchemaVersion) {
-      while (db.userVersion < currentSchemaVersion) {
-        final version = db.userVersion;
-        final targetVersion = version < 10 ? 10 : version + 1;
-        final path = databasePath;
-        if (path != null) {
-          final backup =
-              '$path.schema$version.${DateTime.now().microsecondsSinceEpoch}.backup';
-          db.execute('VACUUM INTO ?', [backup]);
-          final snapshot = sqlite3.open(backup, mode: OpenMode.readOnly);
-          try {
-            if (snapshot.userVersion != version ||
-                snapshot
-                        .select('PRAGMA integrity_check')
-                        .single
-                        .values
-                        .single !=
-                    'ok') {
-              throw StateError('Migration snapshot validation failed: $backup');
-            }
-          } finally {
-            snapshot.dispose();
-          }
-        }
-        db.execute('BEGIN IMMEDIATE');
-        try {
-          if (version == 5) db.execute(schemaV6Upgrade);
-          if (version <= 6) db.execute(schemaV7Upgrade);
-          if (version < 11) _ensurePreviewSchema();
-          if (version <= 7) db.execute(schemaV8Upgrade);
-          if (version < 10) {
-            _ensureSchemaV9();
-            migrateSchemaV10(db);
-          }
-          if (targetVersion == 11) {
-            migrateSchemaV11(db);
-            if (db
-                .select('PRAGMA table_info(entities)')
-                .any((r) => r['name'] == 'path')) {
-              createPreviewAssetCatalog(db, storageDirectoryPath);
-            }
-          }
-          if (targetVersion == 12) migrateSchemaV12(db);
-          if (targetVersion == 13) migrateSchemaV13(db);
-          _verifySchemaIntegrity();
-          db.userVersion = targetVersion;
-          db.execute('COMMIT');
-        } catch (_) {
-          db.execute('ROLLBACK');
-          rethrow;
-        }
-      }
-      return;
-    }
-    if (version != 0 || _hasUserTables()) {
-      throw AppDatabaseResetRequired(version);
-    }
-
-    db.execute('BEGIN IMMEDIATE;');
-    try {
-      db.execute(_schema);
-      db.execute(schemaV6Upgrade);
-      db.execute(schemaV7Upgrade);
-      _ensurePreviewSchema();
-      db.execute(schemaV8Upgrade);
-      _ensureSchemaV9();
-      migrateSchemaV10(db);
-      migrateSchemaV11(db);
-      createPreviewAssetCatalog(db, storageDirectoryPath);
-      migrateSchemaV12(db);
-      migrateSchemaV13(db);
-      _verifySchemaIntegrity();
-      db.userVersion = currentSchemaVersion;
-      db.execute('COMMIT;');
-      db.execute('PRAGMA optimize;');
-    } catch (_) {
-      db.execute('ROLLBACK;');
-      rethrow;
-    }
-  }
-
-  void _ensurePreviewSchema() {
-    db.execute(schemaV6PreviewAssets);
-    final columns = db.select('PRAGMA table_info(document_preview_versions)');
-    if (!columns.any((row) => row['name'] == 'cover_revision')) {
-      db.execute(
-          'ALTER TABLE document_preview_versions ADD COLUMN cover_revision INTEGER');
-    }
-  }
-
-  void _ensureSchemaV9() {
-    final entityColumns = db
-        .select('PRAGMA table_info(entities)')
-        .map((row) => row['name'] as String)
-        .toSet();
-    if (!entityColumns.contains('open_count')) {
-      db.execute(
-          'ALTER TABLE entities ADD COLUMN open_count INTEGER NOT NULL DEFAULT 0');
-      entityColumns.add('open_count');
-    }
-    final nodeColumns = db
-        .select('PRAGMA table_info(index_nodes)')
-        .map((row) => row['name'] as String)
-        .toSet();
-    if (!nodeColumns.contains('system_key')) {
-      db.execute('ALTER TABLE index_nodes ADD COLUMN system_key TEXT');
-      nodeColumns.add('system_key');
-    }
-    if (!nodeColumns.contains('is_protected')) {
-      db.execute(
-          'ALTER TABLE index_nodes ADD COLUMN is_protected INTEGER NOT NULL DEFAULT 0');
-      nodeColumns.add('is_protected');
-    }
-    db.execute(schemaV9Objects);
-    if (entityColumns.containsAll(const {
-      'archived',
-      'last_opened_at',
-      'media_type',
-      'source_modified_at_ms',
-    })) {
-      db.execute(schemaV9Indexes);
-    }
-    if (nodeColumns.containsAll(const {
-      'parent_id',
-      'sort_order',
-      'created_at',
-      'updated_at',
-    })) {
-      db.execute(schemaV9SystemNodes);
-    }
-  }
-
-  void _verifySchemaIntegrity() {
-    if (db.select('PRAGMA foreign_key_check').isNotEmpty) {
-      throw StateError('Database migration left invalid foreign keys');
-    }
-    if (db.select('''
-      SELECT 1 FROM index_nodes
-      WHERE node_type IN ('graph_index_root', 'graph_node')
-      LIMIT 1
-    ''').isNotEmpty) {
-      throw StateError('Database migration left graph nodes behind');
-    }
-    final nodeCount = db
-        .select('SELECT COUNT(*) AS count FROM index_nodes')
-        .single['count'] as int;
-    final searchCount = db
-        .select('SELECT COUNT(*) AS count FROM index_node_search')
-        .single['count'] as int;
-    if (nodeCount != searchCount) {
-      throw StateError('Node search index is inconsistent');
-    }
-    db.execute(
-        "INSERT INTO index_node_search(index_node_search, rank) VALUES('integrity-check', 1)");
-  }
-
-  bool _hasUserTables() {
-    return db.select('''
-      SELECT 1
-      FROM sqlite_master
-      WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-      LIMIT 1
-    ''').isNotEmpty;
-  }
 }
 
 class AppDatabaseResetRequired implements Exception {
   const AppDatabaseResetRequired(this.foundVersion);
-
   final int foundVersion;
-
   @override
   String toString() => 'AppDatabaseResetRequired(foundVersion: $foundVersion)';
 }
-
-// Time columns named created_at / updated_at / last_opened_at store
-// millisecond timestamps. This is the current clean schema baseline.
-const _schema = '''
-CREATE TABLE IF NOT EXISTS entities (
-  id TEXT PRIMARY KEY,
-  path TEXT NOT NULL UNIQUE,
-  local_path TEXT,
-  name TEXT NOT NULL,
-  format TEXT NOT NULL,
-  media_type TEXT NOT NULL,
-  hash TEXT NOT NULL,
-  metadata_preview TEXT,
-  thumbnail_status TEXT NOT NULL DEFAULT 'none',
-  thumbnail_key TEXT,
-  thumbnail_format TEXT,
-  thumbnail_width INTEGER,
-  thumbnail_height INTEGER,
-  thumbnail_error TEXT,
-  size INTEGER NOT NULL,
-  source_created_at_ms INTEGER NOT NULL,
-  source_modified_at_ms INTEGER NOT NULL,
-  archived INTEGER NOT NULL DEFAULT 0,
-  last_opened_at INTEGER,
-  last_position_ms INTEGER,
-  duration_ms INTEGER,
-  reader_scroll_offset REAL,
-  zoom_scale REAL,
-  extra_state_json TEXT,
-  directory_root_id TEXT REFERENCES index_nodes(id) ON DELETE SET NULL,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS index_nodes (
-  id TEXT PRIMARY KEY,
-  parent_id TEXT,
-  name TEXT NOT NULL,
-  node_type TEXT NOT NULL,
-  view_type TEXT NOT NULL,
-  source_path TEXT,
-  preview_json TEXT,
-  relative_source_path TEXT,
-  is_staging INTEGER NOT NULL DEFAULT 0,
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  last_built_at_ms INTEGER,
-  FOREIGN KEY(parent_id) REFERENCES index_nodes(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS index_node_entities (
-  index_node_id TEXT NOT NULL,
-  entity_id TEXT NOT NULL,
-  sort_name TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL,
-  PRIMARY KEY(index_node_id, entity_id),
-  FOREIGN KEY(index_node_id) REFERENCES index_nodes(id) ON DELETE CASCADE,
-  FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS index_node_stats (
-  node_id TEXT PRIMARY KEY,
-  direct_entity_count INTEGER NOT NULL DEFAULT 0,
-  descendant_entity_count INTEGER NOT NULL DEFAULT 0,
-  child_node_count INTEGER NOT NULL DEFAULT 0,
-  updated_at INTEGER NOT NULL,
-  FOREIGN KEY(node_id) REFERENCES index_nodes(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS node_preview_overrides (
-  node_id TEXT PRIMARY KEY,
-  items_json TEXT NOT NULL,
-  updated_at INTEGER NOT NULL,
-  FOREIGN KEY(node_id) REFERENCES index_nodes(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS thumbnail_assets (
-  asset_key TEXT PRIMARY KEY,
-  format TEXT NOT NULL,
-  byte_size INTEGER NOT NULL,
-  created_at INTEGER NOT NULL
-);
-
--- A directory build has exactly one durable parent state machine. The first
--- three stages are atomic checkpoints; derived asset stages resume per work
--- item without retaining a full source tree in memory.
-CREATE TABLE IF NOT EXISTS library_build_jobs (
-  id TEXT PRIMARY KEY,
-  source_path TEXT NOT NULL,
-  operation_type TEXT NOT NULL,
-  target_node_id TEXT,
-  index_root_id TEXT,
-  staging_root_id TEXT,
-  stage TEXT NOT NULL,
-  status TEXT NOT NULL,
-  manifest_total INTEGER NOT NULL DEFAULT 0,
-  indexed_total INTEGER NOT NULL DEFAULT 0,
-  document_preview_total INTEGER NOT NULL DEFAULT 0,
-  document_preview_done INTEGER NOT NULL DEFAULT 0,
-  document_preview_failed INTEGER NOT NULL DEFAULT 0,
-  entity_preview_total INTEGER NOT NULL DEFAULT 0,
-  entity_preview_done INTEGER NOT NULL DEFAULT 0,
-  entity_preview_failed INTEGER NOT NULL DEFAULT 0,
-  node_preview_total INTEGER NOT NULL DEFAULT 0,
-  node_preview_done INTEGER NOT NULL DEFAULT 0,
-  node_preview_failed INTEGER NOT NULL DEFAULT 0,
-  error TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  FOREIGN KEY(index_root_id) REFERENCES index_nodes(id) ON DELETE SET NULL,
-  FOREIGN KEY(target_node_id) REFERENCES index_nodes(id) ON DELETE SET NULL
-);
-
-CREATE TABLE IF NOT EXISTS library_build_manifest (
-  job_id TEXT NOT NULL,
-  source_path TEXT NOT NULL,
-  relative_path TEXT NOT NULL,
-  sequence INTEGER NOT NULL,
-  name TEXT NOT NULL,
-  format TEXT NOT NULL,
-  media_type TEXT NOT NULL,
-  fingerprint TEXT,
-  size INTEGER NOT NULL,
-  metadata_preview TEXT,
-  duration_ms INTEGER,
-  source_created_at_ms INTEGER NOT NULL,
-  source_modified_at_ms INTEGER NOT NULL,
-  PRIMARY KEY(job_id, source_path),
-  FOREIGN KEY(job_id) REFERENCES library_build_jobs(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS library_entity_preview_work (
-  job_id TEXT NOT NULL,
-  entity_id TEXT NOT NULL,
-  state TEXT NOT NULL DEFAULT 'pending',
-  attempts INTEGER NOT NULL DEFAULT 0,
-  error TEXT,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY(job_id, entity_id),
-  FOREIGN KEY(job_id) REFERENCES library_build_jobs(id) ON DELETE CASCADE,
-  FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS library_document_preview_work (
-  job_id TEXT NOT NULL,
-  entity_id TEXT NOT NULL,
-  state TEXT NOT NULL DEFAULT 'pending',
-  attempts INTEGER NOT NULL DEFAULT 0,
-  error TEXT,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY(job_id, entity_id),
-  FOREIGN KEY(job_id) REFERENCES library_build_jobs(id) ON DELETE CASCADE,
-  FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS library_node_preview_work (
-  job_id TEXT NOT NULL,
-  node_id TEXT NOT NULL,
-  state TEXT NOT NULL DEFAULT 'pending',
-  signature TEXT,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  error TEXT,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY(job_id, node_id),
-  FOREIGN KEY(job_id) REFERENCES library_build_jobs(id) ON DELETE CASCADE,
-  FOREIGN KEY(node_id) REFERENCES index_nodes(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS node_preview_assets (
-  node_id TEXT PRIMARY KEY,
-  signature TEXT NOT NULL,
-  asset_key TEXT NOT NULL,
-  format TEXT NOT NULL,
-  width INTEGER NOT NULL,
-  height INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  FOREIGN KEY(node_id) REFERENCES index_nodes(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS audio_playback_sessions (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  source_node_id TEXT,
-  source_node_name TEXT,
-  mode TEXT NOT NULL,
-  current_index INTEGER NOT NULL DEFAULT 0,
-  position_ms INTEGER NOT NULL DEFAULT 0,
-  shuffle_remaining_json TEXT NOT NULL DEFAULT '[]',
-  history_json TEXT NOT NULL DEFAULT '[]',
-  active INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS audio_playback_session_entries (
-  session_id TEXT NOT NULL,
-  sort_order INTEGER NOT NULL,
-  entity_id TEXT NOT NULL,
-  title TEXT NOT NULL,
-  path TEXT NOT NULL,
-  format TEXT NOT NULL,
-  fingerprint TEXT NOT NULL,
-  size INTEGER NOT NULL,
-  modified_at_ms INTEGER NOT NULL,
-  duration_ms INTEGER,
-  PRIMARY KEY(session_id, sort_order),
-  FOREIGN KEY(session_id) REFERENCES audio_playback_sessions(id) ON DELETE CASCADE
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_index_nodes_root_source
-ON index_nodes(source_path) WHERE source_path IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_index_nodes_single_root
-ON index_nodes(node_type) WHERE node_type = 'root';
-CREATE UNIQUE INDEX IF NOT EXISTS idx_index_nodes_sibling_name_type
-ON index_nodes(parent_id, name, node_type) WHERE parent_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_index_nodes_parent_id ON index_nodes(parent_id);
-CREATE INDEX IF NOT EXISTS idx_index_nodes_parent_sort_name
-ON index_nodes(parent_id, sort_order, name COLLATE NOCASE);
-CREATE INDEX IF NOT EXISTS idx_index_nodes_parent_name
-ON index_nodes(parent_id, name COLLATE NOCASE, id);
-CREATE INDEX IF NOT EXISTS idx_index_nodes_parent_updated
-ON index_nodes(parent_id, updated_at DESC, name COLLATE NOCASE, id);
-CREATE INDEX IF NOT EXISTS idx_index_nodes_node_type ON index_nodes(node_type);
-CREATE INDEX IF NOT EXISTS idx_entities_path ON entities(path);
-CREATE INDEX IF NOT EXISTS idx_entities_directory_root_id ON entities(directory_root_id);
-CREATE INDEX IF NOT EXISTS idx_entities_media_type ON entities(media_type);
-CREATE INDEX IF NOT EXISTS idx_entities_visible_name
-ON entities(archived, name COLLATE NOCASE);
-CREATE INDEX IF NOT EXISTS idx_entities_visible_modified
-ON entities(archived, source_modified_at_ms);
-CREATE INDEX IF NOT EXISTS idx_entities_visible_size ON entities(archived, size);
-CREATE INDEX IF NOT EXISTS idx_entities_visible_format_name
-ON entities(archived, format COLLATE NOCASE, name COLLATE NOCASE);
-CREATE INDEX IF NOT EXISTS idx_index_node_entities_node
-ON index_node_entities(index_node_id);
-CREATE INDEX IF NOT EXISTS idx_index_node_entities_entity
-ON index_node_entities(entity_id);
-CREATE INDEX IF NOT EXISTS idx_index_node_entities_node_sort_name
-ON index_node_entities(index_node_id, sort_name COLLATE NOCASE, entity_id);
-CREATE INDEX IF NOT EXISTS idx_library_build_jobs_recovery
-ON library_build_jobs(status, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_library_build_manifest_sequence
-ON library_build_manifest(job_id, sequence);
-CREATE INDEX IF NOT EXISTS idx_library_entity_preview_work_pending
-ON library_entity_preview_work(job_id, state, entity_id);
-
-CREATE INDEX IF NOT EXISTS idx_library_document_preview_work_pending
-ON library_document_preview_work(job_id, state, entity_id);
-CREATE INDEX IF NOT EXISTS idx_library_node_preview_work_pending
-ON library_node_preview_work(job_id, state, node_id);
-CREATE INDEX IF NOT EXISTS idx_audio_playback_sessions_active
-ON audio_playback_sessions(active, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_audio_playback_session_entries_session
-ON audio_playback_session_entries(session_id, sort_order);
-''';

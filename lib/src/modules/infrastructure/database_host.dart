@@ -5,7 +5,7 @@ import 'dart:math';
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
 import '../../core/database/app_database.dart';
-import '../../core/database/schema_v10.dart';
+import '../../core/database/query_revisions.dart';
 import '../../core/database/local_statistics.dart';
 import '../../core/database/statement_cache.dart';
 import '../../core/database/library_repository.dart';
@@ -242,7 +242,6 @@ Future<void> _runDatabase(({String path, SendPort reply}) config) async {
       final id = request['id']! as String;
       try {
         if (domain == 'statisticsEnable') {
-          installStatisticsGeneration(app.db);
           repository.deferStatistics = true;
           config.reply.send({'id': id, 'ok': true, 'value': null});
           continue;

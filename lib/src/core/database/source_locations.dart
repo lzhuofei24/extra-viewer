@@ -1,45 +1,6 @@
 import 'dart:convert';
 import 'package:sqlite3/sqlite3.dart';
 import '../../modules/sources/source_identity.dart';
-import 'local_statistics.dart';
-
-void migrateSchemaV12(Database db) {
-  installStatisticsTracking(db);
-  final columns =
-      db.select('PRAGMA table_info(sources)').map((r) => r['name']).toSet();
-  for (final entry in {
-    'kind': "TEXT NOT NULL DEFAULT 'legacy'",
-    'authority': "TEXT NOT NULL DEFAULT ''",
-    'root_identity': 'TEXT'
-  }.entries) {
-    if (!columns.contains(entry.key)) {
-      db.execute('ALTER TABLE sources ADD COLUMN ${entry.key} ${entry.value}');
-    }
-  }
-  db.execute('''CREATE UNIQUE INDEX IF NOT EXISTS idx_source_identity
-    ON sources(kind,authority,root_identity) WHERE root_identity IS NOT NULL;
-    CREATE TABLE IF NOT EXISTS entity_locations (
-      entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
-      source_id TEXT REFERENCES sources(id) ON DELETE RESTRICT,
-      document_identity TEXT, locator TEXT NOT NULL,
-      state TEXT NOT NULL CHECK(state IN ('resolved','legacy','conflict')),
-      updated_at INTEGER NOT NULL);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_location_identity ON entity_locations(source_id,document_identity)
-      WHERE document_identity IS NOT NULL;
-    CREATE INDEX IF NOT EXISTS idx_location_source ON entity_locations(source_id);
-  ''');
-  if (!db
-      .select('PRAGMA table_info(entities)')
-      .any((r) => r['name'] == 'path')) {
-    return;
-  }
-  for (final row
-      in db.select('''SELECT e.id,e.path,n.source_path FROM entities e
-    LEFT JOIN index_nodes n ON n.id=e.directory_root_id''')) {
-    registerEntityLocation(db, row['id'] as String, row['path'] as String,
-        rootLocator: row['source_path'] as String?);
-  }
-}
 
 String? findEntityByIdentity(Database db, String locator,
     {String? rootLocator}) {

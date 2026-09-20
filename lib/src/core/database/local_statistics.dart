@@ -1,55 +1,5 @@
 import 'package:sqlite3/sqlite3.dart';
 
-void installStatisticsTracking(Database db) {
-  if (!db
-      .select('PRAGMA table_info(index_node_stats)')
-      .any((r) => r['name'] == 'node_id')) {
-    return;
-  }
-  if (!db
-      .select('PRAGMA table_info(index_node_stats)')
-      .any((r) => r['name'] == 'revision')) {
-    db.execute(
-        'ALTER TABLE index_node_stats ADD COLUMN revision INTEGER NOT NULL DEFAULT 0');
-  }
-  for (final event in ['INSERT', 'DELETE', 'UPDATE OF parent_id']) {
-    final old = event.startsWith('INSERT') ? 'NULL' : 'OLD.parent_id';
-    final next = event.startsWith('DELETE') ? 'NULL' : 'NEW.id';
-    final suffix = event.split(' ').first.toLowerCase();
-    db.execute('''CREATE TRIGGER IF NOT EXISTS statistics_node_$suffix
-      AFTER $event ON index_nodes BEGIN
-      INSERT INTO index_stats_dirty(node_id)
-      WITH RECURSIVE ancestors(id,parent_id) AS (
-        SELECT id,parent_id FROM index_nodes WHERE id IN ($old,$next)
-        UNION SELECT n.id,n.parent_id FROM index_nodes n JOIN ancestors a ON a.parent_id=n.id
-      ) SELECT id FROM ancestors WHERE true
-      ON CONFLICT(node_id) DO UPDATE SET revision=revision+1;
-      END;''');
-  }
-  installStatisticsGeneration(db);
-  db.execute('''CREATE TRIGGER IF NOT EXISTS statistics_entity_archive
-    AFTER UPDATE OF archived ON entities WHEN NEW.archived IS NOT OLD.archived BEGIN
-      INSERT INTO index_stats_dirty(node_id)
-      WITH RECURSIVE ancestors(id,parent_id) AS (
-        SELECT n.id,n.parent_id FROM index_nodes n JOIN index_node_entities l ON l.index_node_id=n.id WHERE l.entity_id=NEW.id
-        UNION SELECT n.id,n.parent_id FROM index_nodes n JOIN ancestors a ON a.parent_id=n.id
-      ) SELECT id FROM ancestors WHERE true
-      ON CONFLICT(node_id) DO UPDATE SET revision=revision+1;
-    END;''');
-  db.execute('''INSERT INTO index_stats_dirty(node_id)
-    SELECT id FROM index_nodes WHERE id NOT IN(SELECT node_id FROM index_node_stats)
-    ON CONFLICT(node_id) DO NOTHING''');
-}
-
-void installStatisticsGeneration(Database db) {
-  db.execute('''CREATE TRIGGER IF NOT EXISTS statistics_dirty_generation
-    AFTER INSERT ON index_stats_dirty BEGIN
-      UPDATE index_stats_dirty SET revision=MAX(revision,
-        COALESCE((SELECT revision FROM index_node_stats WHERE node_id=NEW.node_id),0)+1)
-      WHERE node_id=NEW.node_id;
-    END;''');
-}
-
 /// Recompute only affected ancestors; shared category references stay distinct.
 void refreshDirtyStatistics(Database db) {
   publishStatistics(db, computeDirtyStatistics(db, limit: 1000000000));

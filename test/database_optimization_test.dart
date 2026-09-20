@@ -1,9 +1,10 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:best_viewer/src/core/database/app_database.dart';
 import 'package:best_viewer/src/core/database/library_repository.dart';
 import 'package:best_viewer/src/core/database/library_read_worker.dart';
-import 'package:best_viewer/src/core/database/schema_v10.dart';
-import 'package:best_viewer/src/core/database/schema_v12.dart';
+import 'package:best_viewer/src/core/database/query_revisions.dart';
+import 'package:best_viewer/src/core/database/source_locations.dart';
 import 'package:best_viewer/src/core/domain/models.dart';
 import 'package:best_viewer/src/modules/sources/source_identity.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,43 +12,54 @@ import 'package:sqlite3/sqlite3.dart';
 import 'package:best_viewer/src/core/database/local_statistics.dart';
 
 void main() {
-  test('schema 12 cleanup preserves node rowids and search contents', () {
-    final dir = Directory.systemTemp.createTempSync('schema13_');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final path = '${dir.path}/library.db';
-    final old = AppDatabase.openAtPath(path);
-    final repo = LibraryRepository(old);
-    repo.ensureCollectionIndexRoot('Migration searchable');
-    final before = old.db
-        .select('SELECT rowid,id,name FROM index_nodes ORDER BY id')
-        .map((row) => row.values.toList())
-        .toList();
-    old.db.execute(
-        "ALTER TABLE index_nodes ADD COLUMN view_type TEXT NOT NULL DEFAULT 'tree'");
-    old.db.userVersion = 12;
-    old.close();
-    final current = AppDatabase.openAtPath(path);
-    addTearDown(current.close);
+  test('reading anchors have one structured storage location', () {
+    final db = AppDatabase.openInMemory();
+    addTearDown(db.close);
+    final repo = LibraryRepository(db);
+    final entity = repo
+        .upsertEntity(
+            path: '/book.pdf',
+            name: 'book.pdf',
+            format: 'pdf',
+            entityType: EntityType.document,
+            hash: 'doc',
+            size: 1,
+            sourceCreatedAtMs: 0,
+            sourceModifiedAtMs: 0)
+        .entity;
+    repo.saveReaderState(
+        entityId: entity.id,
+        extraStateJson: jsonEncode({
+          'theme': 'dark',
+          'readingPosition': {
+            'version': 1,
+            'kind': 'reflow',
+            'sourceRevision': 1,
+            'chapter': 2,
+            'chapterTitle': 'Chapter',
+            'page': 5,
+            'block': 8,
+            'blockKey': 'anchor',
+            'blockFraction': 0.5,
+            'mode': 'book',
+            'scrollOffset': 20.0
+          }
+        }));
+    final stored = db.db.select('SELECT * FROM entity_progress').single;
+    expect(stored['document_revision'], 1);
+    expect(stored['chapter_index'], 2);
+    expect(stored['block_key'], 'anchor');
+    expect(jsonDecode(stored['settings_json'] as String), {'theme': 'dark'});
+    final restored =
+        jsonDecode(repo.getEntity(entity.id)!.extraStateJson!) as Map;
+    expect(restored['readingPosition']['blockFraction'], 0.5);
+    repo.saveReaderState(entityId: entity.id, zoomScale: 2);
     expect(
-        current.db
-            .select('PRAGMA table_info(index_nodes)')
-            .any((row) => row['name'] == 'view_type'),
-        isFalse);
-    expect(
-        current.db
-            .select('SELECT rowid,id,name FROM index_nodes ORDER BY id')
-            .map((row) => row.values.toList())
-            .toList(),
-        before);
-    expect(
-        current.db.select(
-            "SELECT rowid FROM index_node_search WHERE index_node_search MATCH 'searchable'"),
-        hasLength(1));
-    expect(current.db.select('PRAGMA foreign_key_check'), isEmpty);
-    expect(
-        dir.listSync().where((file) =>
-            file.path.contains('.schema12.') && file.path.endsWith('.backup')),
-        hasLength(1));
+        jsonDecode(repo.getEntity(entity.id)!.extraStateJson!)[
+            'readingPosition']['page'],
+        5);
+    expect(() => db.db.execute('UPDATE entity_progress SET block_fraction=2'),
+        throwsA(isA<SqliteException>()));
   });
 
   test('statistics reject stale results across publication generations', () {
@@ -339,32 +351,5 @@ void main() {
     expect(
         db.db.select("SELECT * FROM query_revisions WHERE domain='structure'"),
         isEmpty);
-  });
-
-  test('schema 9 upgrade creates a verified unique snapshot', () {
-    final dir = Directory.systemTemp.createTempSync('migration_backup_');
-    final path = '${dir.path}/library.db';
-    final db = AppDatabase.openAtPath(path);
-    db.db.execute(
-        "ALTER TABLE index_nodes ADD COLUMN view_type TEXT NOT NULL DEFAULT 'tree'");
-    db.db.userVersion = 9;
-    db.close();
-    final upgraded = AppDatabase.openAtPath(path);
-    expect(upgraded.db.userVersion, AppDatabase.currentSchemaVersion);
-    upgraded.close();
-    final backups = dir
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.endsWith('.backup'))
-        .toList();
-    expect(backups, hasLength(4));
-    final snapshot = sqlite3.open(
-        backups.firstWhere((f) => f.path.contains('.schema9.')).path,
-        mode: OpenMode.readOnly);
-    expect(snapshot.userVersion, 9);
-    expect(
-        snapshot.select('PRAGMA integrity_check').single.values.single, 'ok');
-    snapshot.dispose();
-    dir.deleteSync(recursive: true);
   });
 }
