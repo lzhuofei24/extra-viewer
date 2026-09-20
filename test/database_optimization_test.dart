@@ -11,6 +11,45 @@ import 'package:sqlite3/sqlite3.dart';
 import 'package:best_viewer/src/core/database/local_statistics.dart';
 
 void main() {
+  test('schema 12 cleanup preserves node rowids and search contents', () {
+    final dir = Directory.systemTemp.createTempSync('schema13_');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final path = '${dir.path}/library.db';
+    final old = AppDatabase.openAtPath(path);
+    final repo = LibraryRepository(old);
+    repo.ensureCollectionIndexRoot('Migration searchable');
+    final before = old.db
+        .select('SELECT rowid,id,name FROM index_nodes ORDER BY id')
+        .map((row) => row.values.toList())
+        .toList();
+    old.db.execute(
+        "ALTER TABLE index_nodes ADD COLUMN view_type TEXT NOT NULL DEFAULT 'tree'");
+    old.db.userVersion = 12;
+    old.close();
+    final current = AppDatabase.openAtPath(path);
+    addTearDown(current.close);
+    expect(
+        current.db
+            .select('PRAGMA table_info(index_nodes)')
+            .any((row) => row['name'] == 'view_type'),
+        isFalse);
+    expect(
+        current.db
+            .select('SELECT rowid,id,name FROM index_nodes ORDER BY id')
+            .map((row) => row.values.toList())
+            .toList(),
+        before);
+    expect(
+        current.db.select(
+            "SELECT rowid FROM index_node_search WHERE index_node_search MATCH 'searchable'"),
+        hasLength(1));
+    expect(current.db.select('PRAGMA foreign_key_check'), isEmpty);
+    expect(
+        dir.listSync().where((file) =>
+            file.path.contains('.schema12.') && file.path.endsWith('.backup')),
+        hasLength(1));
+  });
+
   test('statistics reject stale results across publication generations', () {
     final db = AppDatabase.openInMemory();
     addTearDown(db.close);
@@ -306,6 +345,8 @@ void main() {
     final dir = Directory.systemTemp.createTempSync('migration_backup_');
     final path = '${dir.path}/library.db';
     final db = AppDatabase.openAtPath(path);
+    db.db.execute(
+        "ALTER TABLE index_nodes ADD COLUMN view_type TEXT NOT NULL DEFAULT 'tree'");
     db.db.userVersion = 9;
     db.close();
     final upgraded = AppDatabase.openAtPath(path);
@@ -316,7 +357,7 @@ void main() {
         .whereType<File>()
         .where((f) => f.path.endsWith('.backup'))
         .toList();
-    expect(backups, hasLength(3));
+    expect(backups, hasLength(4));
     final snapshot = sqlite3.open(
         backups.firstWhere((f) => f.path.contains('.schema9.')).path,
         mode: OpenMode.readOnly);

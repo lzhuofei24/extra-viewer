@@ -1680,7 +1680,7 @@ Map<String, Object?> _nodeToMap(Row row) => <String, Object?>{
       'parentId': row['parent_id'],
       'name': row['name'],
       'nodeType': row['node_type'],
-      'viewType': row['view_type'],
+      'viewType': 'tree',
       'sourcePath': row['source_path'],
       'sortOrder': row['sort_order'],
       'createdAtMs': row['created_at'],

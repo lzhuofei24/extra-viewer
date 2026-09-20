@@ -47,14 +47,13 @@ mixin RuleRepositoryMixin on LibraryRepositoryBase {
       );
       database.db.execute('''
         INSERT INTO index_nodes
-        (id, parent_id, name, node_type, view_type, sort_order, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (id, parent_id, name, node_type, sort_order, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       ''', [
         node.id,
         node.parentId,
         node.name,
         node.nodeType.value,
-        node.viewType.value,
         node.sortOrder,
         now,
         now

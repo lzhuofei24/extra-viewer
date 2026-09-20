@@ -97,9 +97,17 @@ SAF permission and removable-media acceptance remain device-only checks.
   active-view pins, and the 128 MiB page budget excludes transient WAL overhead.
 - Validation after this follow-up: static analysis passed; complete Flutter
   suite passed (196 tests), including concurrently developed UI changes.
+- Schema 13 follow-up: remove the fixed index_nodes.view_type column and all
+  runtime SQL reads/writes of it. A new version, with its own verified snapshot,
+  is necessary because schema-12 APKs have already been produced. SQL DROP
+  COLUMN preserves rowid; migration tests compare exact node rowids/names and
+  FTS matches, along with foreign keys. The tree-only DTO field remains a
+  compatibility adapter, not duplicated database storage. Legacy migration
+  definitions retain the old column so upgrades from actual old schemas work.
+- Validation: static analysis passed and all 197 Flutter tests passed.
 - Remaining: queued-request cancellation, active-session pins and total disk
   budget enforcement, native crash resource cleanup, folder pagination,
-  node view_type removal, structured reading-anchor extraction, asset
+  clean final-schema creation baseline, structured reading-anchor extraction, asset
   leases/retirement integration, lean DTO projections, migration-chain fault
   hardening, source reauthorization acceptance, and expanded performance/device
   acceptance. Schema version 12 alone does not mean the full plan is complete.

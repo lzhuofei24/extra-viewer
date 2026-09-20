@@ -11,13 +11,14 @@ import 'schema_v9.dart';
 import 'schema_v10.dart';
 import 'schema_v11.dart';
 import 'schema_v12.dart';
+import 'schema_v13.dart';
 import 'preview_asset_catalog.dart';
 
 /// SQLite storage and additive migrations, owned by database workers.
 class AppDatabase {
   AppDatabase._(this.db, this.storageDirectoryPath, this.databasePath);
 
-  static const currentSchemaVersion = 12;
+  static const currentSchemaVersion = 13;
 
   final Database db;
   final String storageDirectoryPath;
@@ -165,6 +166,7 @@ class AppDatabase {
             }
           }
           if (targetVersion == 12) migrateSchemaV12(db);
+          if (targetVersion == 13) migrateSchemaV13(db);
           _verifySchemaIntegrity();
           db.userVersion = targetVersion;
           db.execute('COMMIT');
@@ -191,6 +193,7 @@ class AppDatabase {
       migrateSchemaV11(db);
       createPreviewAssetCatalog(db, storageDirectoryPath);
       migrateSchemaV12(db);
+      migrateSchemaV13(db);
       _verifySchemaIntegrity();
       db.userVersion = currentSchemaVersion;
       db.execute('COMMIT;');

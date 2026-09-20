@@ -254,15 +254,14 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
     database.db.execute(
       '''
       INSERT INTO index_nodes
-      (id, parent_id, name, node_type, view_type, source_path, sort_order, created_at, updated_at, last_built_at_ms, is_staging)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, parent_id, name, node_type, source_path, sort_order, created_at, updated_at, last_built_at_ms, is_staging)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ''',
       [
         node.id,
         node.parentId,
         node.name,
         node.nodeType.value,
-        node.viewType.value,
         node.sourcePath,
         node.sortOrder,
         now,

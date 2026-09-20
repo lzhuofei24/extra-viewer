@@ -36,7 +36,7 @@ mixin NodePreviewRepositoryMixin on LibraryRepositoryBase {
     final placeholders = List<String>.filled(ids.length, '?').join(', ');
     final childRows = database.db.select(
       '''
-      SELECT id, parent_id, name, node_type, view_type, source_path,
+      SELECT id, parent_id, name, node_type, source_path,
              preview_json, sort_order, created_at, updated_at, last_built_at_ms
       FROM index_nodes
       WHERE parent_id IN ($placeholders)

@@ -140,14 +140,13 @@ class LibraryRepositoryBase {
     database.db.execute(
       '''
       INSERT INTO index_nodes
-      (id, name, node_type, view_type, sort_order, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      (id, name, node_type, sort_order, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
       ''',
       [
         node.id,
         node.name,
         node.nodeType.value,
-        node.viewType.value,
         node.sortOrder,
         now,
         now,

@@ -28,7 +28,7 @@ void main() {
     raw.execute('''
       CREATE TABLE entities(id TEXT PRIMARY KEY, name TEXT,
         thumbnail_key TEXT, thumbnail_format TEXT);
-      CREATE TABLE index_nodes(id TEXT PRIMARY KEY, source_path TEXT,
+      CREATE TABLE index_nodes(id TEXT PRIMARY KEY, source_path TEXT, parent_id TEXT,
         name TEXT NOT NULL, node_type TEXT NOT NULL DEFAULT 'folder',
         view_type TEXT NOT NULL DEFAULT 'tree');
       CREATE TABLE node_preview_assets(node_id TEXT PRIMARY KEY,
@@ -59,6 +59,8 @@ void main() {
     final raw = sqlite3.openInMemory();
     final database = AppDatabase.openForTesting(raw);
     final now = DateTime.now().millisecondsSinceEpoch;
+    raw.execute(
+        "ALTER TABLE index_nodes ADD COLUMN view_type TEXT NOT NULL DEFAULT 'tree'");
     raw.execute('''INSERT INTO index_nodes(id, name, node_type, view_type,
       sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)''',
         ['search-root', '目录索引', 'directory_index_root', 'tree', 0, now, now]);
@@ -93,6 +95,8 @@ void main() {
     addTearDown(database.close);
     final raw = database.db;
     final repository = LibraryRepository(database);
+    raw.execute(
+        "ALTER TABLE index_nodes ADD COLUMN view_type TEXT NOT NULL DEFAULT 'tree'");
     final now = DateTime.now().millisecondsSinceEpoch;
     final directory = repository.ensureDirectoryIndexRoot('/media');
     final collection = repository.ensureCollectionIndexRoot('收藏');
@@ -253,6 +257,8 @@ void main() {
       'UPDATE index_nodes SET system_key = NULL, is_protected = 0, sort_order = 0 WHERE id = ?',
       [favoriteId],
     );
+    raw.execute(
+        "ALTER TABLE index_nodes ADD COLUMN view_type TEXT NOT NULL DEFAULT 'tree'");
     raw.userVersion = 8;
 
     database.migrate();

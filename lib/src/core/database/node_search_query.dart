@@ -92,7 +92,7 @@ IndexNode _node(Row row) => IndexNode(
       parentId: row['parent_id'] as String?,
       name: row['name'] as String,
       nodeType: NodeType.fromValue(row['node_type'] as String),
-      viewType: ViewType.fromValue(row['view_type'] as String),
+      viewType: ViewType.tree,
       sortOrder: row['sort_order'] as int,
       createdAtMs: row['created_at'] as int,
       updatedAtMs: row['updated_at'] as int,

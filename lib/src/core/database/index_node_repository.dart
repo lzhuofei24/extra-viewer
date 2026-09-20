@@ -93,15 +93,14 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
     database.db.execute(
       '''
       INSERT INTO index_nodes
-      (id, parent_id, name, node_type, view_type, source_path, sort_order, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, parent_id, name, node_type, source_path, sort_order, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ''',
       [
         node.id,
         node.parentId,
         normalizedName,
         node.nodeType.value,
-        node.viewType.value,
         node.sourcePath,
         node.sortOrder,
         now,
@@ -359,8 +358,8 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
       final usedNamesByParent = <String, Set<String>>{};
       final nodeInsert = database.db.prepare('''
         INSERT INTO index_nodes
-        (id, parent_id, name, node_type, view_type, sort_order, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (id, parent_id, name, node_type, sort_order, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       ''');
       final entityLinkInsert = database.db.prepare('''
         INSERT OR IGNORE INTO index_node_entities(index_node_id, entity_id, sort_name, created_at)
@@ -402,7 +401,6 @@ mixin IndexNodeRepositoryMixin on LibraryRepositoryBase {
           copied.parentId,
           copied.name,
           copied.nodeType.value,
-          copied.viewType.value,
           copied.sortOrder,
           now,
           now,

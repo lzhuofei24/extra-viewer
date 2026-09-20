@@ -79,7 +79,7 @@ IndexNode _nodeFromRow(Row row) {
     parentId: row['parent_id'] as String?,
     name: row['name'] as String,
     nodeType: NodeType.fromValue(row['node_type'] as String),
-    viewType: ViewType.fromValue(row['view_type'] as String),
+    viewType: ViewType.tree,
     sourcePath: row['source_path'] as String?,
     previewJson: row['preview_json'] as String?,
     sortOrder: row['sort_order'] as int,
