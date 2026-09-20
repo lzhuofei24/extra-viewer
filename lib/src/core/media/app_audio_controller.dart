@@ -39,17 +39,20 @@ class AppAudioController extends ChangeNotifier {
     required AudioProgressSaver onProgressSaved,
     required AudioSessionCreator onSessionCreated,
     required AudioSessionUpdater onSessionUpdated,
+    Player Function()? playerFactory,
     MediaSourceResolver sourceResolver = const MediaSourceResolver(),
   })  : _onProgressSaved = onProgressSaved,
         _onSessionCreated = onSessionCreated,
         _onSessionUpdated = onSessionUpdated,
-        _sourceResolver = sourceResolver {
+        _sourceResolver = sourceResolver,
+        _playerFactory = playerFactory ?? Player.new {
     _saveTimer =
         Timer.periodic(const Duration(seconds: 5), (_) => saveProgress());
     AppDiagnosticLog.instance.info('audio_controller_created');
   }
 
   Player? _player;
+  final Player Function() _playerFactory;
   final AudioProgressSaver _onProgressSaved;
   final AudioSessionCreator _onSessionCreated;
   final AudioSessionUpdater _onSessionUpdated;
@@ -78,6 +81,7 @@ class AppAudioController extends ChangeNotifier {
       ValueNotifier(const AudioPlaybackProgress());
 
   Player get player => _player!;
+  Player? get initializedPlayer => _player;
   AudioPlaybackSession? get session => _session;
   EntityListItem? get current => _session?.current;
   Object? get error => _error;
@@ -106,42 +110,56 @@ class AppAudioController extends ChangeNotifier {
       'autoplay': autoplay,
       'queueSize': contextQueue.length,
     });
-    final candidates = contextQueue
-        .where((item) => item.entityType == EntityType.audio)
-        .toList(growable: false);
-    final currentSession = _session;
-    final inCurrentSession = currentSession != null &&
-        currentSession.entries.any((item) => item.id == entity.id) &&
-        (currentSession.current?.id == entity.id ||
-            sourceNodeId == null ||
-            sourceNodeId == currentSession.sourceNodeId);
-    if (!inCurrentSession) {
-      final entries =
-          candidates.isEmpty ? <EntityListItem>[entity] : candidates;
-      _session = await _onSessionCreated(
-        entries: entries,
-        currentIndex: entries
-            .indexWhere((item) => item.id == entity.id)
-            .clamp(0, entries.length - 1)
-            .toInt(),
-        sourceNodeId: sourceNodeId,
-        sourceNodeName: sourceNodeName,
-        mode: AudioPlaybackMode.sequential,
-      );
-      _resetShuffleBag();
-      AppDiagnosticLog.instance.info('audio_session_created', fields: {
-        'sessionId': _session!.id,
-        'entityId': entity.id,
-        'queueSize': entries.length,
-        'sourceNodeId': sourceNodeId,
-      });
-    } else {
-      final index =
-          currentSession.entries.indexWhere((item) => item.id == entity.id);
-      _session = _copySession(currentSession, currentIndex: index);
-      _persistSession();
+    _error = null;
+    _opening = true;
+    _notifyListenersSafely();
+    try {
+      final candidates = contextQueue
+          .where((item) => item.entityType == EntityType.audio)
+          .toList(growable: false);
+      final currentSession = _session;
+      final inCurrentSession = currentSession != null &&
+          currentSession.entries.any((item) => item.id == entity.id) &&
+          (currentSession.current?.id == entity.id ||
+              sourceNodeId == null ||
+              sourceNodeId == currentSession.sourceNodeId);
+      if (!inCurrentSession) {
+        final entries = candidates.any((item) => item.id == entity.id)
+            ? candidates
+            : <EntityListItem>[entity, ...candidates];
+        _session = await _onSessionCreated(
+          entries: entries,
+          currentIndex: entries
+              .indexWhere((item) => item.id == entity.id)
+              .clamp(0, entries.length - 1)
+              .toInt(),
+          sourceNodeId: sourceNodeId,
+          sourceNodeName: sourceNodeName,
+          mode: AudioPlaybackMode.sequential,
+        );
+        _resetShuffleBag();
+        AppDiagnosticLog.instance.info('audio_session_created', fields: {
+          'sessionId': _session!.id,
+          'entityId': entity.id,
+          'queueSize': entries.length,
+          'sourceNodeId': sourceNodeId,
+        });
+      } else {
+        final index =
+            currentSession.entries.indexWhere((item) => item.id == entity.id);
+        _session = _copySession(currentSession, currentIndex: index);
+        _persistSession();
+      }
+      if (_notifierDisposed || _lifecycle.isClosing) return;
+      await _openCurrent(autoplay: autoplay);
+    } catch (error, stack) {
+      _error = error;
+      AppDiagnosticLog.instance
+          .error('audio_session_open_failed', error, stack);
+    } finally {
+      _opening = false;
+      _notifyListenersSafely();
     }
-    await _openCurrent(autoplay: autoplay);
   }
 
   Future<void> restoreSession(AudioPlaybackSession session,
@@ -215,28 +233,28 @@ class AppAudioController extends ChangeNotifier {
         !_lifecycle.isCurrent(generation)) {
       return;
     }
-    final player = _ensurePlayer();
-    if (_currentMatchesPlayer(entity) && !seekToSessionPosition) {
-      if (autoplay &&
-          !player.state.playing &&
-          _lifecycle.isCurrent(generation)) {
-        await player.play();
-      }
-      return;
-    }
-    _error = null;
-    _opening = true;
-    AppDiagnosticLog.instance.info('audio_player_open_started', fields: {
-      'entityId': entity.id,
-      'sessionId': activeSession.id,
-      'autoplay': autoplay,
-      'restorePosition': seekToSessionPosition,
-    });
-    _setProgress(
-        position: Duration.zero,
-        duration: Duration(milliseconds: entity.durationMs ?? 0));
-    _notifyListenersSafely();
     try {
+      final player = _ensurePlayer();
+      if (_currentMatchesPlayer(entity) && !seekToSessionPosition) {
+        if (autoplay &&
+            !player.state.playing &&
+            _lifecycle.isCurrent(generation)) {
+          await player.play();
+        }
+        return;
+      }
+      _error = null;
+      _opening = true;
+      AppDiagnosticLog.instance.info('audio_player_open_started', fields: {
+        'entityId': entity.id,
+        'sessionId': activeSession.id,
+        'autoplay': autoplay,
+        'restorePosition': seekToSessionPosition,
+      });
+      _setProgress(
+          position: Duration.zero,
+          duration: Duration(milliseconds: entity.durationMs ?? 0));
+      _notifyListenersSafely();
       await player.stop();
       await _sourceLease?.close();
       _sourceLease = null;
@@ -246,20 +264,22 @@ class AppAudioController extends ChangeNotifier {
         return;
       }
       _sourceLease = lease;
-      final source = lease.file.path;
+      final source = MediaSourceResolver.playbackSourceForFile(lease.file);
+      _activeGeneration = generation;
       await player.open(Media(source), play: autoplay);
       if (!_lifecycle.isCurrent(generation)) {
         await player.stop();
         return;
       }
       _activeGeneration = generation;
-      _openedEntityId = entity.id;
+      _openedEntityId = _error == null ? entity.id : null;
       final seekMs = seekToSessionPosition
           ? activeSession.positionMs
           : (entity.lastPositionMs ?? 0);
       if (seekMs > 0) await player.seek(Duration(milliseconds: seekMs));
     } catch (error) {
       if (!_lifecycle.isCurrent(generation)) return;
+      _openedEntityId = null;
       _error = error;
       AppDiagnosticLog.instance.error(
         'audio_player_open_failed',
@@ -285,11 +305,11 @@ class AppAudioController extends ChangeNotifier {
   }
 
   bool _currentMatchesPlayer(EntityListItem entity) =>
-      _openedEntityId == entity.id && _player != null;
+      _openedEntityId == entity.id && _player != null && _error == null;
 
   Player _ensurePlayer() {
     if (_player != null) return _player!;
-    final created = Player();
+    final created = _playerFactory();
     _player = created;
     AppDiagnosticLog.instance.info('audio_player_created');
     _completedSubscription = created.stream.completed.listen((completed) {
@@ -317,6 +337,7 @@ class AppAudioController extends ChangeNotifier {
     });
     _errorSubscription = created.stream.error.listen((message) {
       if (!_lifecycle.isCurrent(_activeGeneration)) return;
+      _openedEntityId = null;
       _error = StateError(message);
       AppDiagnosticLog.instance.warning('audio_player_native_error', fields: {
         'entityId': current?.id,

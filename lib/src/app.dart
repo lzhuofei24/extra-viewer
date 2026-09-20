@@ -1959,6 +1959,18 @@ class _AppShellState extends State<AppShell> {
                 sortMode: _browserState.sortMode,
               ))
             : _entities);
+    if (!mounted || _viewerSessions.isStopped) return;
+    if (entity.entityType == EntityType.audio) {
+      await audioController.open(entity,
+          contextQueue: playbackQueue,
+          sourceNodeId: sourceNode?.id,
+          sourceNodeName: sourceNode?.name);
+      if (mounted && audioController.error != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('播放失败：${audioController.error}')));
+      }
+      return;
+    }
     final libraryOverlay = entity.entityType == EntityType.image ||
         entity.entityType == EntityType.video;
     if (!mounted || _viewerSessions.isStopped) return;
@@ -2070,6 +2082,16 @@ class _AppShellState extends State<AppShell> {
   void _handleSystemBack() {
     if (_mediaOverlay != null) {
       _closeMediaOverlay();
+      return;
+    }
+    if (_section == AppSection.data &&
+        _browserState.contentScope == BrowserContentScope.recursive) {
+      _exitImmersiveBrowsing();
+      return;
+    }
+    if (_section == AppSection.rules &&
+        _ruleBrowserController?.immersive == true) {
+      setState(() => _ruleBrowserController!.setImmersive(false));
       return;
     }
     if (_section == AppSection.rules &&
@@ -3079,6 +3101,9 @@ class _AppShellState extends State<AppShell> {
           onEditRule: _editRule,
           onDeleteRule: _deleteRule,
           onSelectionModeChanged: _setRuleSelectionMode,
+          onImmersiveChanged: (_) {
+            if (mounted) setState(() {});
+          },
         ),
       AppSection.indexes => IndexManagementPage(
           roots: _indexRoots,
@@ -3167,11 +3192,16 @@ class _AppShellState extends State<AppShell> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final hasMediaOverlay = _mediaOverlay != null;
+              final immersive = _section == AppSection.data
+                  ? _browserState.contentScope == BrowserContentScope.recursive
+                  : _section == AppSection.rules &&
+                      _ruleBrowserController?.immersive == true;
+              final showNavigation = !hasMediaOverlay && !immersive;
               final showMiniPlayer = !hasMediaOverlay ||
                   const {EntityType.image, EntityType.video}
                       .contains(_mediaOverlayEntityType);
               final safeBottom = MediaQuery.paddingOf(context).bottom;
-              final navigationObstruction = hasMediaOverlay
+              final navigationObstruction = !showNavigation
                   ? EdgeInsets.zero
                   : const EdgeInsets.only(
                       bottom: AppNavigation.bottomBarHeight +
@@ -3193,7 +3223,7 @@ class _AppShellState extends State<AppShell> {
                       child: body,
                     ),
                   ),
-                  if (!hasMediaOverlay)
+                  if (showNavigation)
                     Positioned(
                       left: AppNavigation.outerMargin,
                       right: AppNavigation.outerMargin,
@@ -3225,7 +3255,9 @@ class _AppShellState extends State<AppShell> {
                                   : 120)
                           : AppNavigation.outerMargin +
                               safeBottom +
-                              AppNavigation.bottomBarHeight +
+                              (showNavigation
+                                  ? AppNavigation.bottomBarHeight
+                                  : 0) +
                               AppNavigation.miniPlayerGap +
                               (_selectionMode || _ruleSelectionMode ? 88 : 0),
                       child: miniPlayer,

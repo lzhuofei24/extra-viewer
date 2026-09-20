@@ -31,6 +31,7 @@ class RuleIndexPage extends StatefulWidget {
     required this.onSelectionModeChanged,
     this.controller,
     this.onCreateRule,
+    this.onImmersiveChanged,
   });
 
   final LibraryQueries queries;
@@ -49,6 +50,7 @@ class RuleIndexPage extends StatefulWidget {
   final ValueChanged<bool> onSelectionModeChanged;
   final RuleBrowserController? controller;
   final VoidCallback? onCreateRule;
+  final ValueChanged<bool>? onImmersiveChanged;
 
   @override
   State<RuleIndexPage> createState() => _RuleIndexPageState();
@@ -56,7 +58,12 @@ class RuleIndexPage extends StatefulWidget {
 
 class _RuleIndexPageState extends State<RuleIndexPage> {
   late final RuleBrowserController _controller;
-  bool _immersive = false;
+  bool get _immersive => _controller.immersive;
+  void _setImmersive(bool value) {
+    _controller.setImmersive(value);
+    widget.onImmersiveChanged?.call(value);
+  }
+
   bool _selectionMode = false;
   final Set<String> _selected = {};
   String get _scope => _controller.activeRule?.node.id ?? 'home';
@@ -105,13 +112,13 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
 
   void _open(RuleDefinition rule) {
     _exitSelection();
-    setState(() => _immersive = false);
+    _setImmersive(false);
     _controller.openRule(rule);
   }
 
   void _close() {
     _exitSelection();
-    setState(() => _immersive = false);
+    _setImmersive(false);
     _controller.closeRule();
   }
 
@@ -124,7 +131,7 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
     final rule = _controller.activeRule;
     return BrowserPageScaffold(
       immersive: _immersive,
-      onExitImmersive: () => setState(() => _immersive = false),
+      onExitImmersive: () => _setImmersive(false),
       toolbar: _toolbar(rule),
       selectionBar: _selectionMode ? _selectionBar() : null,
       body: BrowserScrollShell(
@@ -242,8 +249,7 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
             : null,
         onAdd: rule == null ? widget.onCreateRule : null,
         addLabel: '新建规则',
-        onToggleImmersive:
-            rule == null ? null : () => setState(() => _immersive = true),
+        onToggleImmersive: rule == null ? null : () => _setImmersive(true),
         selectionMode: _selectionMode,
         onToggleSelection: _selectionMode ? _exitSelection : () => _select(),
       );

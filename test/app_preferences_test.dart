@@ -21,8 +21,8 @@ void main() {
         landscapeEqualWidthColumns: 5,
         portraitSquareColumns: 2,
         landscapeSquareColumns: 6,
-        portraitEqualHeightRows: 4,
-        landscapeEqualHeightRows: 3,
+        portraitEqualHeightLevel: 4,
+        landscapeEqualHeightLevel: 3,
         portraitFolderColumns: 2,
         landscapeFolderColumns: 5,
         landscapeListColumns: 2);
@@ -51,7 +51,7 @@ void main() {
       'preferences.gallery.counts.v1': jsonEncode({
         'portraitEqualWidthColumns': 0,
         'landscapeSquareColumns': 99,
-        'portraitEqualHeightRows': 'bad',
+        'portraitEqualHeightLevel': 'bad',
         'landscapeListColumns': 9,
       }),
     });
@@ -61,7 +61,7 @@ void main() {
     expect(value.gridLayout, BrowserGridLayout.equalHeight);
     expect(value.layout.portraitEqualWidthColumns, 1);
     expect(value.layout.landscapeSquareColumns, 8);
-    expect(value.layout.portraitEqualHeightRows, 3);
+    expect(value.layout.portraitEqualHeightLevel, 6);
     expect(value.layout.landscapeListColumns, 3);
     expect(value.layout.cardGap, 8);
   });
@@ -96,13 +96,13 @@ void main() {
 
   test('equal-height density uses viewport and orientation', () {
     const layout = GalleryLayoutSettings();
-    expect(layout.equalHeight(isPortrait: true, viewportHeight: 900),
+    expect(layout.equalHeight(isPortrait: true, viewportWidth: 900),
         (900 - 16 - 16) / 3);
-    expect(layout.equalHeight(isPortrait: false, viewportHeight: 500),
-        (500 - 16 - 8) / 2);
+    expect(layout.equalHeight(isPortrait: false, viewportWidth: 500),
+        (500 - 16 - 24) / 4);
     expect(
         layout.equalHeight(
-            isPortrait: true, viewportHeight: 900, immersive: true),
-        (900 - 16 - 2) / 3);
+            isPortrait: true, viewportWidth: 900, immersive: true),
+        (900 - 4 - 2) / 3);
   });
 }

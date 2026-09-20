@@ -10,8 +10,8 @@ class GlassAppearance {
   final Brightness brightness;
   final GlassSurfaceRole role;
   bool get isDark => brightness == Brightness.dark;
-  Color get foreground => Color(isDark ? 0xFFF5F5F5 : 0xFF111111);
-  Color get secondaryForeground => Color(isDark ? 0xFFF0F0F0 : 0xFF171717);
+  Color get foreground => Color(isDark ? 0xFFFFFFFF : 0xFF080808);
+  Color get secondaryForeground => Color(isDark ? 0xFFFAFAFA : 0xFF0C0C0C);
   Color get disabledForeground => Color(isDark ? 0xFF969696 : 0xFF656565);
   Color get selectedForeground => foreground;
   Color get selectedBackground =>
@@ -22,8 +22,8 @@ class GlassAppearance {
   LiquidGlassSettings get settings => LiquidGlassSettings(
         glassColor: (isDark ? Colors.black : Colors.white).withValues(
           alpha: role == GlassSurfaceRole.panel
-              ? (isDark ? .70 : .64)
-              : (isDark ? .58 : .50),
+              ? (isDark ? .60 : .54)
+              : (isDark ? .55 : .48),
         ),
         blur: 8,
         thickness: 20,

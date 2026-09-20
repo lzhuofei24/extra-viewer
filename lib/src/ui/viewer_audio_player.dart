@@ -75,6 +75,9 @@ class _AudioPlayerPreviewState extends State<_AudioPlayerPreview> {
         if (loadError != null) {
           return Center(child: Text('内置播放器打开失败：$loadError'));
         }
+        if (widget.controller.initializedPlayer == null) {
+          return const Center(child: CircularProgressIndicator());
+        }
         final current = widget.controller.current ?? widget.entity;
         return SafeArea(
           child: LayoutBuilder(

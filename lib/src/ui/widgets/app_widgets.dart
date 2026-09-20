@@ -27,7 +27,23 @@ class MiniAudioPlayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final entity = controller.current!;
-    final player = controller.player;
+    final player = controller.initializedPlayer;
+    if (player == null) {
+      return SizedBox(
+          width: 48,
+          height: 48,
+          child: FloatingGlassSurface(
+            borderRadius: 24,
+            child: controller.error == null
+                ? const Padding(
+                    padding: EdgeInsets.all(14),
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : IconButton(
+                    tooltip: '播放失败，查看详情',
+                    onPressed: onOpen,
+                    icon: const Icon(Icons.error_outline)),
+          ));
+    }
     final appearance = GlassAppearance.of(context);
     final title = p.basenameWithoutExtension(entity.title);
     final titleStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(

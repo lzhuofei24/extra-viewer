@@ -56,10 +56,10 @@ void main() {
     expect(layout.portraitEqualWidthColumns, 4);
     await tester.tap(find.text('等高'));
     await tester.pumpAndSettle();
-    expect(find.text('每屏行数'), findsOneWidget);
-    await tester.tap(find.byTooltip('增加每屏行数'));
+    expect(find.text('高度级别'), findsOneWidget);
+    await tester.tap(find.byTooltip('增加高度级别'));
     await tester.pumpAndSettle();
-    expect(layout.portraitEqualHeightRows, 4);
+    expect(layout.portraitEqualHeightLevel, 7);
     await tester.tap(find.text('列表'));
     await tester.pumpAndSettle();
     expect(find.text('每行 1 项（竖屏）'), findsOneWidget);
@@ -75,7 +75,7 @@ void main() {
     await tester.tap(find.byTooltip('减少每行数量'));
     await tester.pumpAndSettle();
     expect(layout.landscapeListColumns, 2);
-    expect(layout.portraitEqualHeightRows, 4);
+    expect(layout.portraitEqualHeightLevel, 7);
     expect(tester.takeException(), isNull);
   });
 

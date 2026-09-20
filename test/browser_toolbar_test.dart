@@ -42,7 +42,7 @@ void main() {
     for (final option in options) {
       expect(option.backgroundColor, Colors.transparent);
       expect(option.settings!.glassColor.a, lessThan(.3));
-      expect(option.selectedTextStyle!.color, const Color(0xFF111111));
+      expect(option.selectedTextStyle!.color, const Color(0xFF080808));
     }
     expect(
         tester.widget<FloatingGlassSurface>(panel).independentBackdrop, isTrue);
@@ -100,8 +100,8 @@ void main() {
     expect(find.text('卡片对齐方式'), findsNothing);
     for (final option in tester.widgetList<GlassSegmentedControl>(
         find.byType(GlassSegmentedControl))) {
-      expect(option.selectedTextStyle!.color, const Color(0xFFF5F5F5));
-      expect(option.unselectedIconColor, const Color(0xFFF5F5F5));
+      expect(option.selectedTextStyle!.color, const Color(0xFFFFFFFF));
+      expect(option.unselectedIconColor, const Color(0xFFFFFFFF));
     }
   });
 }

@@ -217,12 +217,13 @@ class _BrowserOptionsMenu extends StatelessWidget {
         const Text('文件布局'),
         if (browserState.gridLayout == BrowserGridLayout.equalHeight)
           _LayoutCountControl(
-              label: '每屏行数',
-              value: settings.equalHeightRows(isPortrait: portrait),
-              max: 6,
+              label: '高度级别',
+              value: settings.equalHeightLevel(isPortrait: portrait),
+              suffix:
+                  '${settings.equalHeight(isPortrait: portrait, viewportWidth: MediaQuery.sizeOf(context).width).round()}dp',
               onChanged: (v) => onLayoutChanged(portrait
-                  ? settings.copyWith(portraitEqualHeightRows: v)
-                  : settings.copyWith(landscapeEqualHeightRows: v)))
+                  ? settings.copyWith(portraitEqualHeightLevel: v)
+                  : settings.copyWith(landscapeEqualHeightLevel: v)))
         else if (browserState.gridLayout == BrowserGridLayout.equalWidth)
           _LayoutCountControl(
               label: '每行数量',
@@ -453,8 +454,10 @@ class _LayoutCountControl extends StatelessWidget {
       {required this.label,
       required this.value,
       required this.onChanged,
-      this.max = 8});
+      this.max = 8,
+      this.suffix});
   final String label;
+  final String? suffix;
   final int value, max;
   final ValueChanged<int> onChanged;
 
@@ -473,8 +476,8 @@ class _LayoutCountControl extends StatelessWidget {
             Semantics(
                 value: '$value',
                 child: SizedBox(
-                    width: 28,
-                    child: Text('$value',
+                    width: suffix == null ? 28 : 100,
+                    child: Text(suffix == null ? '$value' : '$value级 · $suffix',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                             color: GlassAppearance.of(context).foreground)))),

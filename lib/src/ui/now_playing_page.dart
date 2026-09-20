@@ -64,6 +64,20 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
         listenable: widget.controller,
         builder: (context, _) {
           final current = widget.controller.current;
+          if (widget.controller.error != null ||
+              widget.controller.initializedPlayer == null) {
+            return SafeArea(
+                child: Column(children: [
+              TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('返回')),
+              Expanded(
+                  child: Center(
+                      child: widget.controller.error == null
+                          ? const CircularProgressIndicator()
+                          : Text('播放失败：${widget.controller.error}'))),
+            ]));
+          }
           if (current == null) {
             return Center(
               child: TextButton.icon(

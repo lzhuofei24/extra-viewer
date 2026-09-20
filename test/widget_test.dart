@@ -37,6 +37,13 @@ void main() {
     expect(find.byTooltip('收起功能栏'), findsNothing);
     expect(tester.takeException(), isNull);
 
+    await tester.tap(find.byTooltip('沉浸式浏览'));
+    await tester.pump();
+    expect(find.byType(AppNavigation), findsNothing);
+    expect(find.byTooltip('退出沉浸式浏览'), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(find.byType(AppNavigation), findsOneWidget);
     await tester.tap(find.text('规则'));
     for (var attempt = 0;
         attempt < 100 && find.text('常用').evaluate().isEmpty;
@@ -54,6 +61,16 @@ void main() {
     expect(find.byType(BrowserToolbar), findsOneWidget);
     expect(find.byType(FloatingGlassSurface), findsNWidgets(2));
     expect(tester.takeException(), isNull);
+
+    await tester.tap(find.text('常用'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('沉浸式浏览'));
+    await tester.pump();
+    expect(find.byType(AppNavigation), findsNothing);
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(find.byType(AppNavigation), findsOneWidget);
+    expect(find.text('常用'), findsOneWidget);
 
     await tester.runAsync(() async {
       await tester.pumpWidget(const SizedBox());

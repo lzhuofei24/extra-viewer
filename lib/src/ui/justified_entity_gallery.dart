@@ -4,8 +4,7 @@ import '../core/domain/models.dart';
 import 'gallery_layout_settings.dart';
 import 'library_widgets.dart';
 
-/// Packs media by aspect ratio into rows that fill the available width.
-/// Completed rows vary slightly around the target height without cropping.
+/// Packs fixed-height cards without stretching partial rows.
 class JustifiedEntityGallerySliver extends StatelessWidget {
   const JustifiedEntityGallerySliver({
     super.key,
@@ -45,7 +44,7 @@ class JustifiedEntityGallerySliver extends StatelessWidget {
       builder: (context, constraints) {
         final targetHeight = layoutSettings.equalHeight(
           isPortrait: MediaQuery.orientationOf(context) == Orientation.portrait,
-          viewportHeight: constraints.viewportMainAxisExtent,
+          viewportWidth: constraints.crossAxisExtent,
           immersive: immersive,
         );
         final rows = JustifiedGalleryLayout.calculate(
@@ -130,32 +129,33 @@ class JustifiedGalleryLayout {
     if (items.isEmpty || availableWidth <= 0) return const [];
     final rows = <JustifiedGalleryRow<T>>[];
     final pending = <T>[];
-    var aspectSum = 0.0;
-
-    void commit({required bool fillWidth}) {
+    var usedWidth = 0.0;
+    final widths = <double>[];
+    void commit() {
       if (pending.isEmpty) return;
-      final rowHeight = fillWidth
-          ? (availableWidth - gap * (pending.length - 1)) / aspectSum
-          : targetHeight;
       rows.add(JustifiedGalleryRow<T>(
         items: List.unmodifiable(pending),
-        height: rowHeight,
-        widths: List.unmodifiable([
-          for (final item in pending) aspectRatio(item) * rowHeight,
-        ]),
+        height: targetHeight,
+        widths: List.unmodifiable(widths),
       ));
       pending.clear();
-      aspectSum = 0;
+      widths.clear();
+      usedWidth = 0;
     }
 
     for (final item in items) {
+      // Panoramas occupy one bounded cell and are proportionally cropped.
+      final width =
+          (aspectRatio(item) * targetHeight).clamp(1.0, availableWidth);
+      if (pending.isNotEmpty && usedWidth + gap + width > availableWidth) {
+        commit();
+      }
+      if (pending.isNotEmpty) usedWidth += gap;
       pending.add(item);
-      aspectSum += aspectRatio(item);
-      final targetWidth = aspectSum * targetHeight + gap * (pending.length - 1);
-      if (targetWidth >= availableWidth) commit(fillWidth: true);
+      widths.add(width);
+      usedWidth += width;
     }
-    // A partial final row keeps its intended visual density instead of stretching.
-    commit(fillWidth: false);
+    commit();
     return rows;
   }
 }

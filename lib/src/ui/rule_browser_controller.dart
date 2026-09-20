@@ -39,6 +39,13 @@ class RuleBrowserController extends ChangeNotifier {
     }
   }
 
+  bool immersive = false;
+  void setImmersive(bool value) {
+    if (immersive == value) return;
+    immersive = value;
+    notifyListeners();
+  }
+
   RuleDefinition? activeRule;
   List<EntityListItem> items = const [];
   RulePageCursor? cursor;
@@ -74,12 +81,14 @@ class RuleBrowserController extends ChangeNotifier {
   }
 
   Future<void> openRule(RuleDefinition rule) {
+    immersive = false;
     activeRule = rule;
     temporarySort = null;
     return loadPage(reset: true);
   }
 
   Future<void> closeRule() {
+    immersive = false;
     activeRule = null;
     items = const [];
     cursor = null;
