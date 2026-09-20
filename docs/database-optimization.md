@@ -75,8 +75,31 @@ SAF permission and removable-media acceptance remain device-only checks.
   and process RSS 248,844,288 bytes (test process, not Android application peak).
   This fixture does not establish recursive 130k snapshot latency, scanning
   concurrency, failure injection, checkpoint recovery or Android targets.
-- Remaining: complete read scheduling, summary invalidation,
-  local statistics publication, folder pagination, node view_type removal,
-  independent background session-cache construction and active-session pins,
-  asset leases/retirement integration, lean DTOs and bounded DTO caches,
-  migration-chain hardening and expanded performance/device acceptance.
+- Background follow-up: read workers recreate failed connections on the next
+  request, sharing a single recovery for concurrent callers. Reader-exit,
+  repeated recovery and shutdown-during-recovery tests pass. Forced native
+  isolate termination still needs handle-release hardening: the Windows fault
+  probe observed a locked SQLite file after killing an isolate.
+- Statistics run on the existing background reader in batches of 32, then the
+  writer publishes only matching dirty revisions. Re-dirtying after publication
+  advances beyond the saved revision, preventing stale replay. The app cancels
+  maintenance scheduling immediately on disposal. Standalone repositories retain
+  synchronous refresh for tooling; application writes use deferred statistics.
+- Rule counts/covers cache by query revisions, with exact relative-time expiry.
+  Reading progress does not invalidate it. The LRU has a 20,000-entry and 16 MiB
+  encoded-payload budget (not a measured heap bound). Writer batches share a
+  64-statement LRU; failed statements are disposed and recreated on retry.
+- Ordered-ID sessions now live in an independently attached cache database;
+  initial rule/recursive snapshots build on the background reader, subsequent
+  pages use the interactive reader. The library attachment is SQLite read-only.
+  Runtime cache file locks protect live sessions from startup orphan cleanup;
+  normal close removes cache files. The six-session LRU still lacks explicit
+  active-view pins, and the 128 MiB page budget excludes transient WAL overhead.
+- Validation after this follow-up: static analysis passed; complete Flutter
+  suite passed (196 tests), including concurrently developed UI changes.
+- Remaining: queued-request cancellation, active-session pins and total disk
+  budget enforcement, native crash resource cleanup, folder pagination,
+  node view_type removal, structured reading-anchor extraction, asset
+  leases/retirement integration, lean DTO projections, migration-chain fault
+  hardening, source reauthorization acceptance, and expanded performance/device
+  acceptance. Schema version 12 alone does not mean the full plan is complete.

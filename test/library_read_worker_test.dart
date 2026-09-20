@@ -8,8 +8,66 @@ import 'package:best_viewer/src/core/database/app_database.dart';
 import 'package:best_viewer/src/core/database/library_read_worker.dart';
 import 'package:best_viewer/src/core/database/library_repository.dart';
 import 'package:best_viewer/src/core/domain/models.dart';
+import 'package:best_viewer/src/modules/infrastructure/database_host.dart';
 
 void main() {
+  test('background statistics publish through the single writer', () async {
+    final temp = await Directory.systemTemp.createTemp('statistics_worker_');
+    addTearDown(() => temp.delete(recursive: true));
+    final path = p.join(temp.path, 'library.db');
+    final database = AppDatabase.openAtPathForTesting(path);
+    addTearDown(database.close);
+    final repo = LibraryRepository(database);
+    final root = repo.ensureCollectionIndexRoot('Counts');
+    final host = await DatabaseHost.start(databasePath: path);
+    addTearDown(host.close);
+    final reader = await LibraryReadWorker.start(
+        databasePath: path, storageDirectoryPath: temp.path);
+    addTearDown(reader.close);
+    await host.enableBackgroundStatistics();
+    await host.call(
+        'library', 'createCustomNode', {'parentId': root.id, 'name': 'Child'});
+    final rows = await reader.loadDirtyStatistics();
+    expect(
+        rows.any((row) => row['nodeId'] == root.id && row['child_count'] == 1),
+        isTrue);
+    await host.publishStatisticsBatch(rows);
+    expect(
+        database.db.select(
+            'SELECT child_node_count FROM index_node_stats WHERE node_id=?',
+            [root.id]).single['child_node_count'],
+        1);
+  });
+
+  test('reader recovers repeated exits and closes during recovery', () async {
+    final temp = await Directory.systemTemp.createTemp('reader_recovery_');
+    addTearDown(() => temp.delete(recursive: true));
+    final database =
+        AppDatabase.openAtPathForTesting(p.join(temp.path, 'library.db'));
+    addTearDown(database.close);
+    final worker = await LibraryReadWorker.start(
+        databasePath: database.databasePath!,
+        storageDirectoryPath: database.storageDirectoryPath);
+    addTearDown(worker.close);
+    final original = await worker.listRules();
+    for (var i = 0; i < 3; i++) {
+      await worker.exitForTesting();
+      final results =
+          await Future.wait([worker.listRules(), worker.listRules()]);
+      expect(results.first.map((rule) => rule.node.id),
+          original.map((rule) => rule.node.id));
+    }
+    await worker.exitForTesting(background: true);
+    expect(
+        await worker.loadRuleSummaries([original.first.node.id]), hasLength(1));
+    await worker.exitForTesting();
+    final pending = worker.listRules();
+    final assertion = expectLater(pending, throwsStateError);
+    await worker.close();
+    await assertion;
+    await expectLater(worker.listRules(), throwsStateError);
+  });
+
   test('read worker returns direct page data and honors pagination', () async {
     final temp = await Directory.systemTemp.createTemp('best_viewer_worker_');
     addTearDown(() => temp.delete(recursive: true));

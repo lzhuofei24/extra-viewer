@@ -257,6 +257,7 @@ class _AppShellState extends State<AppShell> {
   @override
   void dispose() {
     _dirtyPreviews?.stop();
+    _readWorker?.stopStatisticsMaintenance();
     _ruleBrowserController?.dispose();
     AppDiagnosticLog.instance.info('app_shell_dispose_started');
     _indexPathController.dispose();
@@ -322,7 +323,8 @@ class _AppShellState extends State<AppShell> {
     final existing = _readWorker;
     if (existing != null) return existing;
     final database = _database;
-    final databasePath = _writeWorker?.databasePath;
+    final writer = _writeWorker;
+    final databasePath = writer?.databasePath;
     if (database == null || databasePath == null) {
       throw StateError('读取服务不可用：当前数据库没有可供读 Isolate 使用的文件路径');
     }
@@ -332,12 +334,26 @@ class _AppShellState extends State<AppShell> {
     start = LibraryReadWorker.start(
       databasePath: databasePath,
       storageDirectoryPath: database.storageDirectoryPath,
-    ).then((worker) {
+    ).then((worker) async {
       if (!mounted || !identical(_database, database)) {
         unawaited(worker.close());
         throw StateError('读取服务启动时应用已经切换数据库');
       }
+      try {
+        await writer!.enableBackgroundStatistics();
+      } catch (_) {
+        await worker.close();
+        rethrow;
+      }
+      if (!mounted || _runtime.isClosing || !identical(_database, database)) {
+        await worker.close();
+        throw StateError('读取服务启动时应用已经切换数据库');
+      }
       _readWorker = worker;
+      worker.startStatisticsMaintenance(writer.publishStatisticsBatch,
+          onError: (error, stack) => AppDiagnosticLog.instance.warning(
+              'statistics_refresh_failed',
+              fields: {'error': '$error'}));
       return worker;
     }).whenComplete(() {
       if (identical(_readWorkerStart, start)) _readWorkerStart = null;
@@ -547,6 +563,12 @@ class _AppShellState extends State<AppShell> {
           databasePath: databasePath,
           storageDirectoryPath: database.storageDirectoryPath,
         );
+        await writeWorker.enableBackgroundStatistics();
+        readWorker.startStatisticsMaintenance(
+            writeWorker.publishStatisticsBatch,
+            onError: (error, stack) => AppDiagnosticLog.instance.warning(
+                'statistics_refresh_failed',
+                fields: {'error': '$error'}));
       } catch (error, stackTrace) {
         _readError = '读取服务启动失败：$error';
         AppDiagnosticLog.instance.warning(

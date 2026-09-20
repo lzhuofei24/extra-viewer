@@ -9,6 +9,7 @@ class LibraryRepositoryBase {
 
   final AppDatabase database;
   final ThumbnailStore thumbnailStore;
+  bool deferStatistics = false;
   String get storageDirectoryPath => database.storageDirectoryPath;
 
   int _transactionSequence = 0;
@@ -351,6 +352,7 @@ class LibraryRepositoryBase {
   }
 
   void _rebuildIndexNodeStatsNow() {
+    if (deferStatistics) return;
     writeTransaction(() => refreshDirtyStatistics(database.db));
   }
 

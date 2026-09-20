@@ -11,6 +11,39 @@ import 'package:sqlite3/sqlite3.dart';
 import 'package:best_viewer/src/core/database/local_statistics.dart';
 
 void main() {
+  test('statistics reject stale results across publication generations', () {
+    final db = AppDatabase.openInMemory();
+    addTearDown(db.close);
+    final repo = LibraryRepository(db)..deferStatistics = true;
+    final root = repo.ensureCollectionIndexRoot('Statistics');
+    final before = computeDirtyStatistics(db.db);
+    repo.createCustomNode(parentId: root.id, name: 'First');
+    publishStatistics(db.db, before);
+    expect(
+        db.db.select(
+            'SELECT 1 FROM index_stats_dirty WHERE node_id=?', [root.id]),
+        isNotEmpty);
+    final current = computeDirtyStatistics(db.db);
+    publishStatistics(db.db, current);
+    repo.createCustomNode(parentId: root.id, name: 'Second');
+    publishStatistics(db.db, current);
+    expect(
+        db.db.select(
+            'SELECT child_node_count FROM index_node_stats WHERE node_id=?',
+            [root.id]).single['child_node_count'],
+        1);
+    expect(
+        db.db.select(
+            'SELECT 1 FROM index_stats_dirty WHERE node_id=?', [root.id]),
+        isNotEmpty);
+    refreshDirtyStatistics(db.db);
+    expect(
+        db.db.select(
+            'SELECT child_node_count FROM index_node_stats WHERE node_id=?',
+            [root.id]).single['child_node_count'],
+        2);
+  });
+
   test(
       'dirty statistics deduplicate references and leave unrelated roots alone',
       () {

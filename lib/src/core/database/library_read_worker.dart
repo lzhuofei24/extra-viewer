@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:isolate';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'package:sqlite3/sqlite3.dart';
 
@@ -9,6 +10,9 @@ import '../thumbnails/thumbnail_store.dart';
 import '../../modules/library/library_queries.dart';
 import 'node_search_query.dart';
 import 'browse_sessions.dart';
+import 'browse_cache_files.dart';
+import 'local_statistics.dart';
+import 'query_cache.dart';
 
 enum RecursiveReadScope { node, directoryHome, collectionHome }
 
@@ -21,6 +25,10 @@ class LibraryReadWorker implements LibraryQueries {
     this._errorPort,
     this._exitPort,
     this._terminalError,
+    this._databasePath,
+    this._storageDirectoryPath,
+    this._cachePath,
+    this._cacheFiles,
   );
 
   final SendPort _sendPort;
@@ -31,6 +39,82 @@ class LibraryReadWorker implements LibraryQueries {
   Object? _terminalError;
   final Set<Completer<Map<Object?, Object?>>> _pending = {};
   LibraryReadWorker? _background;
+  Timer? _statisticsTimer;
+  bool _statisticsRunning = false;
+
+  void stopStatisticsMaintenance() => _statisticsTimer?.cancel();
+
+  void startStatisticsMaintenance(
+      Future<void> Function(List<Map<String, Object?>>) publish,
+      {void Function(Object, StackTrace)? onError}) {
+    _statisticsTimer?.cancel();
+    _statisticsTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
+      if (_statisticsRunning || _closeFuture != null) return;
+      _statisticsRunning = true;
+      try {
+        final rows = await loadDirtyStatistics();
+        if (_closeFuture == null && rows.isNotEmpty) await publish(rows);
+      } catch (error, stack) {
+        if (_closeFuture == null) onError?.call(error, stack);
+      } finally {
+        _statisticsRunning = false;
+      }
+    });
+  }
+
+  Future<List<Map<String, Object?>>> loadDirtyStatistics() async {
+    final result = await _request({'type': 'dirtyStatistics'});
+    return (result['rows'] as List).cast<Map<String, Object?>>();
+  }
+
+  final String _databasePath;
+  final String _storageDirectoryPath;
+  final String _cachePath;
+  final BrowseCacheFiles? _cacheFiles;
+  LibraryReadWorker? _replacement;
+  Future<LibraryReadWorker>? _restarting;
+
+  Future<LibraryReadWorker> _recover() async {
+    final previous = _replacement;
+    if (previous != null && previous._terminalError == null) return previous;
+    return _restarting ??= _startReplacement();
+  }
+
+  Future<LibraryReadWorker> _startReplacement() async {
+    try {
+      await _replacement?.close();
+      _isolate.kill(priority: Isolate.immediate);
+      _errorPort.close();
+      _exitPort.close();
+      final next = await start(
+        databasePath: _databasePath,
+        storageDirectoryPath: _storageDirectoryPath,
+        createBackground: false,
+        sessionCachePath: _cachePath,
+      );
+      if (_closeFuture != null) {
+        await next.close();
+        throw StateError('Library read worker is closed');
+      }
+      _replacement = next;
+      return next;
+    } finally {
+      _restarting = null;
+    }
+  }
+
+  @visibleForTesting
+  Future<void> exitForTesting({bool background = false}) async {
+    final target = background ? _background! : (_replacement ?? this);
+    final response = ReceivePort();
+    target._sendPort.send({'type': 'close', 'replyPort': response.sendPort});
+    try {
+      await response.first;
+    } finally {
+      response.close();
+      target._fail(StateError('Read worker exited'));
+    }
+  }
 
   void _fail(Object error) {
     _terminalError ??= error;
@@ -43,7 +127,12 @@ class LibraryReadWorker implements LibraryQueries {
     required String databasePath,
     required String storageDirectoryPath,
     bool createBackground = true,
+    String? sessionCachePath,
   }) async {
+    final cacheFiles = sessionCachePath == null
+        ? await BrowseCacheFiles.create(storageDirectoryPath)
+        : null;
+    final cachePath = sessionCachePath ?? cacheFiles!.path;
     final readyPort = ReceivePort();
     final errorPort = ReceivePort();
     final exitPort = ReceivePort();
@@ -77,6 +166,7 @@ class LibraryReadWorker implements LibraryQueries {
         'databasePath': databasePath,
         'storageDirectoryPath': storageDirectoryPath,
         'readyPort': readyPort.sendPort,
+        'cachePath': cachePath,
       },
       onError: errorPort.sendPort,
       onExit: exitPort.sendPort,
@@ -89,6 +179,7 @@ class LibraryReadWorker implements LibraryQueries {
       errorPort.close();
       exitPort.close();
       isolate.kill(priority: Isolate.immediate);
+      await cacheFiles?.close();
       rethrow;
     }
     readyPort.close();
@@ -98,12 +189,17 @@ class LibraryReadWorker implements LibraryQueries {
       errorPort,
       exitPort,
       terminalError,
+      databasePath,
+      storageDirectoryPath,
+      cachePath,
+      cacheFiles,
     );
     if (createBackground) {
       try {
         worker._background = await start(
             databasePath: databasePath,
             storageDirectoryPath: storageDirectoryPath,
+            sessionCachePath: cachePath,
             createBackground: false);
       } catch (_) {
         await worker.close();
@@ -356,13 +452,29 @@ class LibraryReadWorker implements LibraryQueries {
 
   Future<Map<Object?, Object?>> _request(Map<String, Object?> request) async {
     _ensureOpen();
+    final createsSnapshot = request['sessionId'] == null &&
+        const {'rulePage', 'recursivePage'}.contains(request['type']);
     if (_background != null &&
-        const {'ruleSummaries', 'ruleCovers', 'ruleFilterOptions'}
-            .contains(request['type'])) {
+        (createsSnapshot ||
+            const {
+              'ruleSummaries',
+              'ruleCovers',
+              'ruleFilterOptions',
+              'dirtyStatistics'
+            }.contains(request['type']))) {
       return _background!._request(request);
     }
-    final terminalError = _terminalError;
-    if (terminalError != null) throw terminalError;
+    if (_terminalError != null) {
+      final next = await _recover();
+      return next._requestOnce(request);
+    }
+    return _requestOnce(request);
+  }
+
+  Future<Map<Object?, Object?>> _requestOnce(
+      Map<String, Object?> request) async {
+    _ensureOpen();
+    if (_terminalError != null) throw _terminalError!;
     final response = ReceivePort();
     final pending = Completer<Map<Object?, Object?>>();
     _pending.add(pending);
@@ -380,7 +492,7 @@ class LibraryReadWorker implements LibraryQueries {
       message = await pending.future.timeout(const Duration(seconds: 30));
     } on TimeoutException {
       _isolate.kill(priority: Isolate.immediate);
-      _fail(StateError('Read worker timed out; reopen the library'));
+      _fail(StateError('Read worker timed out; retry the request'));
       throw StateError('Read worker request timed out');
     } finally {
       _pending.remove(pending);
@@ -400,21 +512,34 @@ class LibraryReadWorker implements LibraryQueries {
   }
 
   Future<void> _closeImpl() async {
+    _statisticsTimer?.cancel();
+    final wasHealthy = _terminalError == null;
     _fail(StateError('Read worker closed'));
     await _background?.close();
-    final response = ReceivePort();
-    _sendPort.send(<String, Object?>{
-      'type': 'close',
-      'replyPort': response.sendPort,
-    });
-    try {
-      await response.first.timeout(const Duration(seconds: 2));
-    } finally {
-      response.close();
-      _isolate.kill(priority: Isolate.beforeNextEvent);
-      _errorPort.close();
-      _exitPort.close();
+    final restarting = _restarting;
+    if (restarting != null) {
+      try {
+        await restarting;
+      } catch (_) {
+        // A concurrent restart closes its new worker before rejecting.
+      }
     }
+    await _replacement?.close();
+    if (wasHealthy) {
+      final response = ReceivePort();
+      _sendPort.send({'type': 'close', 'replyPort': response.sendPort});
+      try {
+        await response.first.timeout(const Duration(seconds: 2));
+      } on TimeoutException {
+        // A stuck reader must not hold application shutdown open.
+      } finally {
+        response.close();
+      }
+    }
+    _isolate.kill(priority: Isolate.immediate);
+    _errorPort.close();
+    _exitPort.close();
+    await _cacheFiles?.close();
   }
 }
 
@@ -472,9 +597,22 @@ void _readWorkerMain(Map<String, Object> config) {
   final databasePath = config['databasePath']! as String;
   final storageDirectoryPath = config['storageDirectoryPath']! as String;
   final readyPort = config['readyPort']! as SendPort;
-  final database = sqlite3.open(databasePath, mode: OpenMode.readOnly);
-  database.execute('PRAGMA cache_size = -8192');
-  final sessions = BrowseSessions(database);
+  // The empty main database permits writable cache attachments. The business
+  // database is explicitly read-only, including native SQLite enforcement.
+  final database = sqlite3.open(':memory:', uri: true);
+  late final BrowseSessions sessions;
+  try {
+    final uri = Uri.file(databasePath).replace(queryParameters: {'mode': 'ro'});
+    database.execute('ATTACH DATABASE ? AS library', [uri.toString()]);
+    database.execute('PRAGMA library.cache_size = -8192');
+    database.execute('PRAGMA busy_timeout = 1000');
+    sessions =
+        BrowseSessions(database, cachePath: config['cachePath'] as String);
+  } catch (_) {
+    database.dispose();
+    rethrow;
+  }
+  final cache = QueryCache();
   final requestPort = ReceivePort();
   readyPort.send(requestPort.sendPort);
   requestPort.listen((message) {
@@ -488,6 +626,18 @@ void _readWorkerMain(Map<String, Object> config) {
     }
     final replyPort = request['replyPort'] as SendPort;
     try {
+      if (request['type'] == 'dirtyStatistics') {
+        database.execute('BEGIN');
+        try {
+          final rows = computeDirtyStatistics(database);
+          database.execute('COMMIT');
+          replyPort.send({'ok': true, 'rows': rows});
+        } catch (_) {
+          database.execute('ROLLBACK');
+          rethrow;
+        }
+        return;
+      }
       if (request['type'] == 'nodeSearch') {
         final after = request['after'] as List<Object?>?;
         final query = NodeSearchQuery(
@@ -510,8 +660,10 @@ void _readWorkerMain(Map<String, Object> config) {
         return;
       }
       if (request['type'] == 'ruleSummaries') {
+        cache.synchronize(database);
         final ids = (request['ruleIds'] as List).cast<String>().toSet();
-        final rules = _loadRules(database, includeCounts: true, ids: ids);
+        final rules =
+            _loadRules(database, includeCounts: true, ids: ids, cache: cache);
         replyPort.send({
           'ok': true,
           'counts': {
@@ -528,9 +680,15 @@ void _readWorkerMain(Map<String, Object> config) {
         return;
       }
       if (request['type'] == 'ruleCovers') {
+        cache.synchronize(database);
         final covers = <String, Object?>{};
         final now = DateTime.now().millisecondsSinceEpoch;
         for (final id in (request['ruleIds'] as List).cast<String>().toSet()) {
+          final cached = cache.get('cover:$id', now) as Map<String, Object?>?;
+          if (cached != null) {
+            if (cached['entity'] != null) covers[id] = cached['entity'];
+            continue;
+          }
           final rules = database
               .select('SELECT * FROM index_rules WHERE node_id = ?', [id]);
           if (rules.isEmpty) continue;
@@ -548,6 +706,8 @@ void _readWorkerMain(Map<String, Object> config) {
           if (rows.isNotEmpty) {
             covers[id] = _entityToMap(rows.single, storageDirectoryPath);
           }
+          cache.put('cover:$id', {'entity': covers[id]},
+              expiresAt: _ruleExpiry(database, rule, query));
         }
         replyPort.send({'ok': true, 'covers': covers});
         return;
@@ -599,7 +759,7 @@ void _readWorkerMain(Map<String, Object> config) {
 }
 
 List<Map<String, Object?>> _loadRules(Database database,
-    {bool includeCounts = false, Set<String>? ids}) {
+    {bool includeCounts = false, Set<String>? ids, QueryCache? cache}) {
   final rows = database.select('''
     SELECT node.*, rule.entity_types_json, rule.extensions_json,
            rule.scope_node_id, rule.scope_state, rule.min_size, rule.max_size,
@@ -614,13 +774,40 @@ List<Map<String, Object?>> _loadRules(Database database,
   ''');
   return rows.where((row) => ids == null || ids.contains(row['id'])).map((row) {
     if (!includeCounts) return _ruleToMessage(row, null);
+    final key = 'count:${row['id']}';
+    final cached =
+        cache?.get(key, DateTime.now().millisecondsSinceEpoch) as int?;
+    if (cached != null) return _ruleToMessage(row, cached);
     final query = _ruleQuery(row, DateTime.now().millisecondsSinceEpoch);
     final count = database.select(
       'SELECT COUNT(*) AS count FROM (SELECT 1 FROM entities e WHERE ${query.whereSql} LIMIT ?)',
       [...query.parameters, row['max_results']],
     ).single['count'] as int;
+    cache?.put(key, count, expiresAt: _ruleExpiry(database, row, query));
     return _ruleToMessage(row, count.clamp(0, row['max_results'] as int));
   }).toList(growable: false);
+}
+
+int? _ruleExpiry(Database database, Row rule, _RuleQueryParts query) {
+  final terms = <String>[];
+  final modifiedDays = rule['modified_within_days'] as int?;
+  final openedDays = rule['opened_within_days'] as int?;
+  if (modifiedDays != null) {
+    terms.add(
+        'MIN(e.source_modified_at_ms) + ${modifiedDays * Duration.millisecondsPerDay + 1}');
+  }
+  if (openedDays != null) {
+    terms.add(
+        'MIN(e.last_opened_at) + ${openedDays * Duration.millisecondsPerDay + 1}');
+  }
+  if (terms.isEmpty) return null;
+  final expression =
+      terms.length == 1 ? terms.single : 'MIN(${terms.join(',')})';
+  return database
+      .select(
+          'SELECT $expression AS expiry FROM entities e WHERE ${query.whereSql}',
+          query.parameters)
+      .single['expiry'] as int?;
 }
 
 Map<String, Object?> _loadRulePage(

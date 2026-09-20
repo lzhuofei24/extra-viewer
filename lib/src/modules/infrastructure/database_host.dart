@@ -6,6 +6,8 @@ import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
 import '../../core/database/app_database.dart';
 import '../../core/database/schema_v10.dart';
+import '../../core/database/local_statistics.dart';
+import '../../core/database/statement_cache.dart';
 import '../../core/database/library_repository.dart';
 import '../../core/database/library_build_repository.dart';
 import '../library/library_dispatch.dart';
@@ -182,6 +184,14 @@ class DatabaseHost {
     await _request({'domain': 'barrier'});
   }
 
+  Future<void> enableBackgroundStatistics() async {
+    await _request({'domain': 'statisticsEnable'});
+  }
+
+  Future<void> publishStatisticsBatch(List<Map<String, Object?>> rows) async {
+    await _request({'domain': 'statisticsPublish', 'rows': rows});
+  }
+
   Future<void> close() => _closing ??= _close();
   Future<void> _close() async {
     try {
@@ -221,6 +231,7 @@ Future<void> _runDatabase(({String path, SendPort reply}) config) async {
     return;
   }
   final repository = LibraryRepository(app);
+  final statements = StatementCache(app.db);
   final builds = LibraryBuildRepository(repository);
   final input = ReceivePort();
   config.reply.send(input.sendPort);
@@ -230,7 +241,23 @@ Future<void> _runDatabase(({String path, SendPort reply}) config) async {
       final domain = request['domain'];
       final id = request['id']! as String;
       try {
+        if (domain == 'statisticsEnable') {
+          installStatisticsGeneration(app.db);
+          repository.deferStatistics = true;
+          config.reply.send({'id': id, 'ok': true, 'value': null});
+          continue;
+        }
+        if (domain == 'statisticsPublish') {
+          final rows = (request['rows'] as List).cast<Map<String, Object?>>();
+          if (rows.length > 32) {
+            throw ArgumentError('Statistics batch exceeds 32');
+          }
+          repository.writeTransaction(() => publishStatistics(app.db, rows));
+          config.reply.send({'id': id, 'ok': true, 'value': null});
+          continue;
+        }
         if (domain == 'close') {
+          statements.dispose();
           app.checkpointWriteAheadLog();
           app.close();
           config.reply.send({'id': id, 'ok': true, 'value': null});
@@ -243,7 +270,7 @@ Future<void> _runDatabase(({String path, SendPort reply}) config) async {
               'library' => await dispatchLibrary(repository, method, args),
               'build' => await dispatchBuild(builds, method, args),
               'sql' => _batch(
-                  app.db,
+                  statements,
                   (request['statements'] as List)
                       .cast<LibraryWriteStatement>()),
               'receipt' => _receipt(app.db, request['commandId']! as String),
@@ -270,6 +297,7 @@ Future<void> _runDatabase(({String path, SendPort reply}) config) async {
       }
     }
   } finally {
+    statements.dispose();
     input.close();
     app.close();
   }
@@ -327,20 +355,10 @@ Future<Object?> _command(
 
 int _lastReceiptCleanup = 0;
 
-int _batch(Database db, List<LibraryWriteStatement> statements) {
-  final prepared = <String, PreparedStatement>{};
-  try {
-    var changes = 0;
-    for (final item in statements) {
-      final statement =
-          prepared.putIfAbsent(item.sql, () => db.prepare(item.sql));
-      statement.execute(item.parameters);
-      changes += db.updatedRows;
-    }
-    return changes;
-  } finally {
-    for (final statement in prepared.values) {
-      statement.dispose();
-    }
+int _batch(StatementCache cache, List<LibraryWriteStatement> statements) {
+  var changes = 0;
+  for (final item in statements) {
+    changes += cache.execute(item.sql, item.parameters);
   }
+  return changes;
 }
