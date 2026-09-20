@@ -35,6 +35,15 @@ void main() {
     expect(find.text('浏览选项'), findsOneWidget);
     final panel = find.byKey(const ValueKey('browser-options-surface'));
     expect(panel, findsOneWidget);
+    expect(tester.widget<FloatingGlassSurface>(panel).role,
+        GlassSurfaceRole.panel);
+    final options = tester
+        .widgetList<GlassSegmentedControl>(find.byType(GlassSegmentedControl));
+    for (final option in options) {
+      expect(option.backgroundColor, Colors.transparent);
+      expect(option.settings!.glassColor.a, lessThan(.3));
+      expect(option.selectedTextStyle!.color, const Color(0xFF111111));
+    }
     expect(
         tester.widget<FloatingGlassSurface>(panel).independentBackdrop, isTrue);
     final container =
@@ -63,6 +72,7 @@ void main() {
 
   testWidgets('list display hides card alignment choices', (tester) async {
     await tester.pumpWidget(MaterialApp(
+      theme: ThemeData.dark(),
       home: Scaffold(
         body: BrowserToolbar(
           leading: const Text('位置'),
@@ -88,5 +98,10 @@ void main() {
     expect(find.text('紧凑'), findsOneWidget);
     expect(find.text('正常'), findsOneWidget);
     expect(find.text('卡片对齐方式'), findsNothing);
+    for (final option in tester.widgetList<GlassSegmentedControl>(
+        find.byType(GlassSegmentedControl))) {
+      expect(option.selectedTextStyle!.color, const Color(0xFFF5F5F5));
+      expect(option.unselectedIconColor, const Color(0xFFF5F5F5));
+    }
   });
 }

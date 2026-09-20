@@ -796,9 +796,14 @@ class _PositionSliderState extends State<_PositionSlider> {
           stream: widget.player.stream.duration,
           initialData: widget.player.state.duration,
           builder: (context, durationSnapshot) {
-            return _buildSlider(
-              positionSnapshot.data ?? Duration.zero,
-              durationSnapshot.data ?? Duration.zero,
+            return StreamBuilder<Duration>(
+              stream: widget.player.stream.buffer,
+              initialData: widget.player.state.buffer,
+              builder: (context, bufferSnapshot) => _buildSlider(
+                positionSnapshot.data ?? Duration.zero,
+                durationSnapshot.data ?? Duration.zero,
+                bufferSnapshot.data ?? Duration.zero,
+              ),
             );
           },
         );
@@ -806,7 +811,7 @@ class _PositionSliderState extends State<_PositionSlider> {
     );
   }
 
-  Widget _buildSlider(Duration position, Duration duration) {
+  Widget _buildSlider(Duration position, Duration duration, Duration buffer) {
     final max = duration.inMilliseconds.toDouble();
     final value = _dragValue ??
         position.inMilliseconds.clamp(0, duration.inMilliseconds).toDouble();
@@ -814,6 +819,8 @@ class _PositionSliderState extends State<_PositionSlider> {
       min: 0,
       max: max <= 0 ? 1 : max,
       value: max <= 0 ? 0 : value,
+      secondaryTrackValue:
+          max <= 0 ? 0 : buffer.inMilliseconds.toDouble().clamp(0, max),
       onChanged:
           max <= 0 ? null : (value) => setState(() => _dragValue = value),
       onChangeEnd: max <= 0

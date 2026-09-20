@@ -4,6 +4,8 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:flutter/material.dart';
 
 import 'browser_state.dart';
+import 'glass_appearance.dart';
+export 'glass_appearance.dart' show GlassAppearance, GlassSurfaceRole;
 
 enum AppSection { data, rules, indexes }
 
@@ -110,26 +112,21 @@ class FloatingGlassSurface extends StatelessWidget {
     this.borderRadius = 24,
     this.padding = EdgeInsets.zero,
     this.independentBackdrop = false,
+    this.role = GlassSurfaceRole.compact,
   });
 
   final Widget child;
   final double borderRadius;
   final EdgeInsetsGeometry padding;
   final bool independentBackdrop;
+  final GlassSurfaceRole role;
 
   static LiquidGlassSettings settingsOf(BuildContext context) =>
-      LiquidGlassSettings(
-        glassColor:
-            Theme.of(context).colorScheme.surface.withValues(alpha: .27),
-        blur: 8,
-        thickness: 20,
-        saturation: 1.2,
-        lightIntensity: .5,
-        chromaticAberration: .01,
-      );
+      GlassAppearance.of(context).settings;
 
   @override
   Widget build(BuildContext context) {
+    final appearance = GlassAppearance(Theme.of(context).brightness, role);
     final surface = RepaintBoundary(
       child: GlassContainer(
         useOwnLayer: true,
@@ -137,10 +134,10 @@ class FloatingGlassSurface extends StatelessWidget {
             ? GlassQuality.premium
             : GlassQuality.minimal,
         shape: LiquidRoundedSuperellipse(borderRadius: borderRadius),
-        settings: settingsOf(context),
+        settings: appearance.settings,
         child: Padding(
           padding: padding,
-          child: _FloatingGlassTextTheme(child: child),
+          child: GlassContentTheme(appearance: appearance, child: child),
         ),
       ),
     );
@@ -148,7 +145,7 @@ class FloatingGlassSurface extends StatelessWidget {
     // inherited widgets. Reset the anchor's nested-glass no-refraction flag.
     return independentBackdrop
         ? InheritedLiquidGlass(
-            settings: settingsOf(context),
+            settings: appearance.settings,
             quality: ImageFilter.isShaderFilterSupported
                 ? GlassQuality.premium
                 : GlassQuality.minimal,
@@ -156,33 +153,6 @@ class FloatingGlassSurface extends StatelessWidget {
             isBlurProvidedByAncestor: false,
             child: surface)
         : surface;
-  }
-}
-
-class _FloatingGlassTextTheme extends StatelessWidget {
-  const _FloatingGlassTextTheme({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    const foreground = Colors.black;
-    return Theme(
-      data: theme.copyWith(
-        textTheme: theme.textTheme.apply(
-          bodyColor: foreground,
-          displayColor: foreground,
-        ),
-      ),
-      child: IconTheme(
-        data: const IconThemeData(color: foreground),
-        child: DefaultTextStyle.merge(
-          style: const TextStyle(color: foreground),
-          child: child,
-        ),
-      ),
-    );
   }
 }
 
@@ -251,9 +221,9 @@ class _BottomDestinationButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final color = selected
-        ? theme.colorScheme.onSecondaryContainer
-        : theme.colorScheme.onSurfaceVariant;
+    final appearance = GlassAppearance.of(context);
+    final color =
+        selected ? appearance.selectedForeground : appearance.foreground;
     return Semantics(
       selected: selected,
       button: true,
@@ -269,9 +239,8 @@ class _BottomDestinationButton extends StatelessWidget {
             constraints: const BoxConstraints(minWidth: 52, minHeight: 56),
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
             decoration: BoxDecoration(
-              color: selected
-                  ? theme.colorScheme.secondaryContainer.withValues(alpha: 0.68)
-                  : Colors.transparent,
+              color:
+                  selected ? appearance.selectedBackground : Colors.transparent,
               borderRadius: BorderRadius.circular(22),
             ),
             child: Column(

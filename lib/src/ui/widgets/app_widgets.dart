@@ -28,10 +28,11 @@ class MiniAudioPlayer extends StatelessWidget {
   Widget build(BuildContext context) {
     final entity = controller.current!;
     final player = controller.player;
-    final scheme = Theme.of(context).colorScheme;
+    final appearance = GlassAppearance.of(context);
     final title = p.basenameWithoutExtension(entity.title);
     final titleStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
               fontWeight: FontWeight.w700,
+              color: appearance.foreground,
             ) ??
         const TextStyle(fontWeight: FontWeight.w700);
     final titlePainter = TextPainter(
@@ -72,7 +73,8 @@ class MiniAudioPlayer extends StatelessWidget {
                           onPressed: onToggleCollapsed,
                           iconWidget: const CollapseGripIcon(),
                         ),
-                        Icon(Icons.graphic_eq_rounded, color: scheme.primary),
+                        Icon(Icons.graphic_eq_rounded,
+                            color: appearance.foreground),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Column(
@@ -157,6 +159,9 @@ class MiniPlayerControl extends StatelessWidget {
   Widget build(BuildContext context) {
     final button = filled
         ? IconButton.filled(
+            style: IconButton.styleFrom(
+                backgroundColor:
+                    GlassAppearance.of(context).selectedBackground),
             tooltip: tooltip,
             onPressed: onPressed,
             padding: EdgeInsets.zero,

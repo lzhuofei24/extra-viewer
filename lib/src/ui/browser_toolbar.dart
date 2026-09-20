@@ -202,7 +202,7 @@ class _BrowserOptionsMenu extends StatelessWidget {
     if (browserState.displayMode == BrowserDisplayMode.list) {
       return [
         if (portrait)
-          const Text('每行 1 项（竖屏）', style: TextStyle(color: Colors.black))
+          const Text('每行 1 项（竖屏）')
         else
           _LayoutCountControl(
               label: '每行数量',
@@ -214,7 +214,7 @@ class _BrowserOptionsMenu extends StatelessWidget {
     }
     return [
       if (showFiles && allowGridStyle) ...[
-        const Text('文件布局', style: TextStyle(color: Colors.black)),
+        const Text('文件布局'),
         if (browserState.gridLayout == BrowserGridLayout.equalHeight)
           _LayoutCountControl(
               label: '每屏行数',
@@ -239,7 +239,7 @@ class _BrowserOptionsMenu extends StatelessWidget {
                   : settings.copyWith(landscapeSquareColumns: v))),
       ],
       if (showFolders) ...[
-        const Text('文件夹布局', style: TextStyle(color: Colors.black)),
+        const Text('文件夹布局'),
         _LayoutCountControl(
             label: '每行数量',
             value: settings.folderColumns(isPortrait: portrait),
@@ -252,13 +252,6 @@ class _BrowserOptionsMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final titleStyle = theme.textTheme.labelLarge?.copyWith(
-      color: Colors.black,
-    );
-    final labelStyle = theme.textTheme.labelMedium?.copyWith(
-      color: Colors.black,
-    );
     return MenuAnchor(
       // The shared glass surface owns its superellipse and refracted edge.
       clipBehavior: Clip.none,
@@ -273,112 +266,120 @@ class _BrowserOptionsMenu extends StatelessWidget {
         FloatingGlassSurface(
           key: const ValueKey('browser-options-surface'),
           independentBackdrop: true,
+          role: GlassSurfaceRole.panel,
           borderRadius: 20,
           padding: const EdgeInsets.all(12),
-          child: SizedBox(
-            width: (MediaQuery.sizeOf(context).width - 48).clamp(160.0, 276.0),
-            child: SingleChildScrollView(
-              primary: false,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('浏览选项', style: titleStyle),
-                  const SizedBox(height: 10),
-                  if (sortDescription != null)
-                    Text(sortDescription!, style: labelStyle),
-                  if (allowSorting) ...[
-                    Text('排序', style: labelStyle),
-                    const SizedBox(height: 6),
-                    _GlassOptionSelector<EntitySortMode>(
-                      values: const [
-                        EntitySortMode.modifiedDesc,
-                        EntitySortMode.nameAsc,
-                        EntitySortMode.sizeDesc,
-                      ],
-                      labels: const ['最近', '名称', '大小'],
-                      selected: browserState.sortMode,
-                      onSelected: onSortChanged,
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  Text('主题', style: labelStyle),
-                  const SizedBox(height: 6),
-                  _GlassOptionSelector<ViewerThemeChoice>(
-                    values: const [
-                      ViewerThemeChoice.system,
-                      ViewerThemeChoice.galleryDark,
-                      ViewerThemeChoice.galleryLight,
-                    ],
-                    labels: const ['系统', '暗色', '亮色'],
-                    selected: themeChoice,
-                    onSelected: onThemeChanged,
-                  ),
-                  const SizedBox(height: 12),
-                  if (browserState.displayMode == BrowserDisplayMode.grid &&
-                      onFolderCoverChanged != null &&
-                      showFolders) ...[
-                    Text('文件夹封面', style: labelStyle),
-                    const SizedBox(height: 6),
-                    _GlassOptionSelector<FolderCoverStyle>(
-                      values: FolderCoverStyle.values,
-                      labels: const ['自动', '方形', '叠加'],
-                      selected: browserState.folderCoverStyle,
-                      onSelected: onFolderCoverChanged!,
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  Text('显示', style: labelStyle),
-                  const SizedBox(height: 6),
-                  _GlassOptionSelector<BrowserDisplayMode>(
-                    values: const [
-                      BrowserDisplayMode.grid,
-                      BrowserDisplayMode.list,
-                    ],
-                    labels: const ['卡片', '列表'],
-                    icons: const [
-                      Icons.grid_view_rounded,
-                      Icons.view_agenda_rounded,
-                    ],
-                    selected: browserState.displayMode,
-                    onSelected: onDisplayModeChanged,
-                  ),
-                  const SizedBox(height: 12),
-                  if (allowGridStyle ||
-                      browserState.displayMode == BrowserDisplayMode.list) ...[
-                    Text('样式', style: labelStyle),
-                    const SizedBox(height: 6),
-                    if (browserState.displayMode == BrowserDisplayMode.grid)
-                      _GlassOptionSelector<BrowserGridLayout>(
+          child: Builder(builder: (context) {
+            final theme = Theme.of(context);
+            final titleStyle = theme.textTheme.labelLarge;
+            final labelStyle = theme.textTheme.labelMedium;
+            return SizedBox(
+              width:
+                  (MediaQuery.sizeOf(context).width - 48).clamp(160.0, 276.0),
+              child: SingleChildScrollView(
+                primary: false,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('浏览选项', style: titleStyle),
+                    const SizedBox(height: 10),
+                    if (sortDescription != null)
+                      Text(sortDescription!, style: labelStyle),
+                    if (allowSorting) ...[
+                      Text('排序', style: labelStyle),
+                      const SizedBox(height: 6),
+                      _GlassOptionSelector<EntitySortMode>(
                         values: const [
-                          BrowserGridLayout.equalHeight,
-                          BrowserGridLayout.equalWidth,
-                          BrowserGridLayout.square,
+                          EntitySortMode.modifiedDesc,
+                          EntitySortMode.nameAsc,
+                          EntitySortMode.sizeDesc,
                         ],
-                        labels: const ['等高', '等宽', '方形'],
-                        selected: browserState.gridLayout,
-                        onSelected: onGridLayoutChanged,
-                      )
-                    else
-                      _GlassOptionSelector<BrowserListStyle>(
-                        values: const [
-                          BrowserListStyle.text,
-                          BrowserListStyle.compact,
-                          BrowserListStyle.normal,
-                        ],
-                        labels: const ['文本', '紧凑', '正常'],
-                        selected: browserState.listStyle,
-                        onSelected: onListStyleChanged,
+                        labels: const ['最近', '名称', '大小'],
+                        selected: browserState.sortMode,
+                        onSelected: onSortChanged,
                       ),
+                      const SizedBox(height: 12),
+                    ],
+                    Text('主题', style: labelStyle),
+                    const SizedBox(height: 6),
+                    _GlassOptionSelector<ViewerThemeChoice>(
+                      values: const [
+                        ViewerThemeChoice.system,
+                        ViewerThemeChoice.galleryDark,
+                        ViewerThemeChoice.galleryLight,
+                      ],
+                      labels: const ['系统', '暗色', '亮色'],
+                      selected: themeChoice,
+                      onSelected: onThemeChanged,
+                    ),
                     const SizedBox(height: 12),
+                    if (browserState.displayMode == BrowserDisplayMode.grid &&
+                        onFolderCoverChanged != null &&
+                        showFolders) ...[
+                      Text('文件夹封面', style: labelStyle),
+                      const SizedBox(height: 6),
+                      _GlassOptionSelector<FolderCoverStyle>(
+                        values: FolderCoverStyle.values,
+                        labels: const ['自动', '方形', '叠加'],
+                        selected: browserState.folderCoverStyle,
+                        onSelected: onFolderCoverChanged!,
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    Text('显示', style: labelStyle),
+                    const SizedBox(height: 6),
+                    _GlassOptionSelector<BrowserDisplayMode>(
+                      values: const [
+                        BrowserDisplayMode.grid,
+                        BrowserDisplayMode.list,
+                      ],
+                      labels: const ['卡片', '列表'],
+                      icons: const [
+                        Icons.grid_view_rounded,
+                        Icons.view_agenda_rounded,
+                      ],
+                      selected: browserState.displayMode,
+                      onSelected: onDisplayModeChanged,
+                    ),
+                    const SizedBox(height: 12),
+                    if (allowGridStyle ||
+                        browserState.displayMode ==
+                            BrowserDisplayMode.list) ...[
+                      Text('样式', style: labelStyle),
+                      const SizedBox(height: 6),
+                      if (browserState.displayMode == BrowserDisplayMode.grid)
+                        _GlassOptionSelector<BrowserGridLayout>(
+                          values: const [
+                            BrowserGridLayout.equalHeight,
+                            BrowserGridLayout.equalWidth,
+                            BrowserGridLayout.square,
+                          ],
+                          labels: const ['等高', '等宽', '方形'],
+                          selected: browserState.gridLayout,
+                          onSelected: onGridLayoutChanged,
+                        )
+                      else
+                        _GlassOptionSelector<BrowserListStyle>(
+                          values: const [
+                            BrowserListStyle.text,
+                            BrowserListStyle.compact,
+                            BrowserListStyle.normal,
+                          ],
+                          labels: const ['文本', '紧凑', '正常'],
+                          selected: browserState.listStyle,
+                          onSelected: onListStyleChanged,
+                        ),
+                      const SizedBox(height: 12),
+                    ],
+                    Text('布局', style: labelStyle),
+                    const SizedBox(height: 6),
+                    ..._layoutControls(context),
                   ],
-                  Text('布局', style: labelStyle),
-                  const SizedBox(height: 6),
-                  ..._layoutControls(context),
-                ],
+                ),
               ),
-            ),
-          ),
+            );
+          }),
         ),
       ],
       builder: (context, controller, child) => IconButton(
@@ -410,6 +411,7 @@ class _GlassOptionSelector<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final selectedIndex = values.indexOf(selected);
+    final appearance = GlassAppearance.of(context);
     return SizedBox(
       width: double.infinity,
       child: GlassSegmentedControl(
@@ -418,17 +420,20 @@ class _GlassOptionSelector<T> extends StatelessWidget {
         quality: ImageFilter.isShaderFilterSupported
             ? GlassQuality.premium
             : GlassQuality.minimal,
-        settings: FloatingGlassSurface.settingsOf(context),
-        selectedTextStyle: const TextStyle(
-          color: Colors.black,
+        settings: appearance.indicatorSettings,
+        indicatorSettings: appearance.indicatorSettings,
+        backgroundColor: Colors.transparent,
+        indicatorColor: appearance.selectedBackground,
+        selectedTextStyle: TextStyle(
+          color: appearance.foreground,
           fontWeight: FontWeight.w600,
         ),
-        unselectedTextStyle: const TextStyle(
-          color: Colors.black,
+        unselectedTextStyle: TextStyle(
+          color: appearance.foreground,
           fontWeight: FontWeight.w400,
         ),
-        selectedIconColor: Colors.black,
-        unselectedIconColor: Colors.black,
+        selectedIconColor: appearance.foreground,
+        unselectedIconColor: appearance.foreground,
         segments: [
           for (var index = 0; index < values.length; index++)
             GlassSegment(
@@ -458,27 +463,26 @@ class _LayoutCountControl extends StatelessWidget {
         crossAxisAlignment: WrapCrossAlignment.center,
         alignment: WrapAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: Colors.black)),
+          Text(label),
           Row(mainAxisSize: MainAxisSize.min, children: [
             IconButton(
                 tooltip: '减少$label',
                 constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
                 onPressed: value > 1 ? () => onChanged(value - 1) : null,
-                icon: const Icon(Icons.remove),
-                color: Colors.black),
+                icon: const Icon(Icons.remove)),
             Semantics(
                 value: '$value',
                 child: SizedBox(
                     width: 28,
                     child: Text('$value',
                         textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.black)))),
+                        style: TextStyle(
+                            color: GlassAppearance.of(context).foreground)))),
             IconButton(
                 tooltip: '增加$label',
                 constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
                 onPressed: value < max ? () => onChanged(value + 1) : null,
-                icon: const Icon(Icons.add),
-                color: Colors.black),
+                icon: const Icon(Icons.add)),
           ]),
         ],
       );
