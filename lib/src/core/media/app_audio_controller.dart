@@ -40,6 +40,7 @@ class AppAudioController extends ChangeNotifier {
     required AudioSessionCreator onSessionCreated,
     required AudioSessionUpdater onSessionUpdated,
     Player Function()? playerFactory,
+    this.requestAudioFocus,
     MediaSourceResolver sourceResolver = const MediaSourceResolver(),
   })  : _onProgressSaved = onProgressSaved,
         _onSessionCreated = onSessionCreated,
@@ -52,6 +53,7 @@ class AppAudioController extends ChangeNotifier {
   }
 
   Player? _player;
+  final Future<bool> Function()? requestAudioFocus;
   final Player Function() _playerFactory;
   final AudioProgressSaver _onProgressSaved;
   final AudioSessionCreator _onSessionCreated;
@@ -90,7 +92,7 @@ class AppAudioController extends ChangeNotifier {
   bool get opening => _opening;
   Duration get position => _position;
   Duration get duration => _duration;
-  AudioPlaybackMode get mode => _session?.mode ?? AudioPlaybackMode.sequential;
+  AudioPlaybackMode get mode => _session?.mode ?? AudioPlaybackMode.nodeRepeat;
   List<EntityListItem> get queue =>
       List.unmodifiable(_session?.entries ?? const []);
 
@@ -135,7 +137,7 @@ class AppAudioController extends ChangeNotifier {
               .toInt(),
           sourceNodeId: sourceNodeId,
           sourceNodeName: sourceNodeName,
-          mode: AudioPlaybackMode.sequential,
+          mode: AudioPlaybackMode.nodeRepeat,
         );
         _resetShuffleBag();
         AppDiagnosticLog.instance.info('audio_session_created', fields: {
@@ -235,6 +237,12 @@ class AppAudioController extends ChangeNotifier {
     }
     try {
       final player = _ensurePlayer();
+      if (autoplay &&
+          requestAudioFocus != null &&
+          !await requestAudioFocus!()) {
+        throw StateError('Unable to acquire audio focus');
+      }
+      if (!_lifecycle.isCurrent(generation)) return;
       if (_currentMatchesPlayer(entity) && !seekToSessionPosition) {
         if (autoplay &&
             !player.state.playing &&
@@ -352,6 +360,19 @@ class AppAudioController extends ChangeNotifier {
     if (_player?.state.playing == true) await _player!.pause();
   }
 
+  Future<void> play() async {
+    final entity = current;
+    if (entity == null || _lifecycle.isClosing) return;
+    if (_player == null || _error != null) {
+      await open(entity);
+      return;
+    }
+    if (requestAudioFocus != null && !await requestAudioFocus!()) return;
+    if (!_lifecycle.isClosing) await _player?.play();
+  }
+
+  Future<void> playOrPause() => isPlaying ? pause() : play();
+
   Future<void> previous() async {
     final session = _session;
     if (session == null) return;
@@ -403,8 +424,12 @@ class AppAudioController extends ChangeNotifier {
   void cycleMode() {
     final session = _session;
     if (session == null) return;
-    final next = AudioPlaybackMode
-        .values[(session.mode.index + 1) % AudioPlaybackMode.values.length];
+    final next = switch (session.mode) {
+      AudioPlaybackMode.sequential => AudioPlaybackMode.singleRepeat,
+      AudioPlaybackMode.singleRepeat => AudioPlaybackMode.nodeRepeat,
+      AudioPlaybackMode.nodeRepeat => AudioPlaybackMode.nodeShuffle,
+      AudioPlaybackMode.nodeShuffle => AudioPlaybackMode.singleRepeat,
+    };
     _session = _copySession(session, mode: next);
     if (next == AudioPlaybackMode.nodeShuffle) _resetShuffleBag();
     _persistSession();

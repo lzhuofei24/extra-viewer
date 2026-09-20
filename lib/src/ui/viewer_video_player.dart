@@ -459,11 +459,6 @@ Widget _compactIconButton({
   );
 }
 
-Future<void> _seekPlayerBy(Player player, int seconds) async {
-  final target = player.state.position + Duration(seconds: seconds);
-  await player.seek(target < Duration.zero ? Duration.zero : target);
-}
-
 class _PlaybackSpeedMenu extends StatelessWidget {
   const _PlaybackSpeedMenu({required this.player});
 

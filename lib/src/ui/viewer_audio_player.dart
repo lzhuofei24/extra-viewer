@@ -268,11 +268,6 @@ class _AudioPlaybackDeckState extends State<AudioPlaybackDeck> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 _compactIconButton(
-                  tooltip: '后退 10 秒',
-                  onPressed: () => _seekPlayerBy(widget.player, -10),
-                  icon: Icons.replay_10_rounded,
-                ),
-                _compactIconButton(
                   tooltip: '上一首',
                   onPressed: widget.onPrevious,
                   icon: Icons.skip_previous_rounded,
@@ -282,7 +277,8 @@ class _AudioPlaybackDeckState extends State<AudioPlaybackDeck> {
                   initialData: widget.player.state.playing,
                   builder: (context, snapshot) => IconButton.filled(
                     tooltip: snapshot.data == true ? '暂停' : '播放',
-                    onPressed: widget.player.playOrPause,
+                    onPressed: widget.controller?.playOrPause ??
+                        widget.player.playOrPause,
                     icon: Icon(snapshot.data == true
                         ? Icons.pause_rounded
                         : Icons.play_arrow_rounded),
@@ -293,11 +289,6 @@ class _AudioPlaybackDeckState extends State<AudioPlaybackDeck> {
                   tooltip: '下一首',
                   onPressed: widget.onNext,
                   icon: Icons.skip_next_rounded,
-                ),
-                _compactIconButton(
-                  tooltip: '前进 10 秒',
-                  onPressed: () => _seekPlayerBy(widget.player, 10),
-                  icon: Icons.forward_10_rounded,
                 ),
                 if (widget.controller != null)
                   _compactIconButton(
@@ -390,6 +381,13 @@ class _AudioPlaybackModeMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) => _buildButton(context),
+    );
+  }
+
+  Widget _buildButton(BuildContext context) {
     final mode = controller.mode;
     final icon = switch (mode) {
       AudioPlaybackMode.sequential => Icons.format_list_numbered_rounded,
@@ -397,25 +395,10 @@ class _AudioPlaybackModeMenu extends StatelessWidget {
       AudioPlaybackMode.nodeRepeat => Icons.repeat_rounded,
       AudioPlaybackMode.nodeShuffle => Icons.shuffle_rounded,
     };
-    return PopupMenuButton<AudioPlaybackMode>(
+    return IconButton(
       tooltip: '播放模式：${mode.label}',
-      initialValue: mode,
-      onSelected: controller.setMode,
+      onPressed: controller.cycleMode,
       icon: Icon(icon, size: 20),
-      itemBuilder: (context) => AudioPlaybackMode.values
-          .map((item) => PopupMenuItem(
-                value: item,
-                child: Row(children: [
-                  Icon(
-                      item == mode
-                          ? Icons.check_rounded
-                          : Icons.circle_outlined,
-                      size: 18),
-                  const SizedBox(width: 10),
-                  Text(item.label),
-                ]),
-              ))
-          .toList(growable: false),
     );
   }
 }

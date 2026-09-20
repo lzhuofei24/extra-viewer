@@ -133,7 +133,7 @@ class MiniAudioPlayer extends StatelessWidget {
                           initialData: player.state.playing,
                           builder: (context, snapshot) => MiniPlayerControl(
                             tooltip: snapshot.data == true ? '暂停' : '播放',
-                            onPressed: player.playOrPause,
+                            onPressed: controller.playOrPause,
                             filled: true,
                             icon: snapshot.data == true
                                 ? Icons.pause_rounded

@@ -86,6 +86,16 @@ void main() {
         modifiedAtMs: 0);
     await controller.open(audio);
     expect(controller.current?.id, 'audio');
+    expect(controller.mode, AudioPlaybackMode.nodeRepeat);
+    controller.cycleMode();
+    expect(controller.mode, AudioPlaybackMode.nodeShuffle);
+    controller.cycleMode();
+    expect(controller.mode, AudioPlaybackMode.singleRepeat);
+    controller.cycleMode();
+    expect(controller.mode, AudioPlaybackMode.nodeRepeat);
+    controller.setMode(AudioPlaybackMode.sequential);
+    controller.cycleMode();
+    expect(controller.mode, AudioPlaybackMode.singleRepeat);
     expect(controller.error, isA<StateError>());
     expect(controller.opening, isFalse);
     await tester.pumpWidget(MaterialApp(

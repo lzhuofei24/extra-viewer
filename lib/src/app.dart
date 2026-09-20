@@ -24,6 +24,7 @@ import 'core/domain/models.dart';
 import 'core/formats/file_format_handlers.dart';
 import 'core/media/audio_waveform_service.dart';
 import 'core/media/app_audio_controller.dart';
+import 'core/media/android_audio_handler.dart';
 import 'core/media/media_source_resolver.dart';
 import 'core/sources/platform_directory_picker.dart';
 import 'core/tasks/task_scheduler.dart';
@@ -286,6 +287,7 @@ class _AppShellState extends State<AppShell> {
         await _buildTasks?.close();
       })
       ..register('audio', RuntimeClosePhase.media, () async {
+        AndroidAudioHandler.instance?.detach();
         await _audioController?.close();
       })
       ..register('viewers', RuntimeClosePhase.media, _viewerSessions.close)
@@ -518,6 +520,7 @@ class _AppShellState extends State<AppShell> {
     // crossed an arbitrary card count.
     imageCache.maximumSize = Platform.isAndroid ? 5000 : 1200;
     final audioController = AppAudioController(
+      requestAudioFocus: AndroidAudioHandler.instance?.requestFocus,
       onProgressSaved: (entityId, positionMs, durationMs) async {
         (await repository.savePlaybackState(
           entityId: entityId,
@@ -586,6 +589,7 @@ class _AppShellState extends State<AppShell> {
       await writeWorker.close();
       return;
     }
+    AndroidAudioHandler.instance?.attach(audioController);
     setState(() {
       _database = database;
       _writeWorker = writeWorker;
@@ -667,6 +671,7 @@ class _AppShellState extends State<AppShell> {
     });
     try {
       final audioController = _audioController;
+      AndroidAudioHandler.instance?.detach();
       if (audioController != null) await audioController.close();
       await _browsingThumbnails?.close();
       _browsingThumbnails = null;

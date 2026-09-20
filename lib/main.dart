@@ -6,6 +6,7 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'src/app.dart';
+import 'src/core/media/android_audio_handler.dart';
 import 'src/core/diagnostics/app_diagnostic_log.dart';
 import 'src/ui/app_preferences.dart';
 
@@ -43,6 +44,12 @@ Future<void> main() async {
         return true;
       };
       MediaKit.ensureInitialized();
+      try {
+        await AndroidAudioHandler.initialize();
+      } catch (error, stack) {
+        AppDiagnosticLog.instance
+            .error('audio_notification_init_failed', error, stack);
+      }
       await LiquidGlassWidgets.initialize();
       AppDiagnosticLog.instance.info('media_kit_initialized');
       late final AppPreferencesController preferences;

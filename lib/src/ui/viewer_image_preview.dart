@@ -4,6 +4,8 @@ class _ImagePreview extends StatefulWidget {
   const _ImagePreview({
     super.key,
     required this.sessions,
+    required this.toolbarCollapsed,
+    required this.onToggleToolbar,
     required this.entity,
     required this.sourceResolver,
     this.transparentStage = false,
@@ -19,6 +21,8 @@ class _ImagePreview extends StatefulWidget {
   });
 
   final EntityListItem entity;
+  final bool toolbarCollapsed;
+  final VoidCallback onToggleToolbar;
   final ViewerSessions sessions;
   final MediaSourceResolver sourceResolver;
   final bool transparentStage;
@@ -43,7 +47,6 @@ class _ImagePreviewState extends State<_ImagePreview> {
   late final Future<SourceFileLease> _sourceLease;
   int _backgroundIndex = 0;
   bool _isInspecting = false;
-  bool _toolbarCollapsed = false;
 
   static const _backgrounds = [
     Colors.black,
@@ -156,11 +159,13 @@ class _ImagePreviewState extends State<_ImagePreview> {
           child: SafeArea(
             top: false,
             child: Align(
-              alignment: Alignment.bottomCenter,
+              alignment: widget.toolbarCollapsed
+                  ? Alignment.bottomRight
+                  : Alignment.bottomCenter,
               child: FloatingGlassSurface(
                 borderRadius: 28,
                 child: SizedBox(
-                  width: _toolbarCollapsed
+                  width: widget.toolbarCollapsed
                       ? 48
                       : min(MediaQuery.sizeOf(context).width - 24, 432),
                   height: 48,
@@ -170,13 +175,11 @@ class _ImagePreviewState extends State<_ImagePreview> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         toolbarButton(
-                          tooltip: _toolbarCollapsed ? '展开工具栏' : '收起工具栏',
-                          onPressed: () => setState(
-                            () => _toolbarCollapsed = !_toolbarCollapsed,
-                          ),
+                          tooltip: widget.toolbarCollapsed ? '展开工具栏' : '收起工具栏',
+                          onPressed: widget.onToggleToolbar,
                           iconWidget: const CollapseGripIcon(),
                         ),
-                        if (!_toolbarCollapsed) ...[
+                        if (!widget.toolbarCollapsed) ...[
                           if (widget.onReturnToSource != null)
                             toolbarButton(
                               tooltip: '返回所在位置',

@@ -11,7 +11,7 @@ import android.os.SystemClock
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
-import io.flutter.embedding.android.FlutterActivity
+import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-class MainActivity : FlutterActivity() {
+class MainActivity : AudioServiceActivity() {
     companion object {
         val DIRECTORY_PROJECTION = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,

@@ -112,6 +112,7 @@ class EntityViewerPage extends StatefulWidget {
 class _EntityViewerPageState extends State<EntityViewerPage> {
   late final ViewerSession _session;
   bool _closing = false;
+  bool _imageToolbarCollapsed = false;
   Future<void>? _prefetchDrain;
   final _retiredDocuments = <Future<void>>{};
 
@@ -687,6 +688,11 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                           ),
                         _ => switch (entity.entityType) {
                             EntityType.image => _ImagePreview(
+                                toolbarCollapsed: _imageToolbarCollapsed,
+                                onToggleToolbar: () => setState(() {
+                                  _imageToolbarCollapsed =
+                                      !_imageToolbarCollapsed;
+                                }),
                                 sessions: widget.sessions,
                                 key: ValueKey(entity.id),
                                 entity: entity,
