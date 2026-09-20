@@ -74,9 +74,27 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
   GalleryLayoutSettings _loadLayout() {
     try {
       final raw = jsonDecode(_preferences.getString(_galleryLayoutKey) ?? '{}');
-      return raw is Map<String, dynamic>
-          ? GalleryLayoutSettings.fromMap(raw)
-          : const GalleryLayoutSettings();
+      final values = raw is Map<String, dynamic>
+          ? Map<String, Object?>.of(raw)
+          : <String, Object?>{};
+      if (!values.containsKey('portraitFolderDisplay')) {
+        final cover = _preferences.getString(_folderCoverKey);
+        final list = _preferences.getString(_displayKey) == 'list';
+        for (final portrait in [true, false]) {
+          final display = list
+              ? FolderDisplay.list
+              : cover == 'square'
+                  ? FolderDisplay.square
+                  : cover == 'stacked'
+                      ? FolderDisplay.stacked
+                      : portrait
+                          ? FolderDisplay.square
+                          : FolderDisplay.stacked;
+          values['${portrait ? 'portrait' : 'landscape'}FolderDisplay'] =
+              display.index;
+        }
+      }
+      return GalleryLayoutSettings.fromMap(values);
     } catch (_) {
       return const GalleryLayoutSettings();
     }
@@ -108,8 +126,9 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
             FolderCoverStyle.values,
             _preferences.getString(_folderCoverKey),
             FolderCoverStyle.automatic),
-        listStyle: _enumValue(BrowserListStyle.values,
-            _preferences.getString(_listStyleKey), BrowserListStyle.normal),
+        listStyle: _preferences.getString(_listStyleKey) == 'text'
+            ? BrowserListStyle.text
+            : BrowserListStyle.normal,
         layout: _loadLayout(),
       );
 

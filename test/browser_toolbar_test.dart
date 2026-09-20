@@ -32,7 +32,7 @@ void main() {
     ));
     await tester.tap(find.byTooltip('浏览选项'));
     await tester.pumpAndSettle();
-    expect(find.text('浏览选项'), findsOneWidget);
+    expect(find.text('浏览选项'), findsNothing);
     final panel = find.byKey(const ValueKey('browser-options-surface'));
     expect(panel, findsOneWidget);
     expect(tester.widget<FloatingGlassSurface>(panel).role,
@@ -53,14 +53,15 @@ void main() {
         .getInheritedWidgetOfExactType<InheritedLiquidGlass>()!;
     expect(inherited.avoidsRefraction, isFalse);
     expect(inherited.isBlurProvidedByAncestor, isFalse);
-    final anchor = tester.widget<MenuAnchor>(find.byType(MenuAnchor).first);
-    expect(anchor.clipBehavior, Clip.none);
-    expect(anchor.style!.backgroundColor!.resolve({}), Colors.transparent);
-    expect(find.text('样式'), findsOneWidget);
-    expect(find.text('文件夹封面'), findsOneWidget);
-    expect(find.text('自动'), findsOneWidget);
-    expect(find.text('叠加'), findsOneWidget);
+    expect(find.text('文件夹设置'), findsOneWidget);
+    expect(find.text('文件设置'), findsOneWidget);
+    expect(find.text('显示'), findsNothing);
     expect(find.text('主题'), findsOneWidget);
+    await tester.tap(find.text('文件夹设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('叠加卡片'), findsOneWidget);
+    expect(find.text('方形卡片'), findsOneWidget);
+    expect(find.text('自动'), findsNothing);
     expect(find.text('布局'), findsOneWidget);
     expect(find.text('新建分类'), findsNothing);
     await tester.tapAt(const Offset(20, 580));
@@ -92,11 +93,13 @@ void main() {
     ));
     await tester.tap(find.byTooltip('浏览选项'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('文件设置'));
+    await tester.pumpAndSettle();
     expect(find.text('显示'), findsOneWidget);
     expect(find.text('文件夹封面'), findsNothing);
-    expect(find.text('文本'), findsOneWidget);
-    expect(find.text('紧凑'), findsOneWidget);
-    expect(find.text('正常'), findsOneWidget);
+    expect(find.text('列表'), findsOneWidget);
+    expect(find.text('紧凑列表'), findsOneWidget);
+    expect(find.text('布局'), findsNothing);
     expect(find.text('卡片对齐方式'), findsNothing);
     for (final option in tester.widgetList<GlassSegmentedControl>(
         find.byType(GlassSegmentedControl))) {

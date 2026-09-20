@@ -7,6 +7,38 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('selected multi-column lists remain usable on narrow landscape',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(400, 300);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(MaterialApp(
+        builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!),
+        home: Scaffold(
+            body: CustomScrollView(slivers: [
+          BrowserListSliver(
+              count: 4,
+              style: BrowserListStyle.normal,
+              padding: 8,
+              landscapeColumns: 4,
+              itemBuilder: (_, i) => BrowserListTile(
+                  style: BrowserListStyle.normal,
+                  title: '长名称文件夹 $i',
+                  subtitle: '10 个文件',
+                  selected: true,
+                  onTap: () {},
+                  previewBuilder: (_) => const ColoredBox(color: Colors.blue))),
+        ]))));
+    expect(find.byType(BrowserListTile), findsNWidgets(4));
+    expect(tester.getTopLeft(find.text('长名称文件夹 0')).dy,
+        tester.getTopLeft(find.text('长名称文件夹 3')).dy);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
       'options order and live counts remain independent by style and orientation',
       (tester) async {
@@ -38,11 +70,13 @@ void main() {
                     )))));
     await tester.tap(find.byTooltip('浏览选项'));
     await tester.pumpAndSettle();
-    final labels = ['排序', '主题', '显示', '样式', '布局'];
+    final labels = ['排序', '主题', '文件设置'];
     for (var i = 1; i < labels.length; i++) {
       expect(tester.getTopLeft(find.text(labels[i])).dy,
           greaterThan(tester.getTopLeft(find.text(labels[i - 1])).dy));
     }
+    await tester.tap(find.text('文件设置'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('增加每行数量'));
     await tester.pumpAndSettle();
     expect(layout.portraitEqualWidthColumns, 4);
@@ -62,15 +96,14 @@ void main() {
     expect(layout.portraitEqualHeightLevel, 7);
     await tester.tap(find.text('列表'));
     await tester.pumpAndSettle();
-    expect(find.text('每行 1 项（竖屏）'), findsOneWidget);
-    expect(find.byTooltip('增加每行数量'), findsNothing);
-    tester.view.physicalSize = const Size(1400, 800);
+    await tester.tap(find.byTooltip('增加每行数量'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('浏览选项'));
+    expect(layout.portraitListColumns, 2);
+    tester.view.physicalSize = const Size(1400, 800);
     await tester.pumpAndSettle();
     final increase =
         tester.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.add));
-    expect(increase.onPressed, isNull);
+    expect(increase.onPressed, isNotNull);
     await tester.ensureVisible(find.byTooltip('减少每行数量'));
     await tester.tap(find.byTooltip('减少每行数量'));
     await tester.pumpAndSettle();

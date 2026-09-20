@@ -1,8 +1,9 @@
-import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
+import 'aspect_ratio_grid.dart';
 import 'package:flutter/material.dart';
 import '../core/domain/models.dart';
 import 'gallery_layout_settings.dart';
 import 'browser_state.dart';
+import 'justified_entity_gallery.dart';
 import 'index_node_thumbnail.dart';
 
 class BrowserNodeGridSliver extends StatelessWidget {
@@ -99,39 +100,67 @@ class _JustifiedNodeGridSliver extends StatelessWidget {
     final gap = layoutSettings.cardGap;
     final margin = layoutSettings.pageMargin;
     final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
-    final square = folderCoverStyle == FolderCoverStyle.square ||
-        (folderCoverStyle == FolderCoverStyle.automatic && portrait);
-    if (square) {
-      return SliverPadding(
-        padding: EdgeInsets.fromLTRB(margin, 0, margin, margin),
-        sliver: SliverGrid.builder(
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: layoutSettings.folderColumns(isPortrait: portrait),
-            mainAxisSpacing: gap,
-            crossAxisSpacing: gap,
-          ),
-          itemCount: nodes.length,
-          itemBuilder: (context, index) => _nodeCard(
-            nodes[index],
-            portrait: true,
-          ),
-        ),
-      );
+    final settings = layoutSettings.folders(isPortrait: portrait);
+    final square = settings.usesSquarePreview;
+    double ratio(IndexNode node) =>
+        coverAspectRatio?.call(node) ??
+        (square ? 1 : indexNodePreviewAspectRatio(previews[node.id]));
+    if (settings.cardLayout == FolderCardLayout.equalHeight) {
+      return SliverLayoutBuilder(builder: (context, constraints) {
+        final columns = 9 - settings.heightLevel;
+        final height =
+            ((constraints.crossAxisExtent - 2 * margin - (columns - 1) * gap) /
+                    columns)
+                .clamp(1.0, double.infinity);
+        final rows = JustifiedGalleryLayout.calculate(
+            items: nodes,
+            availableWidth: constraints.crossAxisExtent - 2 * margin,
+            targetHeight: height,
+            gap: gap,
+            aspectRatio: ratio);
+        return SliverPadding(
+            padding: EdgeInsets.fromLTRB(margin, 0, margin, margin),
+            sliver: SliverList.builder(
+                itemCount: rows.length,
+                itemBuilder: (context, index) {
+                  final row = rows[index];
+                  return Padding(
+                      padding: EdgeInsets.only(bottom: gap),
+                      child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (var i = 0; i < row.items.length; i++)
+                              Padding(
+                                  padding: EdgeInsets.only(
+                                      right:
+                                          i == row.items.length - 1 ? 0 : gap),
+                                  child: SizedBox(
+                                      width: row.widths[i],
+                                      child: _nodeCard(row.items[i],
+                                          portrait: square,
+                                          fixedHeight: height))),
+                          ]));
+                }));
+      });
     }
     return SliverPadding(
       padding: EdgeInsets.fromLTRB(margin, 0, margin, margin),
-      sliver: SliverMasonryGrid.count(
-        crossAxisCount: layoutSettings.folderColumns(isPortrait: portrait),
-        mainAxisSpacing: gap,
-        crossAxisSpacing: gap,
-        childCount: nodes.length,
-        itemBuilder: (context, index) => _nodeCard(nodes[index]),
+      sliver: SliverGrid.builder(
+        gridDelegate: AspectRatioGridDelegate(
+            columns: settings.columns,
+            gap: gap,
+            ratios: [for (final node in nodes) ratio(node)]),
+        itemCount: nodes.length,
+        itemBuilder: (context, index) =>
+            _nodeCard(nodes[index], portrait: square),
       ),
     );
   }
 
-  Widget _nodeCard(IndexNode node, {bool portrait = false}) {
+  Widget _nodeCard(IndexNode node,
+      {bool portrait = false, double? fixedHeight}) {
     return IndexNodePreviewCard(
+      fixedHeight: fixedHeight,
       cover: coverBuilder?.call(node, portrait),
       coverAspectRatio: coverAspectRatio?.call(node),
       countLabel: countLabel?.call(node),
@@ -156,6 +185,7 @@ class IndexNodePreviewCard extends StatelessWidget {
   const IndexNodePreviewCard({
     super.key,
     this.cover,
+    this.fixedHeight,
     this.coverAspectRatio,
     this.countLabel,
     this.description,
@@ -172,6 +202,7 @@ class IndexNodePreviewCard extends StatelessWidget {
   });
 
   final Widget? cover;
+  final double? fixedHeight;
   final double? coverAspectRatio;
   final String? countLabel, description;
   final IndexNode node;
@@ -198,10 +229,10 @@ class IndexNodePreviewCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            AspectRatio(
-              aspectRatio: portrait
-                  ? 1
-                  : coverAspectRatio ?? indexNodePreviewAspectRatio(preview),
+            _NodeCardSize(
+              height: fixedHeight,
+              aspectRatio: coverAspectRatio ??
+                  (portrait ? 1 : indexNodePreviewAspectRatio(preview)),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(cardRadius),
                 child: Stack(
@@ -303,4 +334,16 @@ class IndexNodePreviewCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _NodeCardSize extends StatelessWidget {
+  const _NodeCardSize(
+      {required this.height, required this.aspectRatio, required this.child});
+  final double? height;
+  final double aspectRatio;
+  final Widget child;
+  @override
+  Widget build(BuildContext context) => height == null
+      ? AspectRatio(aspectRatio: aspectRatio, child: child)
+      : SizedBox(height: height, child: child);
 }

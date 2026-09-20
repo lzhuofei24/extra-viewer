@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:best_viewer/src/ui/aspect_ratio_grid.dart';
 import 'package:best_viewer/src/core/domain/models.dart';
 import 'package:best_viewer/src/modules/library/library_queries.dart';
 import 'package:best_viewer/src/ui/app_preferences.dart';
@@ -96,16 +97,14 @@ void main() {
     for (final columns in [2, 3, 4]) {
       final requests = <String>[];
       await pumpRulePage(tester, queries,
-          layout: GalleryLayoutSettings(portraitFolderColumns: columns),
+          layout: GalleryLayoutSettings(
+              portraitFolders: FolderViewSettings(squareColumns: columns)),
           onThumbnail: (e) => requests.add(e.id));
       expect(find.byType(BrowserNodeGridSliver), findsOneWidget);
       expect(find.byType(IndexNodePreviewCard), findsNWidgets(2));
       expect(find.byType(EntityArtwork), findsNWidgets(2));
       final grid = tester.widget<SliverGrid>(find.byType(SliverGrid));
-      expect(
-          (grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount)
-              .crossAxisCount,
-          columns);
+      expect((grid.gridDelegate as AspectRatioGridDelegate).columns, columns);
       expect(requests, contains('image'));
       expect(requests, isNot(contains('failed')));
       expect(find.byTooltip('新建规则'), findsOneWidget);
@@ -270,9 +269,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('排序'), findsNothing);
     expect(find.text('样式'), findsNothing);
-    expect(find.text('显示'), findsOneWidget);
+    expect(find.text('文件夹设置'), findsOneWidget);
+    expect(find.text('文件设置'), findsNothing);
     expect(find.text('主题'), findsOneWidget);
-    await tester.tap(find.byTooltip('浏览选项'));
+    await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
     await tester.longPress(find.text('常用'));
     await tester.pumpAndSettle();
@@ -304,7 +304,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('排序'), findsNothing);
     expect(find.text('固定排序：访问次数'), findsOneWidget);
-    await tester.tap(find.byTooltip('浏览选项'));
+    await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('沉浸式浏览'));
     await tester.pumpAndSettle();

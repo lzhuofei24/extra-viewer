@@ -156,6 +156,12 @@ class CollectionBrowserPage extends StatelessWidget {
         : childNodes;
     final hasNodes = visibleNodes.isNotEmpty && !immersiveBrowsing && !loading;
     final hasEntities = entities.isNotEmpty && !loading;
+    final folderListMode = layoutSettings
+            .folders(
+                isPortrait:
+                    MediaQuery.orientationOf(context) == Orientation.portrait)
+            .display ==
+        FolderDisplay.list;
     final listMode = !immersiveBrowsing &&
         browserState.displayMode == BrowserDisplayMode.list;
     final topChromeInset = BrowserPageScaffold.topInset(context);
@@ -188,11 +194,13 @@ class CollectionBrowserPage extends StatelessWidget {
                         child: SizedBox(height: topChromeInset),
                       ),
                     if (hasNodes && currentNode == null)
-                      (listMode
+                      (folderListMode
                           ? _NodeListSliver(
                               landscapeColumns:
-                                  layoutSettings.landscapeListColumns,
-                              style: browserState.listStyle,
+                                  layoutSettings.landscapeFolders.listColumns,
+                              portraitColumns:
+                                  layoutSettings.portraitFolders.listColumns,
+                              style: BrowserListStyle.normal,
                               previews: nodePreviews,
                               nodes: visibleNodes,
                               summaries: nodeSummaries,
@@ -217,11 +225,13 @@ class CollectionBrowserPage extends StatelessWidget {
                               layoutSettings: layoutSettings,
                             )),
                     if (hasNodes && currentNode != null)
-                      listMode
+                      folderListMode
                           ? _NodeListSliver(
                               landscapeColumns:
-                                  layoutSettings.landscapeListColumns,
-                              style: browserState.listStyle,
+                                  layoutSettings.landscapeFolders.listColumns,
+                              portraitColumns:
+                                  layoutSettings.portraitFolders.listColumns,
+                              style: BrowserListStyle.normal,
                               previews: nodePreviews,
                               nodes: childNodes,
                               summaries: nodeSummaries,
@@ -597,6 +607,7 @@ bool _rootTabMatchesNode(BrowserRootTab tab, IndexNode node) {
 class _NodeListSliver extends StatelessWidget {
   const _NodeListSliver(
       {required this.landscapeColumns,
+      required this.portraitColumns,
       required this.nodes,
       required this.summaries,
       required this.previews,
@@ -610,7 +621,7 @@ class _NodeListSliver extends StatelessWidget {
   final List<IndexNode> nodes;
   final Map<String, IndexNodeSummary> summaries;
   final Map<String, IndexNodePreview> previews;
-  final int landscapeColumns;
+  final int landscapeColumns, portraitColumns;
   final BrowserListStyle style;
   final ValueChanged<IndexNode> onOpenNode,
       onToggleNodeSelection,
@@ -621,6 +632,7 @@ class _NodeListSliver extends StatelessWidget {
   @override
   Widget build(BuildContext context) => BrowserListSliver(
       landscapeColumns: landscapeColumns,
+      portraitColumns: portraitColumns,
       count: nodes.length,
       style: style,
       padding: horizontalPadding,

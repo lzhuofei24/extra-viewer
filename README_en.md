@@ -71,14 +71,12 @@ The **常用** rule uses access count and last-opened time. Opening a file incre
 The top floating **浏览选项** panel controls the current browsing experience:
 
 - Sort by recent modification, name, or size.
-- Switch between cards and lists.
-- Card styles: equal height, equal width, or square.
-- List styles: text-only, compact, or normal.
 - Select the theme: system, light, or dark.
-- Adjust columns for equal-width and square cards, or height levels for equal-height cards. Higher levels make larger cards, with the actual height shown alongside. Folder columns are configured separately; portrait and landscape choices are remembered independently.
-- Select folder covers: automatic, square, or stacked.
+- Folder settings: stacked previews, square composite previews, or lists. Both preview variants support equal-height and equal-width cards.
+- File settings: cards, lists with previews, or compact lists without previews. File cards support equal height, equal width, and square layouts.
+- Adjust height levels or columns independently for folders and files, with actual card heights shown alongside the level.
 
-Automatic folder covers use square compositions in portrait orientation and stacked covers in landscape orientation. Counts are saved independently for each card style and orientation. Lists always use one column in portrait and support one to three columns in landscape. Browsing preferences are saved locally.
+Folders initially use square composites in portrait and stacked previews in landscape, then remember your choice for each orientation. Each style keeps its own size and column settings. Lists support one to three columns in portrait and one to four in landscape. Subpanels return to sorting and theme controls; tapping outside dismisses the panel. Changes apply immediately and are saved locally.
 
 Other browsing behavior is designed for repeated use:
 

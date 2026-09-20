@@ -23,8 +23,8 @@ void main() {
         landscapeSquareColumns: 6,
         portraitEqualHeightLevel: 4,
         landscapeEqualHeightLevel: 3,
-        portraitFolderColumns: 2,
-        landscapeFolderColumns: 5,
+        portraitFolders: const FolderViewSettings(squareColumns: 2),
+        landscapeFolders: FolderViewSettings.landscape.copyWith(columns: 5),
         landscapeListColumns: 2);
     await store.save(initial.copyWith(
         layout: layout,
@@ -32,13 +32,13 @@ void main() {
         sortMode: EntitySortMode.sizeDesc,
         displayMode: BrowserDisplayMode.list,
         gridLayout: BrowserGridLayout.square,
-        listStyle: BrowserListStyle.compact,
+        listStyle: BrowserListStyle.normal,
         folderCoverStyle: FolderCoverStyle.stacked));
     final restored = await SharedPreferencesAppPreferencesStore(prefs).load();
     expect(restored.layout, layout);
     expect(restored.themeChoice, ViewerThemeChoice.galleryDark);
     expect(restored.sortMode, EntitySortMode.sizeDesc);
-    expect(restored.listStyle, BrowserListStyle.compact);
+    expect(restored.listStyle, BrowserListStyle.normal);
     expect(restored.folderCoverStyle, FolderCoverStyle.stacked);
     expect(restored.gridLayout, BrowserGridLayout.square);
   });
@@ -62,7 +62,7 @@ void main() {
     expect(value.layout.portraitEqualWidthColumns, 1);
     expect(value.layout.landscapeSquareColumns, 8);
     expect(value.layout.portraitEqualHeightLevel, 6);
-    expect(value.layout.landscapeListColumns, 3);
+    expect(value.layout.landscapeListColumns, 4);
     expect(value.layout.cardGap, 8);
   });
 
@@ -83,13 +83,13 @@ void main() {
     final store = MemoryAppPreferencesStore();
     final controller = await AppPreferencesController.load(store);
     controller.setBrowser(displayMode: BrowserDisplayMode.list);
-    controller
-        .setLayout(controller.value.layout.copyWith(portraitFolderColumns: 2));
+    controller.setLayout(controller.value.layout
+        .copyWith(portraitFolders: const FolderViewSettings(squareColumns: 2)));
     controller
         .setLayout(controller.value.layout.copyWith(landscapeListColumns: 1));
     await controller.flush();
     expect(store.value.displayMode, BrowserDisplayMode.list);
-    expect(store.value.layout.portraitFolderColumns, 2);
+    expect(store.value.layout.portraitFolders.columns, 2);
     expect(store.value.layout.landscapeListColumns, 1);
     controller.dispose();
   });

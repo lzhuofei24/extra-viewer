@@ -37,6 +37,7 @@ class BrowserToolbar extends StatelessWidget {
     this.showFolders = true,
     required this.onLayoutChanged,
     this.onFolderCoverChanged,
+    this.onFileDisplayChanged,
     this.onSearch,
     this.onAdd,
     this.addLabel = '添加',
@@ -63,6 +64,8 @@ class BrowserToolbar extends StatelessWidget {
   final bool showFiles, showFolders;
   final ValueChanged<GalleryLayoutSettings> onLayoutChanged;
   final ValueChanged<FolderCoverStyle>? onFolderCoverChanged;
+  final void Function(BrowserDisplayMode, BrowserListStyle)?
+      onFileDisplayChanged;
   final VoidCallback? onSearch;
   final VoidCallback? onAdd;
   final String addLabel;
@@ -107,6 +110,7 @@ class BrowserToolbar extends StatelessWidget {
               const SizedBox(width: 4),
               _BrowserOptionsMenu(
                 onFolderCoverChanged: onFolderCoverChanged,
+                onFileDisplayChanged: onFileDisplayChanged,
                 allowSorting: allowSorting,
                 allowGridStyle: allowGridStyle,
                 sortDescription: sortDescription,
@@ -163,9 +167,10 @@ class BrowserToolbar extends StatelessWidget {
       );
 }
 
-class _BrowserOptionsMenu extends StatelessWidget {
+class _BrowserOptionsMenu extends StatefulWidget {
   const _BrowserOptionsMenu({
     this.onFolderCoverChanged,
+    this.onFileDisplayChanged,
     required this.allowSorting,
     required this.allowGridStyle,
     this.sortDescription,
@@ -184,6 +189,8 @@ class _BrowserOptionsMenu extends StatelessWidget {
 
   final bool allowSorting, allowGridStyle;
   final ValueChanged<FolderCoverStyle>? onFolderCoverChanged;
+  final void Function(BrowserDisplayMode, BrowserListStyle)?
+      onFileDisplayChanged;
   final String? sortDescription;
   final BrowserState browserState;
   final ValueChanged<EntitySortMode> onSortChanged;
@@ -196,201 +203,372 @@ class _BrowserOptionsMenu extends StatelessWidget {
   final bool showFiles, showFolders;
   final ValueChanged<GalleryLayoutSettings> onLayoutChanged;
 
-  List<Widget> _layoutControls(BuildContext context) {
-    final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
-    final settings = layoutSettings;
-    if (browserState.displayMode == BrowserDisplayMode.list) {
-      return [
-        if (portrait)
-          const Text('每行 1 项（竖屏）')
-        else
-          _LayoutCountControl(
-              label: '每行数量',
-              value: settings.landscapeListColumns,
-              max: 3,
-              onChanged: (v) =>
-                  onLayoutChanged(settings.copyWith(landscapeListColumns: v))),
-      ];
+  @override
+  State<_BrowserOptionsMenu> createState() => _BrowserOptionsMenuState();
+}
+
+class _BrowserOptionsMenuState extends State<_BrowserOptionsMenu> {
+  late final ValueNotifier<_BrowserOptionsMenu> _configuration =
+      ValueNotifier(widget);
+  final _anchorKey = GlobalKey();
+  RawDialogRoute<void>? _route;
+
+  @override
+  void didUpdateWidget(_BrowserOptionsMenu oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_route == null) {
+      _configuration.value = widget;
+    } else {
+      // The menu lives in another route; publish after the parent finishes building.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _configuration.value = widget;
+      });
     }
-    return [
-      if (showFiles && allowGridStyle) ...[
-        const Text('文件布局'),
-        if (browserState.gridLayout == BrowserGridLayout.equalHeight)
-          _LayoutCountControl(
-              label: '高度级别',
-              value: settings.equalHeightLevel(isPortrait: portrait),
-              suffix:
-                  '${settings.equalHeight(isPortrait: portrait, viewportWidth: MediaQuery.sizeOf(context).width).round()}dp',
-              onChanged: (v) => onLayoutChanged(portrait
-                  ? settings.copyWith(portraitEqualHeightLevel: v)
-                  : settings.copyWith(landscapeEqualHeightLevel: v)))
-        else if (browserState.gridLayout == BrowserGridLayout.equalWidth)
-          _LayoutCountControl(
-              label: '每行数量',
-              value: settings.equalWidthColumns(isPortrait: portrait),
-              onChanged: (v) => onLayoutChanged(portrait
-                  ? settings.copyWith(portraitEqualWidthColumns: v)
-                  : settings.copyWith(landscapeEqualWidthColumns: v)))
-        else
-          _LayoutCountControl(
-              label: '每行数量',
-              value: settings.squareColumns(isPortrait: portrait),
-              onChanged: (v) => onLayoutChanged(portrait
-                  ? settings.copyWith(portraitSquareColumns: v)
-                  : settings.copyWith(landscapeSquareColumns: v))),
-      ],
-      if (showFolders) ...[
-        const Text('文件夹布局'),
-        _LayoutCountControl(
-            label: '每行数量',
-            value: settings.folderColumns(isPortrait: portrait),
-            onChanged: (v) => onLayoutChanged(portrait
-                ? settings.copyWith(portraitFolderColumns: v)
-                : settings.copyWith(landscapeFolderColumns: v))),
-      ],
-    ];
   }
 
   @override
-  Widget build(BuildContext context) {
-    return MenuAnchor(
-      // The shared glass surface owns its superellipse and refracted edge.
-      clipBehavior: Clip.none,
-      style: const MenuStyle(
-        backgroundColor: WidgetStatePropertyAll(Colors.transparent),
-        surfaceTintColor: WidgetStatePropertyAll(Colors.transparent),
-        shadowColor: WidgetStatePropertyAll(Colors.transparent),
-        elevation: WidgetStatePropertyAll(0),
-        padding: WidgetStatePropertyAll(EdgeInsets.zero),
-      ),
-      menuChildren: [
-        FloatingGlassSurface(
-          key: const ValueKey('browser-options-surface'),
-          independentBackdrop: true,
-          role: GlassSurfaceRole.panel,
-          borderRadius: 20,
-          padding: const EdgeInsets.all(12),
-          child: Builder(builder: (context) {
-            final theme = Theme.of(context);
-            final titleStyle = theme.textTheme.labelLarge;
-            final labelStyle = theme.textTheme.labelMedium;
-            return SizedBox(
-              width:
-                  (MediaQuery.sizeOf(context).width - 48).clamp(160.0, 276.0),
-              child: SingleChildScrollView(
-                primary: false,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('浏览选项', style: titleStyle),
-                    const SizedBox(height: 10),
-                    if (sortDescription != null)
-                      Text(sortDescription!, style: labelStyle),
-                    if (allowSorting) ...[
-                      Text('排序', style: labelStyle),
-                      const SizedBox(height: 6),
-                      _GlassOptionSelector<EntitySortMode>(
-                        values: const [
-                          EntitySortMode.modifiedDesc,
-                          EntitySortMode.nameAsc,
-                          EntitySortMode.sizeDesc,
-                        ],
-                        labels: const ['最近', '名称', '大小'],
-                        selected: browserState.sortMode,
-                        onSelected: onSortChanged,
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                    Text('主题', style: labelStyle),
-                    const SizedBox(height: 6),
-                    _GlassOptionSelector<ViewerThemeChoice>(
-                      values: const [
-                        ViewerThemeChoice.system,
-                        ViewerThemeChoice.galleryDark,
-                        ViewerThemeChoice.galleryLight,
-                      ],
-                      labels: const ['系统', '暗色', '亮色'],
-                      selected: themeChoice,
-                      onSelected: onThemeChanged,
-                    ),
-                    const SizedBox(height: 12),
-                    if (browserState.displayMode == BrowserDisplayMode.grid &&
-                        onFolderCoverChanged != null &&
-                        showFolders) ...[
-                      Text('文件夹封面', style: labelStyle),
-                      const SizedBox(height: 6),
-                      _GlassOptionSelector<FolderCoverStyle>(
-                        values: FolderCoverStyle.values,
-                        labels: const ['自动', '方形', '叠加'],
-                        selected: browserState.folderCoverStyle,
-                        onSelected: onFolderCoverChanged!,
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                    Text('显示', style: labelStyle),
-                    const SizedBox(height: 6),
-                    _GlassOptionSelector<BrowserDisplayMode>(
-                      values: const [
-                        BrowserDisplayMode.grid,
-                        BrowserDisplayMode.list,
-                      ],
-                      labels: const ['卡片', '列表'],
-                      icons: const [
-                        Icons.grid_view_rounded,
-                        Icons.view_agenda_rounded,
-                      ],
-                      selected: browserState.displayMode,
-                      onSelected: onDisplayModeChanged,
-                    ),
-                    const SizedBox(height: 12),
-                    if (allowGridStyle ||
-                        browserState.displayMode ==
-                            BrowserDisplayMode.list) ...[
-                      Text('样式', style: labelStyle),
-                      const SizedBox(height: 6),
-                      if (browserState.displayMode == BrowserDisplayMode.grid)
-                        _GlassOptionSelector<BrowserGridLayout>(
-                          values: const [
-                            BrowserGridLayout.equalHeight,
-                            BrowserGridLayout.equalWidth,
-                            BrowserGridLayout.square,
-                          ],
-                          labels: const ['等高', '等宽', '方形'],
-                          selected: browserState.gridLayout,
-                          onSelected: onGridLayoutChanged,
-                        )
-                      else
-                        _GlassOptionSelector<BrowserListStyle>(
-                          values: const [
-                            BrowserListStyle.text,
-                            BrowserListStyle.compact,
-                            BrowserListStyle.normal,
-                          ],
-                          labels: const ['文本', '紧凑', '正常'],
-                          selected: browserState.listStyle,
-                          onSelected: onListStyleChanged,
-                        ),
-                      const SizedBox(height: 12),
-                    ],
-                    Text('布局', style: labelStyle),
-                    const SizedBox(height: 6),
-                    ..._layoutControls(context),
-                  ],
-                ),
-              ),
-            );
-          }),
-        ),
-      ],
-      builder: (context, controller, child) => IconButton(
-        tooltip: '浏览选项',
-        onPressed: () =>
-            controller.isOpen ? controller.close() : controller.open(),
-        icon: const Icon(Icons.tune_rounded),
-      ),
-    );
+  void dispose() {
+    final route = _route;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (route?.navigator != null) route!.navigator!.removeRoute(route);
+      _configuration.dispose();
+    });
+    super.dispose();
   }
+
+  void _open() {
+    if (_route != null) return;
+    final box = _anchorKey.currentContext!.findRenderObject()! as RenderBox;
+    final anchor = box.localToGlobal(Offset.zero) & box.size;
+    final route = RawDialogRoute<void>(
+      barrierDismissible: false,
+      barrierLabel: '关闭浏览选项',
+      barrierColor: Colors.transparent,
+      transitionDuration: Duration.zero,
+      pageBuilder: (context, _, __) =>
+          _BrowserOptionsPanel(configuration: _configuration, anchor: anchor),
+    );
+    _route = route;
+    Navigator.of(context).push(route).whenComplete(() => _route = null);
+  }
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+      key: _anchorKey,
+      tooltip: '浏览选项',
+      onPressed: _open,
+      icon: const Icon(Icons.tune_rounded));
+}
+
+enum _OptionsSection { main, folders, files }
+
+enum _FileDisplay { cards, list, compact }
+
+class _BrowserOptionsPanel extends StatefulWidget {
+  const _BrowserOptionsPanel(
+      {required this.configuration, required this.anchor});
+  final ValueNotifier<_BrowserOptionsMenu> configuration;
+  final Rect anchor;
+  @override
+  State<_BrowserOptionsPanel> createState() => _BrowserOptionsPanelState();
+}
+
+class _BrowserOptionsPanelState extends State<_BrowserOptionsPanel> {
+  _OptionsSection _section = _OptionsSection.main;
+  final _scroll = ScrollController();
+  void _show(_OptionsSection value) {
+    setState(() => _section = value);
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  List<Widget> _group(String label, Widget child) => [
+        Text(label),
+        const SizedBox(height: 6),
+        child,
+        const SizedBox(height: 12)
+      ];
+
+  Widget _fileDensity(BuildContext context, _BrowserOptionsMenu config) {
+    final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
+    final settings = config.layoutSettings;
+    final browser = config.browserState;
+    if (browser.displayMode == BrowserDisplayMode.list) {
+      final text = browser.listStyle == BrowserListStyle.text;
+      return _LayoutCountControl(
+          label: '每行数量',
+          value: settings.fileListColumns(isPortrait: portrait, textOnly: text),
+          max: portrait ? 3 : 4,
+          onChanged: (v) => config.onLayoutChanged(
+              settings.withFileListColumns(portrait, text, v)));
+    }
+    if (browser.gridLayout == BrowserGridLayout.equalHeight) {
+      return _LayoutCountControl(
+          label: '高度级别',
+          value: settings.equalHeightLevel(isPortrait: portrait),
+          suffix:
+              '${settings.equalHeight(isPortrait: portrait, viewportWidth: MediaQuery.sizeOf(context).width - MediaQuery.paddingOf(context).horizontal).round()}dp',
+          onChanged: (v) => config.onLayoutChanged(portrait
+              ? settings.copyWith(portraitEqualHeightLevel: v)
+              : settings.copyWith(landscapeEqualHeightLevel: v)));
+    }
+    final square = browser.gridLayout == BrowserGridLayout.square;
+    return _LayoutCountControl(
+        label: '每行数量',
+        value: square
+            ? settings.squareColumns(isPortrait: portrait)
+            : settings.equalWidthColumns(isPortrait: portrait),
+        onChanged: (v) => config.onLayoutChanged(square
+            ? (portrait
+                ? settings.copyWith(portraitSquareColumns: v)
+                : settings.copyWith(landscapeSquareColumns: v))
+            : (portrait
+                ? settings.copyWith(portraitEqualWidthColumns: v)
+                : settings.copyWith(landscapeEqualWidthColumns: v))));
+  }
+
+  List<Widget> _content(BuildContext context, _BrowserOptionsMenu config) {
+    final browser = config.browserState;
+    if (_section == _OptionsSection.main) {
+      return [
+        if (config.sortDescription != null) Text(config.sortDescription!),
+        if (config.allowSorting)
+          ..._group(
+              '排序',
+              _GlassOptionSelector<EntitySortMode>(values: const [
+                EntitySortMode.modifiedDesc,
+                EntitySortMode.nameAsc,
+                EntitySortMode.sizeDesc
+              ], labels: const [
+                '最近',
+                '名称',
+                '大小'
+              ], selected: browser.sortMode, onSelected: config.onSortChanged)),
+        ..._group(
+            '主题',
+            _GlassOptionSelector<ViewerThemeChoice>(
+                values: const [
+                  ViewerThemeChoice.system,
+                  ViewerThemeChoice.galleryDark,
+                  ViewerThemeChoice.galleryLight
+                ],
+                labels: const [
+                  '系统',
+                  '暗色',
+                  '亮色'
+                ],
+                selected: config.themeChoice,
+                onSelected: config.onThemeChanged)),
+        if (config.showFolders) _entry('文件夹设置', _OptionsSection.folders),
+        if (config.showFiles) _entry('文件设置', _OptionsSection.files),
+      ];
+    }
+    if (_section == _OptionsSection.folders) {
+      final portrait =
+          MediaQuery.orientationOf(context) == Orientation.portrait;
+      final settings = config.layoutSettings;
+      final folders = settings.folders(isPortrait: portrait);
+      void change(FolderViewSettings value) =>
+          config.onLayoutChanged(settings.withFolders(portrait, value));
+      final list = folders.display == FolderDisplay.list;
+      final high = folders.cardLayout == FolderCardLayout.equalHeight;
+      final columns = 9 - folders.heightLevel;
+      final height = ((MediaQuery.sizeOf(context).width -
+                  MediaQuery.paddingOf(context).horizontal -
+                  2 * settings.pageMargin -
+                  (columns - 1) * settings.cardGap) /
+              columns)
+          .clamp(1.0, double.infinity);
+      return [
+        ..._group(
+            '显示',
+            _GlassOptionSelector<FolderDisplay>(
+                values: FolderDisplay.values,
+                labels: const ['叠加卡片', '方形卡片', '列表'],
+                selected: folders.display,
+                onSelected: (v) => change(folders.copyWith(display: v)))),
+        if (!list)
+          ..._group(
+              '布局',
+              _GlassOptionSelector<FolderCardLayout>(
+                  values: FolderCardLayout.values,
+                  labels: const ['等高', '等宽'],
+                  selected: folders.cardLayout,
+                  onSelected: (v) => change(folders.copyWith(cardLayout: v)))),
+        _LayoutCountControl(
+            label: !list && high ? '高度级别' : '每行数量',
+            value: list
+                ? folders.listColumns
+                : high
+                    ? folders.heightLevel
+                    : folders.columns,
+            max: list ? (portrait ? 3 : 4) : 8,
+            suffix: !list && high ? '${height.round()}dp' : null,
+            onChanged: (v) => change(list
+                ? folders.copyWith(listColumns: v)
+                : high
+                    ? folders.copyWith(heightLevel: v)
+                    : folders.copyWith(columns: v))),
+      ];
+    }
+    final display = browser.displayMode == BrowserDisplayMode.grid
+        ? _FileDisplay.cards
+        : browser.listStyle == BrowserListStyle.text
+            ? _FileDisplay.compact
+            : _FileDisplay.list;
+    return [
+      ..._group(
+          '显示',
+          _GlassOptionSelector<_FileDisplay>(
+              values: _FileDisplay.values,
+              labels: const ['卡片', '列表', '紧凑列表'],
+              selected: display,
+              onSelected: (v) {
+                if (config.onFileDisplayChanged != null) {
+                  config.onFileDisplayChanged!(
+                      v == _FileDisplay.cards
+                          ? BrowserDisplayMode.grid
+                          : BrowserDisplayMode.list,
+                      v == _FileDisplay.cards
+                          ? browser.listStyle
+                          : v == _FileDisplay.compact
+                              ? BrowserListStyle.text
+                              : BrowserListStyle.normal);
+                  return;
+                }
+                if (v != _FileDisplay.cards) {
+                  config.onListStyleChanged(v == _FileDisplay.compact
+                      ? BrowserListStyle.text
+                      : BrowserListStyle.normal);
+                }
+                config.onDisplayModeChanged(v == _FileDisplay.cards
+                    ? BrowserDisplayMode.grid
+                    : BrowserDisplayMode.list);
+              })),
+      if (display == _FileDisplay.cards)
+        ..._group(
+            '布局',
+            _GlassOptionSelector<BrowserGridLayout>(
+                values: const [
+                  BrowserGridLayout.equalHeight,
+                  BrowserGridLayout.equalWidth,
+                  BrowserGridLayout.square
+                ],
+                labels: const [
+                  '等高',
+                  '等宽',
+                  '方形'
+                ],
+                selected: browser.gridLayout,
+                onSelected: config.onGridLayoutChanged)),
+      _fileDensity(context, config),
+    ];
+  }
+
+  Widget _entry(String label, _OptionsSection section) => TextButton(
+      onPressed: () => _show(section),
+      child: Row(children: [
+        Expanded(child: Text(label)),
+        const Icon(Icons.chevron_right)
+      ]));
+
+  @override
+  Widget build(BuildContext context) => PopScope<void>(
+        canPop: _section == _OptionsSection.main,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _show(_OptionsSection.main);
+        },
+        child: ValueListenableBuilder<_BrowserOptionsMenu>(
+          valueListenable: widget.configuration,
+          builder: (context, config, _) {
+            final size = MediaQuery.sizeOf(context);
+            final padding = MediaQuery.paddingOf(context);
+            return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => Navigator.of(context).pop(),
+                child: Material(
+                    type: MaterialType.transparency,
+                    child: CustomSingleChildLayout(
+                      delegate: _OptionsPosition(widget.anchor, padding),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                            maxWidth: (size.width - 24).clamp(160.0, 340.0),
+                            maxHeight: (size.height - padding.vertical - 24)
+                                .clamp(80.0, double.infinity)),
+                        child: GestureDetector(
+                            onTap: () {},
+                            child: FloatingGlassSurface(
+                              key: const ValueKey('browser-options-surface'),
+                              independentBackdrop: true,
+                              role: GlassSurfaceRole.panel,
+                              borderRadius: 20,
+                              padding: const EdgeInsets.all(12),
+                              child: Builder(
+                                  builder: (context) => SingleChildScrollView(
+                                        controller: _scroll,
+                                        primary: false,
+                                        child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            children: [
+                                              if (_section !=
+                                                  _OptionsSection.main)
+                                                Row(children: [
+                                                  IconButton(
+                                                      tooltip: '返回浏览选项',
+                                                      onPressed: () => _show(
+                                                          _OptionsSection.main),
+                                                      icon: const Icon(
+                                                          Icons.arrow_back)),
+                                                  Expanded(
+                                                      child: Text(_section ==
+                                                              _OptionsSection
+                                                                  .folders
+                                                          ? '文件夹设置'
+                                                          : '文件设置')),
+                                                ]),
+                                              ..._content(context, config),
+                                            ]),
+                                      )),
+                            )),
+                      ),
+                    )));
+          },
+        ),
+      );
+}
+
+class _OptionsPosition extends SingleChildLayoutDelegate {
+  const _OptionsPosition(this.anchor, this.padding);
+  final Rect anchor;
+  final EdgeInsets padding;
+  @override
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) =>
+      BoxConstraints(
+          maxWidth: (constraints.maxWidth - padding.horizontal - 24)
+              .clamp(0.0, double.infinity),
+          maxHeight: (constraints.maxHeight - padding.vertical - 24)
+              .clamp(0.0, double.infinity));
+  @override
+  Offset getPositionForChild(Size size, Size childSize) {
+    final left = (anchor.right - childSize.width).clamp(
+        padding.left + 12,
+        (size.width - padding.right - childSize.width - 12)
+            .clamp(padding.left + 12, double.infinity));
+    final maxTop = (size.height - padding.bottom - childSize.height - 12)
+        .clamp(padding.top + 12, double.infinity);
+    return Offset(left, (anchor.bottom + 6).clamp(padding.top + 12, maxTop));
+  }
+
+  @override
+  bool shouldRelayout(_OptionsPosition oldDelegate) =>
+      anchor != oldDelegate.anchor || padding != oldDelegate.padding;
 }
 
 class _GlassOptionSelector<T> extends StatelessWidget {

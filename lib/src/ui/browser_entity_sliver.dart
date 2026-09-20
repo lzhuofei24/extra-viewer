@@ -82,7 +82,12 @@ class BrowserEntitySliver extends StatelessWidget {
                   layoutSettings: layoutSettings),
             }
           : _EntityListSliver(
-              landscapeColumns: layoutSettings.landscapeListColumns,
+              portraitColumns: layoutSettings.fileListColumns(
+                  isPortrait: true,
+                  textOnly: browserState.listStyle == BrowserListStyle.text),
+              landscapeColumns: layoutSettings.fileListColumns(
+                  isPortrait: false,
+                  textOnly: browserState.listStyle == BrowserListStyle.text),
               style: browserState.listStyle,
               entities: entities,
               selectedEntityIds: selectedEntityIds,
@@ -542,6 +547,7 @@ class _SquareEntityGridSliver extends StatelessWidget {
 class _EntityListSliver extends StatelessWidget {
   const _EntityListSliver(
       {required this.landscapeColumns,
+      required this.portraitColumns,
       required this.entities,
       required this.style,
       required this.selectionMode,
@@ -553,7 +559,7 @@ class _EntityListSliver extends StatelessWidget {
       required this.onStartEntitySelection,
       required this.horizontalPadding});
   final List<EntityListItem> entities;
-  final int landscapeColumns;
+  final int landscapeColumns, portraitColumns;
   final BrowserListStyle style;
   final bool selectionMode;
   final ValueChanged<EntityListItem> onOpenEntity,
@@ -566,6 +572,7 @@ class _EntityListSliver extends StatelessWidget {
   @override
   Widget build(BuildContext context) => BrowserListSliver(
       landscapeColumns: landscapeColumns,
+      portraitColumns: portraitColumns,
       count: entities.length,
       style: style,
       padding: horizontalPadding,

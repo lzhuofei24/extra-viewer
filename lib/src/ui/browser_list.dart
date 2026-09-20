@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'browser_state.dart';
 
 class BrowserListMetrics {
-  static int columns(BuildContext context, {int landscapeColumns = 3}) =>
+  static int columns(BuildContext context,
+          {int portraitColumns = 1, int landscapeColumns = 3}) =>
       MediaQuery.orientationOf(context) == Orientation.portrait
-          ? 1
-          : landscapeColumns.clamp(1, 3);
+          ? portraitColumns.clamp(1, 3)
+          : landscapeColumns.clamp(1, 4);
   static double previewSize(BrowserListStyle style) => switch (style) {
         BrowserListStyle.text => 0,
         BrowserListStyle.compact => 36,
@@ -28,19 +29,20 @@ class BrowserListSliver extends StatelessWidget {
   const BrowserListSliver(
       {super.key,
       this.landscapeColumns = 3,
+      this.portraitColumns = 1,
       required this.count,
       required this.style,
       required this.padding,
       required this.itemBuilder});
-  final int landscapeColumns;
+  final int landscapeColumns, portraitColumns;
   final int count;
   final BrowserListStyle style;
   final double padding;
   final IndexedWidgetBuilder itemBuilder;
   @override
   Widget build(BuildContext context) {
-    final columns =
-        BrowserListMetrics.columns(context, landscapeColumns: landscapeColumns);
+    final columns = BrowserListMetrics.columns(context,
+        portraitColumns: portraitColumns, landscapeColumns: landscapeColumns);
     final rows = (count + columns - 1) ~/ columns;
     return SliverPadding(
       padding: EdgeInsets.fromLTRB(padding, padding, padding, 0),
@@ -94,35 +96,42 @@ class BrowserListTile extends StatelessWidget {
             onSecondaryTap: onSecondaryTap,
             child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                child: Row(children: [
-                  if (style == BrowserListStyle.text)
-                    Icon(icon, size: 22)
-                  else
-                    SizedBox.square(
-                        dimension: BrowserListMetrics.previewSize(style),
-                        child: ClipRRect(
-                            borderRadius: BorderRadius.circular(6),
-                            child: previewBuilder(context))),
-                  const SizedBox(width: 8),
-                  Expanded(
-                      child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                        Text(title,
-                            maxLines: style == BrowserListStyle.normal ? 2 : 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall),
-                        if (style != BrowserListStyle.text) ...[
-                          const SizedBox(height: 3),
-                          Text(subtitle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.labelSmall),
-                        ],
-                      ])),
-                  if (selected)
-                    const Icon(Icons.check_circle_rounded, size: 18),
-                ]))),
+                child: LayoutBuilder(
+                    builder: (context, constraints) => Row(children: [
+                          if (style == BrowserListStyle.text)
+                            Icon(icon, size: 22)
+                          else
+                            SizedBox.square(
+                                dimension: BrowserListMetrics.previewSize(style)
+                                    .clamp(0.0, constraints.maxWidth * .35),
+                                child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: previewBuilder(context))),
+                          const SizedBox(width: 8),
+                          Expanded(
+                              child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                Text(title,
+                                    maxLines: style == BrowserListStyle.normal
+                                        ? 2
+                                        : 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall),
+                                if (style != BrowserListStyle.text) ...[
+                                  const SizedBox(height: 3),
+                                  Text(subtitle,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall),
+                                ],
+                              ])),
+                          if (selected)
+                            const Icon(Icons.check_circle_rounded, size: 18),
+                        ])))),
       );
 }

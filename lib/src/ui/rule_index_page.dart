@@ -232,6 +232,9 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
                 ? '规则默认排序：${_sortLabel(rule.defaultSort)}'
                 : null,
         onSortChanged: (value) => _controller.sort(_ruleSort(value)),
+        onFileDisplayChanged: (display, style) => widget.onBrowserStateChanged(
+            widget.browserState
+                .copyWith(displayMode: display, listStyle: style)),
         onDisplayModeChanged: (v) => widget.onBrowserStateChanged(
             widget.browserState.copyWith(displayMode: v)),
         onGridLayoutChanged: (v) => widget
@@ -262,16 +265,22 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
       };
 
   Widget _homeSliver() {
-    if (widget.browserState.displayMode == BrowserDisplayMode.list) {
+    if (widget.layoutSettings
+            .folders(
+                isPortrait:
+                    MediaQuery.orientationOf(context) == Orientation.portrait)
+            .display ==
+        FolderDisplay.list) {
       return BrowserListSliver(
-          landscapeColumns: widget.layoutSettings.landscapeListColumns,
+          landscapeColumns: widget.layoutSettings.landscapeFolders.listColumns,
+          portraitColumns: widget.layoutSettings.portraitFolders.listColumns,
           count: _controller.rules.length,
-          style: widget.browserState.listStyle,
+          style: BrowserListStyle.normal,
           padding: widget.layoutSettings.pageMargin,
           itemBuilder: (_, i) {
             final rule = _controller.rules[i];
             return BrowserListTile(
-                style: widget.browserState.listStyle,
+                style: BrowserListStyle.normal,
                 title: '${rule.node.name}${rule.isBuiltIn ? " · 内置" : ""}',
                 subtitle:
                     '${_ruleSummary(rule)} · ${rule.resultCount ?? 0} 个文件',

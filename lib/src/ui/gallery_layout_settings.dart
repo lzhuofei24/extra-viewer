@@ -1,4 +1,6 @@
 import 'package:flutter/foundation.dart';
+import 'folder_view_settings.dart';
+export 'folder_view_settings.dart';
 
 @immutable
 class GalleryLayoutSettings {
@@ -9,9 +11,12 @@ class GalleryLayoutSettings {
     this.landscapeSquareColumns = 4,
     this.portraitEqualHeightLevel = 6,
     this.landscapeEqualHeightLevel = 5,
-    this.portraitFolderColumns = 3,
-    this.landscapeFolderColumns = 4,
     this.landscapeListColumns = 3,
+    this.portraitListColumns = 1,
+    this.portraitTextListColumns = 1,
+    this.landscapeTextListColumns = 3,
+    this.portraitFolders = const FolderViewSettings(),
+    this.landscapeFolders = FolderViewSettings.landscape,
   });
 
   final double pageMargin = 8;
@@ -26,16 +31,35 @@ class GalleryLayoutSettings {
   final int landscapeSquareColumns;
   final int portraitEqualHeightLevel;
   final int landscapeEqualHeightLevel;
-  final int portraitFolderColumns;
-  final int landscapeFolderColumns;
   final int landscapeListColumns;
+  final int portraitListColumns,
+      portraitTextListColumns,
+      landscapeTextListColumns;
+  final FolderViewSettings portraitFolders, landscapeFolders;
+  FolderViewSettings folders({required bool isPortrait}) =>
+      isPortrait ? portraitFolders : landscapeFolders;
+  GalleryLayoutSettings withFolders(bool portrait, FolderViewSettings value) =>
+      copyWith(
+          portraitFolders: portrait ? value : null,
+          landscapeFolders: portrait ? null : value);
+  int fileListColumns({required bool isPortrait, required bool textOnly}) =>
+      textOnly
+          ? (isPortrait ? portraitTextListColumns : landscapeTextListColumns)
+          : (isPortrait ? portraitListColumns : landscapeListColumns);
+  GalleryLayoutSettings withFileListColumns(
+          bool portrait, bool textOnly, int value) =>
+      textOnly
+          ? copyWith(
+              portraitTextListColumns: portrait ? value : null,
+              landscapeTextListColumns: portrait ? null : value)
+          : copyWith(
+              portraitListColumns: portrait ? value : null,
+              landscapeListColumns: portrait ? null : value);
 
   int equalWidthColumns({required bool isPortrait}) =>
       isPortrait ? portraitEqualWidthColumns : landscapeEqualWidthColumns;
   int squareColumns({required bool isPortrait}) =>
       isPortrait ? portraitSquareColumns : landscapeSquareColumns;
-  int folderColumns({required bool isPortrait}) =>
-      isPortrait ? portraitFolderColumns : landscapeFolderColumns;
   int equalHeightLevel({required bool isPortrait}) =>
       isPortrait ? portraitEqualHeightLevel : landscapeEqualHeightLevel;
   double equalHeight(
@@ -56,9 +80,12 @@ class GalleryLayoutSettings {
     int? landscapeSquareColumns,
     int? portraitEqualHeightLevel,
     int? landscapeEqualHeightLevel,
-    int? portraitFolderColumns,
-    int? landscapeFolderColumns,
     int? landscapeListColumns,
+    int? portraitListColumns,
+    portraitTextListColumns,
+    landscapeTextListColumns,
+    FolderViewSettings? portraitFolders,
+    landscapeFolders,
   }) =>
       GalleryLayoutSettings(
         portraitEqualWidthColumns:
@@ -73,11 +100,14 @@ class GalleryLayoutSettings {
             portraitEqualHeightLevel ?? this.portraitEqualHeightLevel,
         landscapeEqualHeightLevel:
             landscapeEqualHeightLevel ?? this.landscapeEqualHeightLevel,
-        portraitFolderColumns:
-            portraitFolderColumns ?? this.portraitFolderColumns,
-        landscapeFolderColumns:
-            landscapeFolderColumns ?? this.landscapeFolderColumns,
         landscapeListColumns: landscapeListColumns ?? this.landscapeListColumns,
+        portraitListColumns: portraitListColumns ?? this.portraitListColumns,
+        portraitTextListColumns:
+            portraitTextListColumns ?? this.portraitTextListColumns,
+        landscapeTextListColumns:
+            landscapeTextListColumns ?? this.landscapeTextListColumns,
+        portraitFolders: portraitFolders ?? this.portraitFolders,
+        landscapeFolders: landscapeFolders ?? this.landscapeFolders,
       ).normalized();
 
   Map<String, int> toMap() => {
@@ -87,9 +117,12 @@ class GalleryLayoutSettings {
         'landscapeSquareColumns': landscapeSquareColumns,
         'portraitEqualHeightLevel': portraitEqualHeightLevel,
         'landscapeEqualHeightLevel': landscapeEqualHeightLevel,
-        'portraitFolderColumns': portraitFolderColumns,
-        'landscapeFolderColumns': landscapeFolderColumns,
         'landscapeListColumns': landscapeListColumns,
+        'portraitListColumns': portraitListColumns,
+        'portraitTextListColumns': portraitTextListColumns,
+        'landscapeTextListColumns': landscapeTextListColumns,
+        ...portraitFolders.toMap('portraitFolder'),
+        ...landscapeFolders.toMap('landscapeFolder'),
       };
 
   factory GalleryLayoutSettings.fromMap(Map<String, Object?> values) {
@@ -105,25 +138,20 @@ class GalleryLayoutSettings {
       landscapeSquareColumns: read('landscapeSquareColumns', 4, 8),
       portraitEqualHeightLevel: read('portraitEqualHeightLevel', 6, 8),
       landscapeEqualHeightLevel: read('landscapeEqualHeightLevel', 5, 8),
-      portraitFolderColumns: read('portraitFolderColumns', 3, 8),
-      landscapeFolderColumns: read('landscapeFolderColumns', 4, 8),
-      landscapeListColumns: read('landscapeListColumns', 3, 3),
+      landscapeListColumns: read('landscapeListColumns', 3, 4),
+      portraitListColumns: read('portraitListColumns', 1, 3),
+      portraitTextListColumns: read('portraitTextListColumns', 1, 3),
+      landscapeTextListColumns: read(
+          'landscapeTextListColumns', read('landscapeListColumns', 3, 4), 4),
+      portraitFolders: FolderViewSettings.fromMap(values, portrait: true),
+      landscapeFolders: FolderViewSettings.fromMap(values, portrait: false),
     );
   }
   GalleryLayoutSettings normalized() => GalleryLayoutSettings.fromMap(toMap());
 
   @override
   bool operator ==(Object other) =>
-      other is GalleryLayoutSettings &&
-      other.portraitEqualWidthColumns == portraitEqualWidthColumns &&
-      other.landscapeEqualWidthColumns == landscapeEqualWidthColumns &&
-      other.portraitSquareColumns == portraitSquareColumns &&
-      other.landscapeSquareColumns == landscapeSquareColumns &&
-      other.portraitEqualHeightLevel == portraitEqualHeightLevel &&
-      other.landscapeEqualHeightLevel == landscapeEqualHeightLevel &&
-      other.portraitFolderColumns == portraitFolderColumns &&
-      other.landscapeFolderColumns == landscapeFolderColumns &&
-      other.landscapeListColumns == landscapeListColumns;
+      other is GalleryLayoutSettings && mapEquals(other.toMap(), toMap());
   @override
   int get hashCode => Object.hashAll(toMap().values);
 }
