@@ -18,6 +18,7 @@ class _NodeSearchPageViewState extends State<NodeSearchPageView> {
   List<NodeSearchResult> _items = [];
   bool _busy = false;
   bool _more = false;
+  NodeSearchCursor? _cursor;
   String? _error;
 
   void _changed() {
@@ -26,6 +27,7 @@ class _NodeSearchPageViewState extends State<NodeSearchPageView> {
     setState(() {
       _items = [];
       _more = false;
+      _cursor = null;
       _error = null;
       _busy = _text.text.trim().isNotEmpty;
     });
@@ -45,11 +47,12 @@ class _NodeSearchPageViewState extends State<NodeSearchPageView> {
     });
     try {
       final page = await widget.queries.searchNodes(NodeSearchQuery(
-          text: text, scope: _scope, offset: append ? _items.length : 0));
+          text: text, scope: _scope, after: append ? _cursor : null));
       if (!mounted || generation != _generation) return;
       setState(() {
         _items = append ? [..._items, ...page.items] : page.items;
         _more = page.hasMore;
+        _cursor = page.nextCursor;
         _busy = false;
       });
     } catch (error) {

@@ -276,6 +276,28 @@ class RuleDefinition {
   final int updatedAtMs;
 
   bool get isBuiltIn => builtInKind != null;
+
+  RuleDefinition withResultCount(int count) => RuleDefinition(
+      node: node,
+      entityTypes: entityTypes,
+      extensions: extensions,
+      scopeNodeId: scopeNodeId,
+      scopeMissing: scopeMissing,
+      minSize: minSize,
+      maxSize: maxSize,
+      modifiedWithinDays: modifiedWithinDays,
+      openedWithinDays: openedWithinDays,
+      defaultSort: defaultSort,
+      maxResults: maxResults,
+      builtInKind: builtInKind,
+      resultCount: count,
+      updatedAtMs: updatedAtMs);
+}
+
+class RuleSummary {
+  const RuleSummary({required this.count, this.cover});
+  final int count;
+  final EntityListItem? cover;
 }
 
 class RulePageCursor {
@@ -311,15 +333,24 @@ class RuleFilterOptions {
   final List<IndexNode> scopeNodes;
 }
 
+class NodeSearchCursor {
+  const NodeSearchCursor(this.rank, this.name, this.id);
+  final int rank;
+  final String name;
+  final String id;
+}
+
 class NodeSearchQuery {
   const NodeSearchQuery(
       {required this.text,
       this.scope = NodeSearchScope.all,
       this.offset = 0,
+      this.after,
       this.limit = 60});
   final String text;
   final NodeSearchScope scope;
   final int offset;
+  final NodeSearchCursor? after;
   final int limit;
 }
 
@@ -341,6 +372,11 @@ class NodeSearchPage {
       : items = List.unmodifiable(items);
   final List<NodeSearchResult> items;
   final bool hasMore;
+
+  NodeSearchCursor? get nextCursor => !hasMore || items.isEmpty
+      ? null
+      : NodeSearchCursor(
+          items.last.matchRank, items.last.node.name, items.last.node.id);
 
   Map<String, Object?> toMessage() => {
         'hasMore': hasMore,

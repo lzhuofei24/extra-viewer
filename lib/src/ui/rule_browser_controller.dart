@@ -12,11 +12,28 @@ class RuleBrowserController extends ChangeNotifier {
   Future<void> refreshCovers() async {
     final generation = ++_coverGeneration;
     try {
-      final result =
-          await queries.loadRuleCovers(rules.map((r) => r.node.id).toList());
-      if (_disposed || generation != _coverGeneration) return;
-      covers = result;
-      notifyListeners();
+      final ids = rules.map((r) => r.node.id).toList();
+      for (var offset = 0; offset < ids.length; offset += 8) {
+        if (_disposed || generation != _coverGeneration) return;
+        final result = await queries.loadRuleSummaries(
+            ids.sublist(offset, (offset + 8).clamp(0, ids.length)));
+        if (_disposed || generation != _coverGeneration) return;
+        covers = {...covers};
+        for (final entry in result.entries) {
+          if (entry.value.cover != null) {
+            covers[entry.key] = entry.value.cover!;
+          } else {
+            covers.remove(entry.key);
+          }
+        }
+        rules = [
+          for (final rule in rules)
+            result.containsKey(rule.node.id)
+                ? rule.withResultCount(result[rule.node.id]!.count)
+                : rule
+        ];
+        notifyListeners();
+      }
     } catch (_) {
       // A failed cover lookup must not hide usable rule entries.
     }

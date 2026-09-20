@@ -70,6 +70,8 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
           existing.entityType == entityType &&
           existing.format == normalizedFormat &&
           existing.size == size &&
+          existing.sourceCreatedAtMs == sourceCreatedAtMs &&
+          existing.sourceModifiedAtMs == sourceModifiedAtMs &&
           existing.durationMs == durationMs &&
           existing.directoryRootId == directoryRootId &&
           existing.localPath == normalizedLocalPath &&

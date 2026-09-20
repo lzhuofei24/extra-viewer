@@ -47,6 +47,9 @@ class Queries implements LibraryQueries {
   @override
   Future<List<RuleDefinition>> listRules() async => rules;
   @override
+  Future<Map<String, RuleSummary>> loadRuleSummaries(List<String> ids) async =>
+      {for (final id in ids) id: RuleSummary(count: 0, cover: covers[id])};
+  @override
   Future<Map<String, EntityListItem>> loadRuleCovers(
           List<String> ruleIds) async =>
       covers;

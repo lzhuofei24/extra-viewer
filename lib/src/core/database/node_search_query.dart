@@ -23,12 +23,13 @@ NodeSearchPage queryNodes(Database database, NodeSearchQuery query) {
     NodeSearchScope.rule => const ['rule'],
   };
   final fts = text.runes.length >= 3;
+  final after = query.after;
   // Rank and page before loading breadcrumbs; only one page crosses the isolate.
   final rows = database.select('''
     WITH RECURSIVE hidden(id) AS (
       SELECT id FROM index_nodes WHERE is_staging = 1
       UNION SELECT n.id FROM index_nodes n JOIN hidden h ON n.parent_id = h.id
-    )
+    ), ranked AS (
     SELECT n.*, CASE WHEN n.name = ? COLLATE NOCASE THEN 0
       WHEN n.name LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END AS match_rank
     FROM index_nodes n
@@ -36,27 +37,46 @@ NodeSearchPage queryNodes(Database database, NodeSearchQuery query) {
     WHERE ${fts ? 'index_node_search MATCH ?' : "n.name LIKE ? ESCAPE '\\'"}
       AND n.node_type IN (${List.filled(types.length, '?').join(',')})
       AND n.id NOT IN (SELECT id FROM hidden)
-    ORDER BY match_rank, n.name COLLATE NOCASE, n.id
+    ) SELECT * FROM ranked
+    ${after == null ? '' : 'WHERE match_rank > ? OR (match_rank = ? AND (name COLLATE NOCASE > ? OR (name = ? COLLATE NOCASE AND id > ?)))'}
+    ORDER BY match_rank, name COLLATE NOCASE, id
     LIMIT ? OFFSET ?
   ''', [
     text,
     '$pattern%',
     fts ? '"${text.replaceAll('"', '""')}"' : '%$pattern%',
     ...types,
+    if (after != null) ...[
+      after.rank,
+      after.rank,
+      after.name,
+      after.name,
+      after.id
+    ],
     limit + 1,
-    offset
+    after == null ? offset : 0
   ]);
   final items = <NodeSearchResult>[];
-  for (final row in rows.take(limit)) {
+  final pageRows = rows.take(limit).toList();
+  final paths = <String, List<IndexNode>>{};
+  if (pageRows.isNotEmpty) {
     final ancestors = database.select('''
-      WITH RECURSIVE chain(id, parent_id, depth) AS (
-        SELECT id, parent_id, 0 FROM index_nodes WHERE id = ?
-        UNION ALL SELECT n.id, n.parent_id, c.depth + 1
+      WITH RECURSIVE chain(result_id, id, parent_id, depth) AS (
+        SELECT id, id, parent_id, 0 FROM index_nodes
+        WHERE id IN (${List.filled(pageRows.length, '?').join(',')})
+        UNION ALL SELECT c.result_id, n.id, n.parent_id, c.depth + 1
         FROM index_nodes n JOIN chain c ON c.parent_id = n.id WHERE c.depth < 1024
-      ) SELECT n.* FROM chain c JOIN index_nodes n ON n.id = c.id
-      WHERE n.node_type <> 'root' ORDER BY c.depth DESC
-    ''', [row['id']]);
-    final path = ancestors.map(_node).toList();
+      ) SELECT n.*, c.result_id FROM chain c JOIN index_nodes n ON n.id = c.id
+      WHERE n.node_type <> 'root' ORDER BY c.result_id, c.depth DESC
+    ''', pageRows.map((row) => row['id']).toList());
+    for (final ancestor in ancestors) {
+      paths
+          .putIfAbsent(ancestor['result_id'] as String, () => [])
+          .add(_node(ancestor));
+    }
+  }
+  for (final row in pageRows) {
+    final path = paths[row['id']] ?? [];
     if (path.isEmpty) continue;
     items.add(NodeSearchResult(
         node: _node(row),

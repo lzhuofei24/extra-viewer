@@ -8,8 +8,55 @@ import 'package:best_viewer/src/core/domain/models.dart';
 import 'package:best_viewer/src/modules/sources/source_identity.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
+import 'package:best_viewer/src/core/database/local_statistics.dart';
 
 void main() {
+  test(
+      'dirty statistics deduplicate references and leave unrelated roots alone',
+      () {
+    final db = AppDatabase.openInMemory();
+    addTearDown(db.close);
+    final repo = LibraryRepository(db);
+    final root = repo.ensureCollectionIndexRoot('Shared');
+    final unrelated = repo.ensureCollectionIndexRoot('Unrelated');
+    final a = repo.createCustomNode(parentId: root.id, name: 'A');
+    final b = repo.createCustomNode(parentId: root.id, name: 'B');
+    final entity = repo
+        .upsertEntity(
+            path: '/shared.jpg',
+            name: 'shared.jpg',
+            format: 'jpg',
+            entityType: EntityType.image,
+            hash: 'h',
+            size: 1,
+            sourceCreatedAtMs: 0,
+            sourceModifiedAtMs: 0)
+        .entity;
+    refreshDirtyStatistics(db.db);
+    db.db.execute('UPDATE index_node_stats SET updated_at=123 WHERE node_id=?',
+        [unrelated.id]);
+    repo.linkEntityToIndexNode(entityId: entity.id, indexNodeId: a.id);
+    repo.linkEntityToIndexNode(entityId: entity.id, indexNodeId: b.id);
+    refreshDirtyStatistics(db.db);
+    expect(
+        db.db.select(
+            'SELECT descendant_entity_count FROM index_node_stats WHERE node_id=?',
+            [root.id]).single['descendant_entity_count'],
+        1);
+    expect(
+        db.db.select('SELECT updated_at FROM index_node_stats WHERE node_id=?',
+            [unrelated.id]).single['updated_at'],
+        123);
+    db.db.execute('UPDATE entities SET archived=1 WHERE id=?', [entity.id]);
+    refreshDirtyStatistics(db.db);
+    expect(
+        db.db.select(
+            'SELECT descendant_entity_count FROM index_node_stats WHERE node_id=?',
+            [root.id]).single['descendant_entity_count'],
+        0);
+    expect(db.db.select('SELECT * FROM index_stats_dirty'), isEmpty);
+  });
+
   test('source IDs remain opaque and URI aliases keep entity identity', () {
     final db = AppDatabase.openInMemory();
     addTearDown(db.close);

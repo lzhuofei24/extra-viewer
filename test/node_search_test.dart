@@ -5,6 +5,27 @@ import 'package:best_viewer/src/core/database/node_search_query.dart';
 import 'package:best_viewer/src/core/domain/models.dart';
 
 void main() {
+  test('search cursor survives deletion before the next page', () {
+    final database = AppDatabase.openInMemory();
+    addTearDown(database.close);
+    final repository = LibraryRepository(database);
+    final root = repository.ensureCollectionIndexRoot('Search root');
+    for (final name in ['Match A', 'Match B', 'Match C', 'Match D']) {
+      repository.createCustomNode(parentId: root.id, name: name);
+    }
+    final first =
+        queryNodes(database.db, const NodeSearchQuery(text: 'Match', limit: 2));
+    final cursor = NodeSearchPage.fromMessage(first.toMessage()).nextCursor;
+    database.db.execute(
+        'DELETE FROM index_nodes WHERE id = ?', [first.items.first.node.id]);
+    final second = queryNodes(
+        database.db, NodeSearchQuery(text: 'Match', limit: 2, after: cursor));
+    expect(second.items.map((item) => item.node.name), ['Match C', 'Match D']);
+    expect(second.hasMore, isFalse);
+    expect(second.items.every((item) => item.breadcrumb.first.id == root.id),
+        isTrue);
+  });
+
   test('node search ranks, filters and hides staging subtrees', () async {
     final database = AppDatabase.openInMemory();
     addTearDown(database.close);

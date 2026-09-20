@@ -30,6 +30,7 @@ class LibraryReadWorker implements LibraryQueries {
   Future<void>? _closeFuture;
   Object? _terminalError;
   final Set<Completer<Map<Object?, Object?>>> _pending = {};
+  LibraryReadWorker? _background;
 
   void _fail(Object error) {
     _terminalError ??= error;
@@ -41,6 +42,7 @@ class LibraryReadWorker implements LibraryQueries {
   static Future<LibraryReadWorker> start({
     required String databasePath,
     required String storageDirectoryPath,
+    bool createBackground = true,
   }) async {
     final readyPort = ReceivePort();
     final errorPort = ReceivePort();
@@ -97,6 +99,17 @@ class LibraryReadWorker implements LibraryQueries {
       exitPort,
       terminalError,
     );
+    if (createBackground) {
+      try {
+        worker._background = await start(
+            databasePath: databasePath,
+            storageDirectoryPath: storageDirectoryPath,
+            createBackground: false);
+      } catch (_) {
+        await worker.close();
+        rethrow;
+      }
+    }
     return worker;
   }
 
@@ -125,6 +138,9 @@ class LibraryReadWorker implements LibraryQueries {
       'text': query.text,
       'scope': query.scope.name,
       'offset': query.offset,
+      'after': query.after == null
+          ? null
+          : [query.after!.rank, query.after!.name, query.after!.id],
       'limit': query.limit,
     });
     return NodeSearchPage.fromMessage(
@@ -138,6 +154,22 @@ class LibraryReadWorker implements LibraryQueries {
         .cast<Map<Object?, Object?>>()
         .map(_ruleFromMessage)
         .toList(growable: false);
+  }
+
+  @override
+  Future<Map<String, RuleSummary>> loadRuleSummaries(
+      List<String> ruleIds) async {
+    if (ruleIds.length > 8) {
+      throw ArgumentError('Rule summary batch exceeds eight');
+    }
+    final response =
+        await _request({'type': 'ruleSummaries', 'ruleIds': ruleIds});
+    final counts = (response['counts'] as Map).cast<String, int>();
+    final covers = await loadRuleCovers(ruleIds);
+    return {
+      for (final entry in counts.entries)
+        entry.key: RuleSummary(count: entry.value, cover: covers[entry.key])
+    };
   }
 
   @override
@@ -324,6 +356,11 @@ class LibraryReadWorker implements LibraryQueries {
 
   Future<Map<Object?, Object?>> _request(Map<String, Object?> request) async {
     _ensureOpen();
+    if (_background != null &&
+        const {'ruleSummaries', 'ruleCovers', 'ruleFilterOptions'}
+            .contains(request['type'])) {
+      return _background!._request(request);
+    }
     final terminalError = _terminalError;
     if (terminalError != null) throw terminalError;
     final response = ReceivePort();
@@ -364,6 +401,7 @@ class LibraryReadWorker implements LibraryQueries {
 
   Future<void> _closeImpl() async {
     _fail(StateError('Read worker closed'));
+    await _background?.close();
     final response = ReceivePort();
     _sendPort.send(<String, Object?>{
       'type': 'close',
@@ -451,11 +489,16 @@ void _readWorkerMain(Map<String, Object> config) {
     final replyPort = request['replyPort'] as SendPort;
     try {
       if (request['type'] == 'nodeSearch') {
+        final after = request['after'] as List<Object?>?;
         final query = NodeSearchQuery(
           text: request['text'] as String,
           scope: NodeSearchScope.values
               .firstWhere((value) => value.name == request['scope']),
           offset: request['offset'] as int,
+          after: after == null
+              ? null
+              : NodeSearchCursor(
+                  after[0] as int, after[1] as String, after[2] as String),
           limit: request['limit'] as int,
         );
         replyPort.send(
@@ -464,6 +507,17 @@ void _readWorkerMain(Map<String, Object> config) {
       }
       if (request['type'] == 'listRules') {
         replyPort.send({'ok': true, 'rules': _loadRules(database)});
+        return;
+      }
+      if (request['type'] == 'ruleSummaries') {
+        final ids = (request['ruleIds'] as List).cast<String>().toSet();
+        final rules = _loadRules(database, includeCounts: true, ids: ids);
+        replyPort.send({
+          'ok': true,
+          'counts': {
+            for (final r in rules) (r['node'] as Map)['id']: r['resultCount']
+          }
+        });
         return;
       }
       if (request['type'] == 'rulePage') {
@@ -544,7 +598,8 @@ void _readWorkerMain(Map<String, Object> config) {
   });
 }
 
-List<Map<String, Object?>> _loadRules(Database database) {
+List<Map<String, Object?>> _loadRules(Database database,
+    {bool includeCounts = false, Set<String>? ids}) {
   final rows = database.select('''
     SELECT node.*, rule.entity_types_json, rule.extensions_json,
            rule.scope_node_id, rule.scope_state, rule.min_size, rule.max_size,
@@ -557,7 +612,8 @@ List<Map<String, Object?>> _loadRules(Database database) {
     ORDER BY CASE WHEN rule.built_in_kind IS NULL THEN 1 ELSE 0 END,
              node.sort_order, node.name COLLATE NOCASE, node.id
   ''');
-  return rows.map((row) {
+  return rows.where((row) => ids == null || ids.contains(row['id'])).map((row) {
+    if (!includeCounts) return _ruleToMessage(row, null);
     final query = _ruleQuery(row, DateTime.now().millisecondsSinceEpoch);
     final count = database.select(
       'SELECT COUNT(*) AS count FROM (SELECT 1 FROM entities e WHERE ${query.whereSql} LIMIT ?)',

@@ -3,6 +3,7 @@ import '../../core/domain/models.dart';
 abstract interface class LibraryQueries {
   Future<NodeSearchPage> searchNodes(NodeSearchQuery query);
   Future<List<RuleDefinition>> listRules();
+  Future<Map<String, RuleSummary>> loadRuleSummaries(List<String> ruleIds);
   Future<Map<String, EntityListItem>> loadRuleCovers(List<String> ruleIds);
   Future<RuleResultPage> loadRulePage({
     required String ruleNodeId,

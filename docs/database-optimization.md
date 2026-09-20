@@ -51,6 +51,32 @@ SAF permission and removable-media acceptance remain device-only checks.
   matching during single and batched ingest, and explicit collision state.
   Each schema upgrade now has its own verified snapshot and transaction.
 - Validation: analysis and full suite passed (181 tests).
+- Query scheduling: rule definitions return without counts; summaries/covers
+  load in batches of eight on a separate background reader. Foreground search
+  uses rank/name/ID cursors and one batched breadcrumb CTE per page.
+- Statistics now recompute dirty ancestors only, including archive and node
+  movement invalidation. Duplicate category references count once. Computation
+  is still synchronous in the writer; background revision-gated publication
+  is not yet delivered.
+- Validation: analysis passed; full suite passed (185 tests). Android arm64
+  release build succeeded (44,172,599 bytes). No push or device installation.
+- Windows synthetic probe, 30 warm first-page requests per dataset:
+
+  | Entities | Rule definitions | First page | Warm P95 | Remaining pages |
+  | --- | --- | --- | --- | --- |
+  | 1,000 | 12 ms | 22 ms | 6.54 ms | 26 ms |
+  | 10,000 | 1 ms | 4 ms | 6.49 ms | 38 ms |
+  | 130,000 | 1 ms | 5 ms | 5.60 ms | 48 ms |
+
+  Requests include isolate transport; results are capped at 1,000. The first
+  page includes session creation, not application cold startup. Query plans
+  use idx_entities_visible_open_count without a temporary sort. At 130k the
+  database is 78,487,552 bytes, WAL 79,038,112 bytes after bulk fixture creation,
+  and process RSS 248,844,288 bytes (test process, not Android application peak).
+  This fixture does not establish recursive 130k snapshot latency, scanning
+  concurrency, failure injection, checkpoint recovery or Android targets.
 - Remaining: complete read scheduling, summary invalidation,
-  local statistics publication, node/search pagination, node view_type removal,
+  local statistics publication, folder pagination, node view_type removal,
+  independent background session-cache construction and active-session pins,
+  asset leases/retirement integration, lean DTOs and bounded DTO caches,
   migration-chain hardening and expanded performance/device acceptance.

@@ -193,6 +193,8 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
         entity.entityType == item.entityType &&
         entity.format == item.format &&
         entity.size == details.$2 &&
+        entity.sourceCreatedAtMs == details.$3 &&
+        entity.sourceModifiedAtMs == details.$4 &&
         (details.$6 == null || entity.durationMs == details.$6) &&
         entity.directoryRootId == rootId &&
         entity.localPath == null;

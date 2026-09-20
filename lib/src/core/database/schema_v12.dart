@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'package:sqlite3/sqlite3.dart';
 import '../../modules/sources/source_identity.dart';
+import 'local_statistics.dart';
 
 void migrateSchemaV12(Database db) {
+  installStatisticsTracking(db);
   final columns =
       db.select('PRAGMA table_info(sources)').map((r) => r['name']).toSet();
   for (final entry in {
