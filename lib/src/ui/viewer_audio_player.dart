@@ -232,8 +232,6 @@ class AudioPlaybackDeck extends StatefulWidget {
 }
 
 class _AudioPlaybackDeckState extends State<AudioPlaybackDeck> {
-  bool _showVolume = false;
-
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -259,11 +257,6 @@ class _AudioPlaybackDeckState extends State<AudioPlaybackDeck> {
               player: widget.player,
               controller: widget.controller,
             ),
-            if (_showVolume)
-              Padding(
-                padding: const EdgeInsets.only(top: 2, bottom: 4),
-                child: _AudioVolumeSlider(player: widget.player),
-              ),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -298,12 +291,6 @@ class _AudioPlaybackDeckState extends State<AudioPlaybackDeck> {
                   ),
                 if (widget.controller != null)
                   _AudioPlaybackModeMenu(controller: widget.controller!),
-                const SizedBox(width: 8),
-                _compactIconButton(
-                  tooltip: _showVolume ? '收起音量' : '音量',
-                  onPressed: () => setState(() => _showVolume = !_showVolume),
-                  icon: Icons.volume_up_rounded,
-                ),
                 _PlaybackSpeedMenu(player: widget.player),
               ],
             ),
@@ -399,34 +386,6 @@ class _AudioPlaybackModeMenu extends StatelessWidget {
       tooltip: '播放模式：${mode.label}',
       onPressed: controller.cycleMode,
       icon: Icon(icon, size: 20),
-    );
-  }
-}
-
-class _AudioVolumeSlider extends StatelessWidget {
-  const _AudioVolumeSlider({required this.player});
-
-  final Player player;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        const Icon(Icons.volume_down_rounded, size: 18),
-        Expanded(
-          child: StreamBuilder<double>(
-            stream: player.stream.volume,
-            initialData: player.state.volume,
-            builder: (context, snapshot) => Slider(
-              min: 0,
-              max: 100,
-              value: (snapshot.data ?? 100).clamp(0, 100).toDouble(),
-              onChanged: player.setVolume,
-            ),
-          ),
-        ),
-        const Icon(Icons.volume_up_rounded, size: 18),
-      ],
     );
   }
 }

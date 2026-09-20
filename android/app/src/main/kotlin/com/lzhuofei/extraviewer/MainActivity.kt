@@ -8,6 +8,8 @@ import android.database.Cursor
 import java.nio.ByteBuffer
 import android.os.Bundle
 import android.os.SystemClock
+import android.os.Build
+import android.content.pm.PackageManager
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
@@ -25,7 +27,19 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 class MainActivity : AudioServiceActivity() {
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                notificationPermissionRequestCode,
+            )
+        }
+    }
     companion object {
+        private const val notificationPermissionRequestCode = 4107
         val DIRECTORY_PROJECTION = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -87,6 +101,7 @@ class MainActivity : AudioServiceActivity() {
         clearCacheDirectory("saf_session")
         clearCacheDirectory("saf_scan_transient")
         clearCacheDirectory("saf_transient")
+        requestNotificationPermission()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
