@@ -27,6 +27,15 @@ class FakeAudioController extends AppAudioController {
   bool playing = false;
   bool stopped = false;
   int track = 0;
+  AudioPlaybackMode playbackMode = AudioPlaybackMode.nodeRepeat;
+  @override
+  AudioPlaybackMode get mode => playbackMode;
+  @override
+  void setMode(AudioPlaybackMode value) {
+    playbackMode = value;
+    notifyListeners();
+  }
+
   @override
   EntityListItem? get current => stopped
       ? null
@@ -86,6 +95,15 @@ void main() {
     await handler.play();
     expect(controller.isPlaying, isTrue);
     expect(handler.playbackState.value.controls, contains(MediaControl.pause));
+    await handler.setRepeatMode(AudioServiceRepeatMode.one);
+    expect(controller.mode, AudioPlaybackMode.singleRepeat);
+    expect(handler.playbackState.value.repeatMode, AudioServiceRepeatMode.one);
+    await handler.setShuffleMode(AudioServiceShuffleMode.all);
+    expect(controller.mode, AudioPlaybackMode.nodeShuffle);
+    expect(
+        handler.playbackState.value.shuffleMode, AudioServiceShuffleMode.all);
+    await handler.setRepeatMode(AudioServiceRepeatMode.none);
+    expect(handler.playbackState.value.repeatMode, AudioServiceRepeatMode.none);
     await handler.skipToNext();
     expect(handler.mediaItem.value?.id, '1');
     await handler.skipToPrevious();
@@ -99,5 +117,23 @@ void main() {
         handler.playbackState.value.processingState, AudioProcessingState.idle);
     handler.detach();
     await controller.close();
+  });
+
+  test('detaching and reattaching isolates old playback events', () async {
+    final old = FakeAudioController();
+    final current = FakeAudioController()..track = 5;
+    final handler = AndroidAudioHandler()..attach(old);
+    handler.attach(current);
+    await old.next();
+    expect(handler.mediaItem.value?.id, '5');
+    await handler.play();
+    expect(current.isPlaying, isTrue);
+    await handler.onTaskRemoved();
+    expect(current.stopped, isTrue);
+    expect(
+        handler.playbackState.value.processingState, AudioProcessingState.idle);
+    handler.detach();
+    await old.close();
+    await current.close();
   });
 }
