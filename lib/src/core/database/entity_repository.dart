@@ -48,7 +48,14 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
             [normalizedPath],
           );
     final nextThumbnailStatus = _defaultThumbnailStatusFor(entityType);
+    final identityId = existingRows.isEmpty && knownExisting == null
+        ? findEntityByIdentity(database.db, normalizedPath,
+            rootLocator: directoryRootId == null
+                ? null
+                : _nodeById(directoryRootId)?.sourcePath)
+        : null;
     final existing = knownExisting ??
+        (identityId == null ? null : getEntity(identityId)) ??
         (existingRows.isEmpty
             ? null
             : _entityFromRow(existingRows.first, thumbnailStore));
@@ -56,7 +63,8 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
       normalizedPreview ??= existing.contentExcerpt;
       durationMs ??= existing.durationMs;
       final requiresRuntimePreview = !_hasGeneratedThumbnail(entityType);
-      if (existing.hash == normalizedHash &&
+      if (existing.path == normalizedPath &&
+          existing.hash == normalizedHash &&
           existing.name == normalizedName &&
           existing.contentExcerpt == normalizedPreview &&
           existing.entityType == entityType &&
@@ -88,7 +96,7 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
         '''
         UPDATE entities
         SET source_revision = source_revision + CASE WHEN hash != ? OR size != ? THEN 1 ELSE 0 END,
-            name = ?, format = ?, media_type = ?, hash = ?,
+            path = ?, name = ?, format = ?, media_type = ?, hash = ?,
             size = ?, source_created_at_ms = ?, source_modified_at_ms = ?, duration_ms = ?,
             directory_root_id = ?, local_path = ?, updated_at = ?
         WHERE id = ?
@@ -96,6 +104,7 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
         [
           normalizedHash,
           size,
+          normalizedPath,
           normalizedName,
           normalizedFormat,
           entityType.value,
@@ -110,6 +119,10 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
           existing.id,
         ],
       );
+      registerEntityLocation(database.db, existing.id, normalizedPath,
+          rootLocator: directoryRootId == null
+              ? null
+              : _nodeById(directoryRootId)?.sourcePath);
       database.db.execute('''UPDATE entity_previews SET metadata_preview=?,
         thumbnail_status=?, thumbnail_error=CASE WHEN ?='failed' THEN thumbnail_error ELSE NULL END,
         thumbnail_key=CASE WHEN ? THEN NULL ELSE thumbnail_key END,
@@ -207,6 +220,10 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
     database.db.execute('''UPDATE entity_previews SET metadata_preview=?,
       thumbnail_status=? WHERE entity_id=?''',
         [normalizedPreview, nextThumbnailStatus.value, id]);
+    registerEntityLocation(database.db, id, normalizedPath,
+        rootLocator: directoryRootId == null
+            ? null
+            : _nodeById(directoryRootId)?.sourcePath);
     return EntityUpsertResult(
       entity: Entity(
         id: id,
@@ -267,6 +284,14 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
       for (final row in rows) {
         final entity = _entityFromRow(row, thumbnailStore);
         result[entity.path] = entity;
+      }
+    }
+    for (final path in normalizedPaths.where((value) =>
+        !result.containsKey(value) && value.startsWith('content://'))) {
+      final id = findEntityByIdentity(database.db, path);
+      if (id != null) {
+        final entity = getEntity(id);
+        if (entity != null) result[path] = entity;
       }
     }
     return Map<String, Entity>.unmodifiable(result);

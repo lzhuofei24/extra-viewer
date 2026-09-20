@@ -10,13 +10,14 @@ import 'schema_v8.dart';
 import 'schema_v9.dart';
 import 'schema_v10.dart';
 import 'schema_v11.dart';
+import 'schema_v12.dart';
 import 'preview_asset_catalog.dart';
 
 /// SQLite storage and additive migrations, owned by database workers.
 class AppDatabase {
   AppDatabase._(this.db, this.storageDirectoryPath, this.databasePath);
 
-  static const currentSchemaVersion = 11;
+  static const currentSchemaVersion = 12;
 
   final Database db;
   final String storageDirectoryPath;
@@ -122,44 +123,55 @@ class AppDatabase {
       return;
     }
     if (version >= 5 && version < currentSchemaVersion) {
-      final path = databasePath;
-      if (path != null) {
-        final backup =
-            '$path.schema$version.${DateTime.now().microsecondsSinceEpoch}.backup';
-        db.execute('VACUUM INTO ?', [backup]);
-        final snapshot = sqlite3.open(backup, mode: OpenMode.readOnly);
-        try {
-          if (snapshot.userVersion != version ||
-              snapshot.select('PRAGMA integrity_check').single.values.single !=
-                  'ok') {
-            throw StateError('Migration snapshot validation failed: $backup');
+      while (db.userVersion < currentSchemaVersion) {
+        final version = db.userVersion;
+        final targetVersion = version < 10 ? 10 : version + 1;
+        final path = databasePath;
+        if (path != null) {
+          final backup =
+              '$path.schema$version.${DateTime.now().microsecondsSinceEpoch}.backup';
+          db.execute('VACUUM INTO ?', [backup]);
+          final snapshot = sqlite3.open(backup, mode: OpenMode.readOnly);
+          try {
+            if (snapshot.userVersion != version ||
+                snapshot
+                        .select('PRAGMA integrity_check')
+                        .single
+                        .values
+                        .single !=
+                    'ok') {
+              throw StateError('Migration snapshot validation failed: $backup');
+            }
+          } finally {
+            snapshot.dispose();
           }
-        } finally {
-          snapshot.dispose();
         }
-      }
-      db.execute('BEGIN IMMEDIATE');
-      try {
-        if (version == 5) db.execute(schemaV6Upgrade);
-        if (version <= 6) db.execute(schemaV7Upgrade);
-        if (version < 11) _ensurePreviewSchema();
-        if (version <= 7) db.execute(schemaV8Upgrade);
-        if (version < 10) {
-          _ensureSchemaV9();
-          migrateSchemaV10(db);
+        db.execute('BEGIN IMMEDIATE');
+        try {
+          if (version == 5) db.execute(schemaV6Upgrade);
+          if (version <= 6) db.execute(schemaV7Upgrade);
+          if (version < 11) _ensurePreviewSchema();
+          if (version <= 7) db.execute(schemaV8Upgrade);
+          if (version < 10) {
+            _ensureSchemaV9();
+            migrateSchemaV10(db);
+          }
+          if (targetVersion == 11) {
+            migrateSchemaV11(db);
+            if (db
+                .select('PRAGMA table_info(entities)')
+                .any((r) => r['name'] == 'path')) {
+              createPreviewAssetCatalog(db, storageDirectoryPath);
+            }
+          }
+          if (targetVersion == 12) migrateSchemaV12(db);
+          _verifySchemaIntegrity();
+          db.userVersion = targetVersion;
+          db.execute('COMMIT');
+        } catch (_) {
+          db.execute('ROLLBACK');
+          rethrow;
         }
-        migrateSchemaV11(db);
-        if (db
-            .select('PRAGMA table_info(entities)')
-            .any((r) => r['name'] == 'path')) {
-          createPreviewAssetCatalog(db, storageDirectoryPath);
-        }
-        _verifySchemaIntegrity();
-        db.userVersion = currentSchemaVersion;
-        db.execute('COMMIT');
-      } catch (_) {
-        db.execute('ROLLBACK');
-        rethrow;
       }
       return;
     }
@@ -178,6 +190,7 @@ class AppDatabase {
       migrateSchemaV10(db);
       migrateSchemaV11(db);
       createPreviewAssetCatalog(db, storageDirectoryPath);
+      migrateSchemaV12(db);
       _verifySchemaIntegrity();
       db.userVersion = currentSchemaVersion;
       db.execute('COMMIT;');

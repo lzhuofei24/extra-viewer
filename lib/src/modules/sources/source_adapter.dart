@@ -9,12 +9,16 @@ class SourceEntry {
       required this.name,
       required this.isDirectory,
       this.size = 0,
-      this.modifiedAtMs = 0});
+      this.modifiedAtMs = 0,
+      this.authority,
+      this.rootDocumentId,
+      this.documentId});
   final String locator;
   final String name;
   final bool isDirectory;
   final int size;
   final int modifiedAtMs;
+  final String? authority, rootDocumentId, documentId;
 }
 
 abstract interface class SourceAdapter {
@@ -69,6 +73,9 @@ class SafSourceAdapter implements SourceAdapter {
           final row = raw! as Map<Object?, Object?>;
           return SourceEntry(
               locator: row['locator']! as String,
+              authority: row['authority'] as String?,
+              rootDocumentId: row['rootDocumentId'] as String?,
+              documentId: row['documentId'] as String?,
               name: row['name']! as String,
               isDirectory: row['directory'] == true,
               size: (row['size'] as num?)?.toInt() ?? 0,

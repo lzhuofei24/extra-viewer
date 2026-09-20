@@ -3,10 +3,51 @@ import 'package:best_viewer/src/core/database/app_database.dart';
 import 'package:best_viewer/src/core/database/library_repository.dart';
 import 'package:best_viewer/src/core/database/library_read_worker.dart';
 import 'package:best_viewer/src/core/database/schema_v10.dart';
+import 'package:best_viewer/src/core/database/schema_v12.dart';
+import 'package:best_viewer/src/core/domain/models.dart';
+import 'package:best_viewer/src/modules/sources/source_identity.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 void main() {
+  test('source IDs remain opaque and URI aliases keep entity identity', () {
+    final db = AppDatabase.openInMemory();
+    addTearDown(db.close);
+    final repo = LibraryRepository(db);
+    const original =
+        'content://provider/tree/Volume%3AStuff/document/Volume%3AStuff%2FA.jpg';
+    const alias = '$original?authorization=renewed';
+    final identity = SourceIdentity.parse(original)!;
+    expect(identity.rootId, 'Volume:Stuff');
+    expect(identity.documentId, 'Volume:Stuff/A.jpg');
+    Entity save(String path) => repo
+        .upsertEntity(
+            path: path,
+            name: 'A.jpg',
+            format: 'jpg',
+            entityType: EntityType.image,
+            hash: 'fast',
+            size: 10,
+            sourceCreatedAtMs: 0,
+            sourceModifiedAtMs: 0)
+        .entity;
+    final first = save(original);
+    repo.saveReaderState(entityId: first.id, scrollOffset: 25);
+    final second = save(alias);
+    expect(second.id, first.id);
+    expect(repo.getEntity(first.id)!.readerScrollOffset, 25);
+    expect(db.db.select('SELECT * FROM entity_locations'), hasLength(1));
+    final other =
+        save('content://provider/tree/Other/document/Volume%3AStuff%2FA.jpg');
+    expect(other.id, isNot(first.id));
+    registerEntityLocation(db.db, other.id, alias);
+    expect(
+        db.db.select('SELECT state FROM entity_locations WHERE entity_id=?',
+            [other.id]).single['state'],
+        'conflict');
+    expect(repo.getEntity(first.id), isNotNull);
+    expect(repo.getEntity(other.id), isNotNull);
+  });
   test('rule sessions keep membership and order while visits and files change',
       () async {
     final dir = Directory.systemTemp.createTempSync('stable_rule_');
@@ -195,8 +236,10 @@ void main() {
         .whereType<File>()
         .where((f) => f.path.endsWith('.backup'))
         .toList();
-    expect(backups, hasLength(1));
-    final snapshot = sqlite3.open(backups.single.path, mode: OpenMode.readOnly);
+    expect(backups, hasLength(3));
+    final snapshot = sqlite3.open(
+        backups.firstWhere((f) => f.path.contains('.schema9.')).path,
+        mode: OpenMode.readOnly);
     expect(snapshot.userVersion, 9);
     expect(
         snapshot.select('PRAGMA integrity_check').single.values.single, 'ok');

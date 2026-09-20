@@ -13,6 +13,7 @@ import '../../modules/library/library_access.dart';
 import 'app_database.dart';
 import 'library_write_worker.dart';
 import 'preview_asset_catalog.dart';
+import 'schema_v12.dart';
 
 part 'library_repository_helpers.dart';
 part 'library_repository_base.dart';

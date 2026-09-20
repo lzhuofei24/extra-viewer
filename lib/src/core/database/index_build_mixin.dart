@@ -16,6 +16,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
     final statements = <LibraryWriteStatement>[];
     final now = nowMillis();
     final touchedNodes = <String>{};
+    final locations = <String, String>{};
     var completed = 0;
     for (final item in page) {
       final details = detailsBySequence[item.sequence];
@@ -33,6 +34,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
       }
       final current = existing[item.sourcePath];
       final entityId = current?.id ?? newId();
+      locations[entityId] = item.sourcePath;
       if (current == null) {
         statements.add(LibraryWriteStatement(
           '''
@@ -78,7 +80,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
           '''
           UPDATE entities
           SET source_revision = source_revision + CASE WHEN hash != ? OR size != ? THEN 1 ELSE 0 END,
-              name = ?, format = ?, media_type = ?, hash = ?,
+              path = ?, name = ?, format = ?, media_type = ?, hash = ?,
               size = ?, source_created_at_ms = ?, source_modified_at_ms = ?,
               duration_ms = ?, directory_root_id = ?, local_path = NULL,
               updated_at = ?
@@ -87,6 +89,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
           [
             details.$1,
             details.$2,
+            _normalizeEntityPath(item.sourcePath),
             item.name,
             item.format,
             item.entityType.value,
@@ -163,6 +166,11 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
         for (final nodeId in touchedNodes) {
           markIndexNodePreviewDirty(nodeId, reason: 'index_page_committed');
         }
+        final rootLocator = _nodeById(rootId)?.sourcePath;
+        for (final entry in locations.entries) {
+          registerEntityLocation(database.db, entry.key, entry.value,
+              rootLocator: rootLocator);
+        }
       } finally {
         for (final statement in prepared.values) {
           statement.dispose();
@@ -178,7 +186,8 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
     required (String, int, int, int, String?, int?) details,
     required String rootId,
   }) {
-    return entity.hash == details.$1 &&
+    return entity.path == _normalizeEntityPath(item.sourcePath) &&
+        entity.hash == details.$1 &&
         entity.name == item.name &&
         (details.$5 == null || entity.contentExcerpt == details.$5) &&
         entity.entityType == item.entityType &&

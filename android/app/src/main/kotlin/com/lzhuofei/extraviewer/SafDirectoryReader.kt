@@ -21,6 +21,9 @@ class SafDirectoryReader(resolver: ContentResolver, private val uri: Uri) : Clos
                 ?: throw IllegalStateException("Directory entry has no name")
             entries += mapOf(
                 "locator" to DocumentsContract.buildDocumentUriUsingTree(uri, id).toString(),
+                "authority" to (uri.authority ?: ""),
+                "rootDocumentId" to DocumentsContract.getTreeDocumentId(uri),
+                "documentId" to id,
                 "name" to name,
                 "directory" to (cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR),
                 "size" to if (cursor.isNull(3)) 0L else cursor.getLong(3),

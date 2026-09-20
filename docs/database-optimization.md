@@ -47,6 +47,10 @@ SAF permission and removable-media acceptance remain device-only checks.
   currently run in the existing reader; separate scheduling remains pending.
 - Read-worker exit/close now fails all pending requests immediately.
 - Validation after these changes: full suite passed (180 tests).
-- Remaining: schema 12 integration, split read scheduling, summary invalidation,
+- Schema 12: source/location identity records, SAF opaque IDs, URI-alias
+  matching during single and batched ingest, and explicit collision state.
+  Each schema upgrade now has its own verified snapshot and transaction.
+- Validation: analysis and full suite passed (181 tests).
+- Remaining: complete read scheduling, summary invalidation,
   local statistics publication, node/search pagination, node view_type removal,
   migration-chain hardening and expanded performance/device acceptance.
