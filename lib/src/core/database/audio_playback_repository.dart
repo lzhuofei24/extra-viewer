@@ -121,11 +121,11 @@ mixin AudioPlaybackRepositoryMixin on LibraryRepositoryBase {
 
   AudioPlaybackSession _audioSessionFromRow(Row row) {
     final id = row['id'] as String;
-    final entryRows = database.db
-        .select('''SELECT *, (SELECT source_revision FROM entity_details
-          WHERE entities.id = audio_playback_session_entries.entity_id) AS source_revision
-          FROM audio_playback_session_entries
-         WHERE session_id = ? ORDER BY sort_order''', [id]);
+    final entryRows =
+        database.db.select('''SELECT entry.*, entity.source_revision
+          FROM audio_playback_session_entries AS entry
+          LEFT JOIN entities AS entity ON entity.id = entry.entity_id
+         WHERE entry.session_id = ? ORDER BY entry.sort_order''', [id]);
     final entries = entryRows
         .map((entry) => EntityListItem(
               sourceRevision: entry['source_revision'] as int? ?? 1,
