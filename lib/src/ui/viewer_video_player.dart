@@ -426,18 +426,16 @@ class _PlaybackActionRow extends StatelessWidget {
           ),
         ),
         _PlaybackSpeedMenu(player: player),
-        if (onPrevious != null)
-          _compactIconButton(
-            tooltip: '上一个文件',
-            onPressed: onPrevious,
-            icon: Icons.skip_previous_rounded,
-          ),
-        if (onNext != null)
-          _compactIconButton(
-            tooltip: '下一个文件',
-            onPressed: onNext,
-            icon: Icons.skip_next_rounded,
-          ),
+        _compactIconButton(
+          tooltip: '上一个文件',
+          onPressed: onPrevious,
+          icon: Icons.skip_previous_rounded,
+        ),
+        _compactIconButton(
+          tooltip: '下一个文件',
+          onPressed: onNext,
+          icon: Icons.skip_next_rounded,
+        ),
       ],
     );
   }
@@ -600,30 +598,28 @@ class _ViewerChrome extends StatelessWidget {
               ),
             ),
           ),
-          if (onPrevious != null)
-            Positioned(
-              left: 0,
-              top: 0,
-              bottom: 0,
-              child: Center(
-                child: _EntityEdgeNavigationButton(
-                  direction: AxisDirection.left,
-                  onPressed: onPrevious!,
-                ),
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: _EntityEdgeNavigationButton(
+                direction: AxisDirection.left,
+                onPressed: onPrevious,
               ),
             ),
-          if (onNext != null)
-            Positioned(
-              right: 0,
-              top: 0,
-              bottom: 0,
-              child: Center(
-                child: _EntityEdgeNavigationButton(
-                  direction: AxisDirection.right,
-                  onPressed: onNext!,
-                ),
+          ),
+          Positioned(
+            right: 0,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: _EntityEdgeNavigationButton(
+                direction: AxisDirection.right,
+                onPressed: onNext,
               ),
             ),
+          ),
         ],
       ),
     );
@@ -637,15 +633,16 @@ class _EntityEdgeNavigationButton extends StatelessWidget {
   });
 
   final AxisDirection direction;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
     final isPrevious = direction == AxisDirection.left;
-    final surface =
-        Theme.of(context).colorScheme.surface.withValues(alpha: 0.5);
+    final theme = Theme.of(context);
+    final surface = theme.colorScheme.surface.withValues(alpha: 0.5);
     return Semantics(
       button: true,
+      enabled: onPressed != null,
       label: isPrevious ? '上一项' : '下一项',
       child: Tooltip(
         message: isPrevious ? '上一项' : '下一项',
@@ -669,6 +666,7 @@ class _EntityEdgeNavigationButton extends StatelessWidget {
                 isPrevious
                     ? Icons.chevron_left_rounded
                     : Icons.chevron_right_rounded,
+                color: onPressed == null ? theme.disabledColor : null,
               ),
             ),
           ),
