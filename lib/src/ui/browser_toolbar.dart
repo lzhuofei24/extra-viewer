@@ -204,19 +204,22 @@ class _AutoSyncMenuState extends State<_AutoSyncMenu> {
       pageBuilder: (context, _, __) => GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => Navigator.of(context).pop(),
-        child: CustomSingleChildLayout(
-          delegate: _OptionsPosition(anchor, padding),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth:
-                  (MediaQuery.sizeOf(context).width - 24).clamp(160.0, 340.0),
-              maxHeight:
-                  (MediaQuery.sizeOf(context).height - padding.vertical - 24)
-                      .clamp(120.0, double.infinity),
-            ),
-            child: GestureDetector(
-              onTap: () {},
-              child: widget.panelBuilder!(context),
+        child: Material(
+          type: MaterialType.transparency,
+          child: CustomSingleChildLayout(
+            delegate: _OptionsPosition(anchor, padding),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth:
+                    (MediaQuery.sizeOf(context).width - 24).clamp(160.0, 340.0),
+                maxHeight:
+                    (MediaQuery.sizeOf(context).height - padding.vertical - 24)
+                        .clamp(80.0, double.infinity),
+              ),
+              child: GestureDetector(
+                onTap: () {},
+                child: widget.panelBuilder!(context),
+              ),
             ),
           ),
         ),

@@ -26,14 +26,12 @@ class AutoSyncPanel extends StatelessWidget {
       };
 
   @override
-  Widget build(BuildContext context) => MediaQuery(
-        data: MediaQuery.of(context).copyWith(
-          textScaler: const TextScaler.linear(1),
-        ),
+  Widget build(BuildContext context) => MediaQuery.withNoTextScaling(
         child: ListenableBuilder(
           listenable: coordinator,
           builder: (context, _) => FloatingGlassSurface(
             role: GlassSurfaceRole.panel,
+            independentBackdrop: true,
             borderRadius: 20,
             padding: const EdgeInsets.all(12),
             child: SingleChildScrollView(
