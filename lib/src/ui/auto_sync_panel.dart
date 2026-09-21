@@ -4,22 +4,6 @@ import '../core/sync/auto_sync_coordinator.dart';
 import 'app_preferences.dart';
 import 'app_sidebar.dart';
 
-Future<void> showAutoSyncPanel(
-  BuildContext context, {
-  required AutoSyncCoordinator coordinator,
-  required AppPreferencesController preferences,
-}) async {
-  await showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    builder: (_) => AutoSyncPanel(
-      coordinator: coordinator,
-      preferences: preferences,
-    ),
-  );
-}
-
 class AutoSyncPanel extends StatelessWidget {
   const AutoSyncPanel({
     super.key,

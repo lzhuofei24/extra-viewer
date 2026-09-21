@@ -1753,15 +1753,10 @@ class _AppShellState extends State<AppShell> {
     await _updateDirectoryNode(node);
   }
 
-  void _openAutoSyncPanel() {
-    final coordinator = _autoSync;
-    if (coordinator == null) return;
-    unawaited(showAutoSyncPanel(
-      context,
-      coordinator: coordinator,
-      preferences: widget.preferences,
-    ));
-  }
+  Widget _autoSyncPanel(BuildContext context) => AutoSyncPanel(
+        coordinator: _autoSync!,
+        preferences: widget.preferences,
+      );
 
   Future<void> _chooseDirectoryUpdateNode(IndexNode root) async {
     final repository = _repository;
@@ -3066,7 +3061,7 @@ class _AppShellState extends State<AppShell> {
             widget.preferences.setBrowser(folderCoverStyle: value);
           },
           onSearchNodes: _searchNodes,
-          onAutoSync: _openAutoSyncPanel,
+          autoSyncPanelBuilder: _autoSync == null ? null : _autoSyncPanel,
           currentNode: _currentIndexNode,
           loading: _navigationLoading,
           loadError: _navigationError,
@@ -3159,7 +3154,7 @@ class _AppShellState extends State<AppShell> {
           queries: _readWorker!,
           controller: _ruleBrowser,
           onCreateRule: _scanning ? null : _createRule,
-          onAutoSync: _openAutoSyncPanel,
+          autoSyncPanelBuilder: _autoSync == null ? null : _autoSyncPanel,
           initialRuleId: _requestedRuleId,
           browserState: _browserState,
           layoutSettings: widget.preferences.value.layout,

@@ -42,6 +42,7 @@ class BrowserToolbar extends StatelessWidget {
     this.onAdd,
     this.addLabel = '添加',
     this.onAutoSync,
+    this.autoSyncPanelBuilder,
     this.allowSorting = true,
     this.allowGridStyle = true,
     this.sortDescription,
@@ -71,6 +72,7 @@ class BrowserToolbar extends StatelessWidget {
   final VoidCallback? onAdd;
   final String addLabel;
   final VoidCallback? onAutoSync;
+  final WidgetBuilder? autoSyncPanelBuilder;
   final bool immersive;
   final VoidCallback? onToggleImmersive;
   final bool selectionMode;
@@ -105,11 +107,10 @@ class BrowserToolbar extends StatelessWidget {
                       : Icons.checklist_outlined),
                 ),
               const SizedBox(width: 4),
-              if (onAutoSync != null)
-                IconButton(
-                  tooltip: '目录自动同步',
+              if (onAutoSync != null || autoSyncPanelBuilder != null)
+                _AutoSyncMenu(
                   onPressed: onAutoSync,
-                  icon: const Icon(Icons.sync_rounded),
+                  panelBuilder: autoSyncPanelBuilder,
                 ),
               _BrowserOptionsMenu(
                 onAdd: onAdd,
@@ -169,6 +170,77 @@ class BrowserToolbar extends StatelessWidget {
             ),
           );
         },
+      );
+}
+
+class _AutoSyncMenu extends StatefulWidget {
+  const _AutoSyncMenu({this.onPressed, this.panelBuilder});
+
+  final VoidCallback? onPressed;
+  final WidgetBuilder? panelBuilder;
+
+  @override
+  State<_AutoSyncMenu> createState() => _AutoSyncMenuState();
+}
+
+class _AutoSyncMenuState extends State<_AutoSyncMenu> {
+  final _anchorKey = GlobalKey();
+  RawDialogRoute<void>? _route;
+
+  void _open() {
+    if (_route != null) return;
+    if (widget.panelBuilder == null) {
+      widget.onPressed?.call();
+      return;
+    }
+    final box = _anchorKey.currentContext!.findRenderObject()! as RenderBox;
+    final anchor = box.localToGlobal(Offset.zero) & box.size;
+    final padding = MediaQuery.paddingOf(context);
+    final route = RawDialogRoute<void>(
+      barrierDismissible: false,
+      barrierLabel: '关闭目录自动同步',
+      barrierColor: Colors.transparent,
+      transitionDuration: Duration.zero,
+      pageBuilder: (context, _, __) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => Navigator.of(context).pop(),
+        child: CustomSingleChildLayout(
+          delegate: _OptionsPosition(anchor, padding),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth:
+                  (MediaQuery.sizeOf(context).width - 24).clamp(160.0, 360.0),
+              maxHeight:
+                  (MediaQuery.sizeOf(context).height - padding.vertical - 24)
+                      .clamp(120.0, double.infinity),
+            ),
+            child: GestureDetector(
+              onTap: () {},
+              child: widget.panelBuilder!(context),
+            ),
+          ),
+        ),
+      ),
+    );
+    _route = route;
+    Navigator.of(context).push(route).whenComplete(() => _route = null);
+  }
+
+  @override
+  void dispose() {
+    final route = _route;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (route?.navigator != null) route!.navigator!.removeRoute(route);
+    });
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+        key: _anchorKey,
+        tooltip: '目录自动同步',
+        onPressed: _open,
+        icon: const Icon(Icons.sync_rounded),
       );
 }
 

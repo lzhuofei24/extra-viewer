@@ -26,6 +26,7 @@ class RuleIndexPage extends StatefulWidget {
     required this.onThumbnailNeeded,
     required this.onSearch,
     this.onAutoSync,
+    this.autoSyncPanelBuilder,
     required this.onBrowserStateChanged,
     required this.onAddToCollection,
     required this.onEditRule,
@@ -46,6 +47,7 @@ class RuleIndexPage extends StatefulWidget {
   final ValueChanged<EntityListItem> onThumbnailNeeded;
   final VoidCallback onSearch;
   final VoidCallback? onAutoSync;
+  final WidgetBuilder? autoSyncPanelBuilder;
   final ValueChanged<BrowserState> onBrowserStateChanged;
   final Future<void> Function(Set<String>) onAddToCollection;
   final Future<void> Function(RuleDefinition) onEditRule;
@@ -256,6 +258,7 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
         onLayoutChanged: widget.preferences.setLayout,
         onSearch: widget.onSearch,
         onAutoSync: widget.onAutoSync,
+        autoSyncPanelBuilder: widget.autoSyncPanelBuilder,
         onFolderCoverChanged: rule == null
             ? (value) => widget.onBrowserStateChanged(
                 widget.browserState.copyWith(folderCoverStyle: value))
