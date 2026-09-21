@@ -896,9 +896,6 @@ class LibraryBuildTaskController extends ChangeNotifier {
     }
     final rootId = job.indexRootId;
     if (rootId == null) throw StateError('目录已不存在');
-    if (job.kind == LibraryBuildKind.scanScope) {
-      await builds.prepareEntityPreviewWork(job.id, job.targetNodeId ?? rootId);
-    }
     final refreshed = (await builds.get(job.id))!;
     (await builds.checkpointStage(
       jobId: job.id,
@@ -909,6 +906,26 @@ class LibraryBuildTaskController extends ChangeNotifier {
 
   Future<void> _buildEntityPreviews(LibraryBuildJob job) async {
     if (await builds.handoffLegacyArchivePreviewWork(job.id)) return;
+    if (job.kind == LibraryBuildKind.scanScope) {
+      final rootId = job.indexRootId;
+      if (rootId == null) throw StateError('目录已不存在');
+      while (true) {
+        _control!.check();
+        final preparation = await builds.prepareEntityPreviewWorkBatch(
+          job.id,
+          job.targetNodeId ?? rootId,
+        );
+        final current = (await builds.get(job.id))!;
+        _report(
+          current,
+          preparation.queued,
+          0,
+          '正在准备文件预览队列：已加入 ${preparation.queued} 项',
+        );
+        if (preparation.complete) break;
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
     while (true) {
       _control!.check();
       final attempts = await builds.claimEntityPreviewWork(job.id);

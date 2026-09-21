@@ -95,7 +95,7 @@ void main() {
       expect(
           library.getEntity(entity.id)!.thumbnailStatus, ThumbnailStatus.none);
       expect(library.getEntity(entity.id)!.contentExcerpt, prepared.excerpt);
-      builds.prepareEntityPreviewWork(job.id, root.id);
+      _prepareEntityPreviewWork(builds, job.id, root.id);
       expect(builds.claimEntityPreviewWork(job.id), isEmpty);
       final next = builds.create(
           sourcePath: db.storageDirectoryPath,
@@ -155,4 +155,12 @@ void main() {
     expect(builds.get(job.id)!.documentPreviewFailed, 1);
     expect(builds.get(job.id)!.documentPreviewDone, 0);
   });
+}
+
+void _prepareEntityPreviewWork(
+  LibraryBuildRepository builds,
+  String jobId,
+  String scopeNodeId,
+) {
+  while (!builds.prepareEntityPreviewWorkBatch(jobId, scopeNodeId).complete) {}
 }

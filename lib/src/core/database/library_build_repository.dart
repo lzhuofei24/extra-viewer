@@ -779,33 +779,105 @@ class LibraryBuildRepository implements BuildAccess {
           .toList(growable: false);
 
   @override
-  void prepareEntityPreviewWork(String jobId, String scopeNodeId) {
+  ({bool complete, int queued}) prepareEntityPreviewWorkBatch(
+    String jobId,
+    String scopeNodeId, {
+    int limit = 500,
+  }) {
+    final db = library.database.db;
+    final batchSize = limit.clamp(1, 1000).toInt();
+    final state = db.select('''
+      SELECT entity_cursor, complete
+      FROM library_preview_queue_preparation
+      WHERE job_id = ?
+    ''', [jobId]);
+    if (state.firstOrNull?['complete'] == 1) {
+      return (
+        complete: true,
+        queued: _count('library_entity_preview_work', jobId),
+      );
+    }
+    final cursor = state.firstOrNull?['entity_cursor'] as String? ?? '';
+    final hasChangeSet = _metadata(jobId)['change_set_revision'] != null;
+    final rows = hasChangeSet ? db.select('''
+            SELECT entity.id
+            FROM library_task_changes change_item
+            JOIN entities entity ON entity.path = change_item.source_path
+            LEFT JOIN entity_previews preview ON preview.entity_id = entity.id
+            WHERE change_item.job_id = ?
+              AND change_item.change_kind IN ('added', 'changed')
+              AND entity.id > ?
+              AND entity.archived = 0
+              AND entity.media_type IN ('image', 'video')
+              AND (
+                preview.thumbnail_status != 'success' OR
+                preview.thumbnail_key IS NULL OR
+                (preview.thumbnail_key NOT LIKE 'v6_%' AND
+                 preview.thumbnail_key NOT LIKE 'v7_%')
+              )
+            ORDER BY entity.id
+            LIMIT ?
+          ''', [jobId, cursor, batchSize + 1]) : db.select('''
+            WITH RECURSIVE subtree(id) AS (
+              SELECT ?
+              UNION ALL
+              SELECT child.id
+              FROM index_nodes child JOIN subtree ON child.parent_id = subtree.id
+            )
+            SELECT entity.id
+            FROM index_node_entities link
+            JOIN entities entity ON entity.id = link.entity_id
+            LEFT JOIN entity_previews preview ON preview.entity_id = entity.id
+            WHERE link.index_node_id IN (SELECT id FROM subtree)
+              AND entity.id > ?
+              AND entity.archived = 0
+              AND entity.media_type IN ('image', 'video')
+              AND (
+                preview.thumbnail_status != 'success' OR
+                preview.thumbnail_key IS NULL OR
+                (preview.thumbnail_key NOT LIKE 'v6_%' AND
+                 preview.thumbnail_key NOT LIKE 'v7_%')
+              )
+            GROUP BY entity.id
+            ORDER BY entity.id
+            LIMIT ?
+          ''', [scopeNodeId, cursor, batchSize + 1]);
+    final selected = rows.take(batchSize).toList(growable: false);
+    final complete = rows.length <= batchSize;
+    final nextCursor =
+        selected.isEmpty ? cursor : selected.last['id'] as String;
     final now = nowMillis();
-    library.database.db.execute('''
-      WITH RECURSIVE subtree(id) AS (
-        SELECT ?
-        UNION ALL
-        SELECT child.id FROM index_nodes child JOIN subtree ON child.parent_id = subtree.id
-      )
-      INSERT OR IGNORE INTO library_entity_preview_work(
-        job_id, entity_id, state, attempts, updated_at
-      )
-      SELECT ?, entity.id, 'pending', 0, ?
-      FROM index_node_entities link
-      JOIN entity_details entity ON entity.id = link.entity_id
-      WHERE link.index_node_id IN (SELECT id FROM subtree)
-        AND entity.media_type IN ('image', 'video')
-        AND (NOT EXISTS (SELECT 1 FROM library_task_details WHERE job_id=? AND change_set_revision IS NOT NULL)
-          OR EXISTS (SELECT 1 FROM library_task_changes c WHERE c.job_id=? AND c.source_path=entity.path AND c.change_kind IN ('added','changed')))
-        AND (
-          entity.thumbnail_status != 'success' OR
-          entity.thumbnail_key IS NULL OR
-          (entity.thumbnail_key NOT LIKE 'v6_%' AND entity.thumbnail_key NOT LIKE 'v7_%')
-        )
-    ''', [scopeNodeId, jobId, now, jobId, jobId]);
-    final count = _remainingWorkCount('library_entity_preview_work', jobId) +
-        get(jobId)!.entityPreviewDone;
-    _update(jobId, entityPreviewTotal: count);
+    library.writeTransaction(() {
+      final insert = db.prepare('''
+        INSERT OR IGNORE INTO library_entity_preview_work(
+          job_id, entity_id, state, attempts, updated_at
+        ) VALUES (?, ?, 'pending', 0, ?)
+      ''');
+      try {
+        for (final row in selected) {
+          insert.execute([jobId, row['id'], now]);
+        }
+      } finally {
+        insert.dispose();
+      }
+      db.execute('''
+        INSERT INTO library_preview_queue_preparation(
+          job_id, entity_cursor, complete, updated_at
+        ) VALUES (?, ?, ?, ?)
+        ON CONFLICT(job_id) DO UPDATE SET
+          entity_cursor = excluded.entity_cursor,
+          complete = excluded.complete,
+          updated_at = excluded.updated_at
+      ''', [jobId, nextCursor, complete ? 1 : 0, now]);
+      _update(
+        jobId,
+        entityPreviewTotal: _count('library_entity_preview_work', jobId),
+      );
+    });
+    return (
+      complete: complete,
+      queued: _count('library_entity_preview_work', jobId),
+    );
   }
 
   @override
@@ -1160,6 +1232,10 @@ class LibraryBuildRepository implements BuildAccess {
       );
       library.database.db.execute(
         'DELETE FROM library_entity_preview_work WHERE job_id = ?',
+        [jobId],
+      );
+      library.database.db.execute(
+        'DELETE FROM library_preview_queue_preparation WHERE job_id = ?',
         [jobId],
       );
       library.database.db.execute(

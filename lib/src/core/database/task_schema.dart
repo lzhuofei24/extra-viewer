@@ -45,6 +45,12 @@ CREATE TABLE IF NOT EXISTS library_task_source_snapshot (
   job_id TEXT PRIMARY KEY REFERENCES library_build_jobs(id),
   root_id TEXT NOT NULL, revision INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS library_preview_queue_preparation (
+  job_id TEXT PRIMARY KEY REFERENCES library_build_jobs(id) ON DELETE CASCADE,
+  entity_cursor TEXT,
+  complete INTEGER NOT NULL DEFAULT 0 CHECK(complete IN (0,1)),
+  updated_at INTEGER NOT NULL
+);
 CREATE TRIGGER IF NOT EXISTS task_created AFTER INSERT ON library_build_jobs BEGIN
   INSERT INTO library_task_events(job_id,event,phase,message,created_at)
   VALUES(NEW.id,'created',NEW.stage,NEW.status,NEW.created_at);

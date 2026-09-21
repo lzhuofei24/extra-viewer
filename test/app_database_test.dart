@@ -15,6 +15,7 @@ void main() {
     final root = LibraryRepository(first).ensureCollectionIndexRoot('Keep');
     first.db.execute('DROP TRIGGER task_created; DROP TRIGGER task_transition');
     for (final table in [
+      'library_preview_queue_preparation',
       'library_task_dirty',
       'library_task_changes',
       'library_task_failures',
@@ -26,6 +27,11 @@ void main() {
     first.close();
     final next = AppDatabase.openAtPath(path);
     expect(LibraryRepository(next).getIndexNode(root.id)?.name, 'Keep');
+    expect(
+      next.db.select(
+          "SELECT name FROM sqlite_master WHERE name = 'library_preview_queue_preparation'"),
+      hasLength(1),
+    );
     expect(next.db.select('SELECT * FROM library_task_events'), isEmpty);
     expect(next.db.select('PRAGMA foreign_key_check'), isEmpty);
     next.close();

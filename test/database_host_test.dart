@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
 import 'package:best_viewer/src/modules/infrastructure/database_host.dart';
+import 'package:best_viewer/src/modules/build/build_client.dart';
 import 'package:best_viewer/src/modules/library/library_client.dart';
 import 'package:best_viewer/src/core/domain/models.dart';
 
@@ -132,6 +133,28 @@ void main() {
     expect(loaded?.entityTypes, const [EntityType.image]);
     expect(loaded?.extensions, const ['jpg']);
     expect(loaded?.defaultSort, RuleSortMode.name);
+  });
+
+  test('preview queue batches cross the database host isolate', () async {
+    final directory =
+        await Directory.systemTemp.createTemp('host_preview_batches_');
+    addTearDown(() => directory.delete(recursive: true));
+    final host = await DatabaseHost.start(
+        databasePath: p.join(directory.path, 'library.db'));
+    addTearDown(host.close);
+    final library = LibraryClient(host);
+    final builds = BuildClient(host);
+    final root = await library.ensureDirectoryIndexRoot('/empty');
+    final job = await builds.create(
+      sourcePath: '/empty',
+      operation: LibraryBuildOperation.rootScan,
+    );
+    await builds.setRoots(jobId: job.id, indexRootId: root.id);
+
+    expect(
+      await builds.prepareEntityPreviewWorkBatch(job.id, root.id, limit: 2),
+      (complete: true, queued: 0),
+    );
   });
 
   test('startup failure completes instead of waiting indefinitely', () async {

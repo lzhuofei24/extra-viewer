@@ -143,10 +143,10 @@ Future<Object?> dispatchBuild(LibraryBuildRepository repository, String method,
           afterSequence: args['afterSequence'] as int,
           limit: (args['limit'] as int?) ?? 200,
           pendingOnly: (args['pendingOnly'] as bool?) ?? false);
-    case 'prepareEntityPreviewWork':
-      repository.prepareEntityPreviewWork(
-          args['jobId'] as String, args['scopeNodeId'] as String);
-      return null;
+    case 'prepareEntityPreviewWorkBatch':
+      return repository.prepareEntityPreviewWorkBatch(
+          args['jobId'] as String, args['scopeNodeId'] as String,
+          limit: (args['limit'] as int?) ?? 500);
     case 'handoffLegacyArchivePreviewWork':
       return repository
           .handoffLegacyArchivePreviewWork(args['jobId'] as String);

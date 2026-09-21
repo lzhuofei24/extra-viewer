@@ -296,10 +296,14 @@ class BuildClient implements BuildAccess {
   }
 
   @override
-  Future<void> prepareEntityPreviewWork(
-      String jobId, String scopeNodeId) async {
-    await host.call('build', 'prepareEntityPreviewWork',
-        {'jobId': jobId, 'scopeNodeId': scopeNodeId});
+  Future<({bool complete, int queued})> prepareEntityPreviewWorkBatch(
+      String jobId, String scopeNodeId,
+      {int limit = 500}) async {
+    return (await host.call('build', 'prepareEntityPreviewWorkBatch', {
+      'jobId': jobId,
+      'scopeNodeId': scopeNodeId,
+      'limit': limit
+    })) as ({bool complete, int queued});
   }
 
   @override

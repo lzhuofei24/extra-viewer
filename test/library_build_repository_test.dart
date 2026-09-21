@@ -5,6 +5,51 @@ import 'package:best_viewer/src/core/domain/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('entity preview queue preparation is paged and resumes from its cursor',
+      () {
+    final db = AppDatabase.openInMemory();
+    addTearDown(db.close);
+    final library = LibraryRepository(db);
+    final builds = LibraryBuildRepository(library);
+    final root = library.ensureDirectoryIndexRoot('/paged');
+    for (var index = 0; index < 5; index++) {
+      final entity = library
+          .upsertEntity(
+            path: '/paged/$index.jpg',
+            name: '$index.jpg',
+            format: 'jpg',
+            entityType: EntityType.image,
+            hash: '$index',
+            size: 1,
+            sourceCreatedAtMs: 1,
+            sourceModifiedAtMs: 1,
+          )
+          .entity;
+      library.linkEntityToIndexNode(entityId: entity.id, indexNodeId: root.id);
+    }
+    final job = builds.create(
+        sourcePath: '/paged', operation: LibraryBuildOperation.rootScan);
+
+    expect(
+      builds.prepareEntityPreviewWorkBatch(job.id, root.id, limit: 2),
+      (complete: false, queued: 2),
+    );
+    final resumed = LibraryBuildRepository(library);
+    expect(
+      resumed.prepareEntityPreviewWorkBatch(job.id, root.id, limit: 2),
+      (complete: false, queued: 4),
+    );
+    expect(
+      resumed.prepareEntityPreviewWorkBatch(job.id, root.id, limit: 2),
+      (complete: true, queued: 5),
+    );
+    expect(
+      resumed.prepareEntityPreviewWorkBatch(job.id, root.id, limit: 2),
+      (complete: true, queued: 5),
+    );
+    expect(resumed.claimEntityPreviewWork(job.id), hasLength(5));
+  });
+
   test('stable source identity moved between folders retains collection links',
       () async {
     final db = AppDatabase.openInMemory();
@@ -86,7 +131,7 @@ void main() {
     final job = builds.create(
         sourcePath: '/audit', operation: LibraryBuildOperation.rootScan);
     builds.setRoots(jobId: job.id, indexRootId: root.id);
-    builds.prepareEntityPreviewWork(job.id, root.id);
+    _prepareEntityPreviewWork(builds, job.id, root.id);
     final attempts = builds.claimEntityPreviewWork(job.id);
     builds.completeEntityPreviewWork(
         job.id, {e.id: (state: LibraryBuildWorkState.failed, error: 'decode')},
@@ -293,7 +338,7 @@ void main() {
       library.linkEntityToIndexNode(entityId: entity.id, indexNodeId: root.id);
     }
     builds.setRoots(jobId: job.id, indexRootId: root.id);
-    builds.prepareEntityPreviewWork(job.id, root.id);
+    _prepareEntityPreviewWork(builds, job.id, root.id);
     expect(
       () => builds.checkpointStage(
           jobId: job.id, stage: LibraryBuildStage.completed),
@@ -581,7 +626,7 @@ void main() {
       markPreviewDirty: false,
     );
     builds.setRoots(jobId: job.id, indexRootId: root.id);
-    builds.prepareEntityPreviewWork(job.id, root.id);
+    _prepareEntityPreviewWork(builds, job.id, root.id);
     final claimed = builds.claimEntityPreviewWork(job.id, limit: 100);
     expect(claimed.keys, [entity.id]);
 
@@ -603,11 +648,19 @@ void main() {
     builds.completeEntityPreviewWork(job.id, success, attempts: newer);
     expect(builds.get(job.id)!.entityPreviewDone, 1);
     builds.restartFromManifest(job.id);
-    builds.prepareEntityPreviewWork(job.id, root.id);
+    _prepareEntityPreviewWork(builds, job.id, root.id);
     final nextGeneration = builds.claimEntityPreviewWork(job.id);
     builds.completeEntityPreviewWork(job.id, success, attempts: claimed);
     expect(builds.get(job.id)!.entityPreviewDone, 0);
     builds.completeEntityPreviewWork(job.id, success, attempts: nextGeneration);
     expect(builds.get(job.id)!.entityPreviewDone, 1);
   });
+}
+
+void _prepareEntityPreviewWork(
+  LibraryBuildRepository builds,
+  String jobId,
+  String scopeNodeId,
+) {
+  while (!builds.prepareEntityPreviewWorkBatch(jobId, scopeNodeId).complete) {}
 }

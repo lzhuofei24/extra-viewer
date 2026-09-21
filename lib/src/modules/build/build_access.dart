@@ -69,7 +69,9 @@ abstract interface class BuildAccess {
   FutureOr<void> updateIndexedProgress(String jobId, int indexedTotal);
   FutureOr<List<LibraryBuildManifestItem>> listManifestPage(String jobId,
       {required int afterSequence, int limit = 200, bool pendingOnly = false});
-  FutureOr<void> prepareEntityPreviewWork(String jobId, String scopeNodeId);
+  FutureOr<({bool complete, int queued})> prepareEntityPreviewWorkBatch(
+      String jobId, String scopeNodeId,
+      {int limit = 500});
   FutureOr<bool> handoffLegacyArchivePreviewWork(String jobId);
   FutureOr<void> prepareDocumentPreviewWork(String jobId, String scopeNodeId);
   FutureOr<void> prepareNodePreviewWork(String jobId,
