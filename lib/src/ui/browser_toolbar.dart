@@ -209,7 +209,7 @@ class _AutoSyncMenuState extends State<_AutoSyncMenu> {
           child: ConstrainedBox(
             constraints: BoxConstraints(
               maxWidth:
-                  (MediaQuery.sizeOf(context).width - 24).clamp(160.0, 360.0),
+                  (MediaQuery.sizeOf(context).width - 24).clamp(160.0, 340.0),
               maxHeight:
                   (MediaQuery.sizeOf(context).height - padding.vertical - 24)
                       .clamp(120.0, double.infinity),
