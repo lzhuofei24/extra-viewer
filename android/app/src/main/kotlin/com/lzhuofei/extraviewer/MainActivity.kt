@@ -54,6 +54,7 @@ class MainActivity : AudioServiceActivity() {
     // SAF providers are IPC-bound. A small pool overlaps reads without
     // allowing a large directory scan to flood the provider or disk cache.
     private val sourceExecutor = Executors.newFixedThreadPool(8)
+    private val documentTaskExecutor = Executors.newFixedThreadPool(2)
     private val scanExecutor = Executors.newSingleThreadExecutor()
     private val thumbnailJobs = ConcurrentHashMap<String, ThumbnailJob>()
     private val sourceJobs = ConcurrentHashMap<String, ThumbnailJob>()
@@ -347,7 +348,7 @@ class MainActivity : AudioServiceActivity() {
         val id = requestId ?: java.util.UUID.randomUUID().toString()
         val job = ThumbnailJob(result)
         sourceJobs[id] = job
-        job.future = sourceExecutor.submit {
+        job.future = (if (cacheScope == "scan") documentTaskExecutor else sourceExecutor).submit {
             try {
                 job.checkActive()
                 val path = materializeDocument(Uri.parse(source), name, cacheScope, maxBytes, job)
@@ -749,6 +750,7 @@ class MainActivity : AudioServiceActivity() {
         directoryReaders.values.forEach { it.close() }
         directoryReaders.clear()
         sourceExecutor.shutdownNow()
+        documentTaskExecutor.shutdownNow()
         scanExecutor.shutdownNow()
         directoryScanSession?.close()
         super.onDestroy()

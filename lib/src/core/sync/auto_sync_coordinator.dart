@@ -47,7 +47,6 @@ class AutoSyncCoordinator extends ChangeNotifier {
   bool _phase2Queued = false;
   bool? _hasRoots;
   bool _disposed = false;
-  Future<void>? _drain;
 
   DirectoryDiffScanResult? get lastScan => _lastScan;
   bool get awaitingConfirmation => _awaitingConfirmation;
@@ -58,7 +57,9 @@ class AutoSyncCoordinator extends ChangeNotifier {
     if (_scanning) return AutoSyncStatus.scanning;
     if (_awaitingConfirmation) return AutoSyncStatus.awaitingConfirmation;
     if (_phase2Queued) {
-      return tasks.isRunning ? AutoSyncStatus.running : AutoSyncStatus.queued;
+      return _phase2Ids.contains(tasks.activeJob?.id)
+          ? AutoSyncStatus.running
+          : AutoSyncStatus.queued;
     }
     return AutoSyncStatus.disabled;
   }
@@ -72,6 +73,9 @@ class AutoSyncCoordinator extends ChangeNotifier {
     try {
       _awaitingConfirmation =
           (jsonDecode(encoded) as Map)['awaitingConfirmation'] == true;
+      _phase2Ids.addAll(((jsonDecode(encoded) as Map)['taskIds'] as List? ?? [])
+          .cast<String>());
+      _phase2Queued = _phase2Ids.isNotEmpty;
     } catch (_) {
       _awaitingConfirmation = false;
     }
@@ -82,16 +86,15 @@ class AutoSyncCoordinator extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
+  final Set<String> _phase2Ids = {};
   void _tasksChanged() {
-    if (_phase2Queued && !tasks.isRunning && _drain == null) {
-      _drain = tasks.drainRecoverableQueue().whenComplete(() async {
-        _drain = null;
-        _phase2Queued = tasks.recoverableJobs.isNotEmpty;
-        onRefresh?.call();
-        _notify();
-      });
-      if (!_disposed) notifyListeners();
-    }
+    if (_phase2Ids.isEmpty) return;
+    final live = tasks.recoverableJobs.map((j) => j.id).toSet();
+    _phase2Ids.removeWhere((id) => !live.contains(id));
+    _phase2Queued = _phase2Ids.isNotEmpty;
+    _persist(_lastScan, awaiting: _awaitingConfirmation);
+    onRefresh?.call();
+    _notify();
   }
 
   void _configureTimer() {
@@ -116,22 +119,22 @@ class AutoSyncCoordinator extends ChangeNotifier {
         !preferences.value.autoSyncEnabled) {
       return;
     }
-    final roots = (await library.listIndexRoots())
-        .where((root) =>
-            root.nodeType == NodeType.directoryIndexRoot &&
-            root.sourcePath?.trim().isNotEmpty == true)
-        .map((root) => DirectorySyncRoot(
-              rootId: root.id,
-              name: root.name,
-              sourcePath: root.sourcePath!,
-            ))
-        .toList(growable: false);
-    _hasRoots = roots.isNotEmpty;
-    if (roots.isEmpty) return;
     _scanning = true;
-    _persist(null, awaiting: false);
+    _lastScan = null;
     _notify();
     try {
+      final roots = (await library.listIndexRoots())
+          .where((root) =>
+              root.nodeType == NodeType.directoryIndexRoot &&
+              root.sourcePath?.trim().isNotEmpty == true)
+          .map((root) => DirectorySyncRoot(
+                rootId: root.id,
+                name: root.name,
+                sourcePath: root.sourcePath!,
+              ))
+          .toList(growable: false);
+      _hasRoots = roots.isNotEmpty;
+      if (roots.isEmpty) return;
       final result = await scanner.scan(roots, onRootComplete: (partial) {
         final current = _lastScan;
         final partialRoots = [
@@ -183,6 +186,7 @@ class AutoSyncCoordinator extends ChangeNotifier {
     }
     try {
       final jobs = await tasks.enqueueDirectoryUpdates(roots);
+      _phase2Ids.addAll(jobs.map((j) => j.id));
       _awaitingConfirmation = false;
       _phase2Queued = jobs.isNotEmpty;
       _persist(_lastScan, awaiting: false);
@@ -191,13 +195,7 @@ class AutoSyncCoordinator extends ChangeNotifier {
         dedupeKey: 'auto-sync-queued',
       );
       _notify();
-      if (_phase2Queued && !tasks.isRunning && _drain == null) {
-        _drain = tasks.drainRecoverableQueue().whenComplete(() {
-          _tasksChanged();
-          onRefresh?.call();
-        });
-        await _drain;
-      }
+      _tasksChanged();
     } catch (error, stack) {
       AppDiagnosticLog.instance.error('auto_sync_enqueue_failed', error, stack);
     }
@@ -205,7 +203,10 @@ class AutoSyncCoordinator extends ChangeNotifier {
 
   void _persist(DirectoryDiffScanResult? result, {required bool awaiting}) {
     if (result == null) return;
-    final encoded = jsonEncode(result.toJson(awaitingConfirmation: awaiting));
+    final encoded = jsonEncode({
+      ...result.toJson(awaitingConfirmation: awaiting),
+      'taskIds': _phase2Ids.toList()
+    });
     preferences.setAutoSyncResultJson(encoded);
   }
 

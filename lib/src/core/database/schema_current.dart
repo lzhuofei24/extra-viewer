@@ -401,6 +401,9 @@ ON library_build_jobs(status, updated_at DESC);
 CREATE INDEX idx_library_build_manifest_sequence
 ON library_build_manifest(job_id, sequence);
 
+CREATE INDEX idx_library_build_manifest_source_path
+ON library_build_manifest(job_id, source_path);
+
 CREATE INDEX idx_library_document_preview_work_pending
 ON library_document_preview_work(job_id, state, entity_id);
 

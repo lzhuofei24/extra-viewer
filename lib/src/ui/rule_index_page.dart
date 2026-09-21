@@ -318,10 +318,10 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
       onStartNodeSelection: (node) => _select(node.id),
       onThumbnailEntityNeeded: (_) {},
       coverAspectRatio: (node) {
-        final cover = _controller.covers[node.id];
-        final width = cover?.thumbnailWidth ?? 0,
-            height = cover?.thumbnailHeight ?? 0;
-        return width > 0 && height > 0 ? width / height : 1;
+        // Rule cards are intentionally a uniform square preview. The source
+        // image may be landscape or portrait, but EntityArtwork fits it into
+        // this stable card geometry without changing the rule ordering.
+        return 1;
       },
       countLabel: (node) =>
           '${rules[node.id]!.resultCount ?? 0} 个文件${rules[node.id]!.isBuiltIn ? " · 内置" : ""}',

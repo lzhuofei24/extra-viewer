@@ -9,6 +9,283 @@ enum _WorkCounter { document, entity, node }
 /// contains no rollback API: cancelling a build only stops future work and
 /// never mutates already committed entities, nodes, or derived assets.
 class LibraryBuildRepository implements BuildAccess {
+  @override
+  List<LibraryBuildJob> listTasks({int offset = 0, int limit = 100}) =>
+      library.database.db
+          .select(
+              '$_jobSelect ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?',
+              [limit.clamp(1, 100), offset])
+          .map(_jobFromRow)
+          .toList();
+
+  @override
+  Map<String, Object?> loadTaskDetails(String jobId) => {
+        'directoryChanges': library.database.db
+            .select(
+                'SELECT change_kind,COUNT(*) AS count FROM library_task_directory_changes WHERE job_id=? GROUP BY change_kind',
+                [jobId])
+            .map((r) => Map<String, Object?>.from(r))
+            .toList(),
+        'events': library.database.db
+            .select(
+                'SELECT * FROM library_task_events WHERE job_id=? ORDER BY id',
+                [jobId])
+            .map((r) => Map<String, Object?>.from(r))
+            .toList(),
+        'failures': library.database.db
+            .select(
+                '''SELECT phase,item_id,source_path,error FROM library_task_failures WHERE job_id=?
+                  UNION ALL SELECT 'indexWrite',source_path,source_path,error FROM library_build_manifest m
+                  WHERE job_id=? AND write_state='failed' AND NOT EXISTS(SELECT 1 FROM library_task_failures f
+                    WHERE f.job_id=m.job_id AND f.item_id=m.source_path AND f.phase='indexWrite')''',
+                [jobId, jobId])
+            .map((r) => Map<String, Object?>.from(r))
+            .toList(),
+        'metadata': _metadata(jobId),
+      };
+
+  Map<String, Object?> _metadata(String id) {
+    final rows = library.database.db
+        .select('SELECT * FROM library_task_details WHERE job_id=?', [id]);
+    return rows.isEmpty
+        ? <String, Object?>{}
+        : Map<String, Object?>.from(rows.single);
+  }
+
+  @override
+  void configureTask(String jobId,
+      {String? taskKind,
+      int priority = 70,
+      String? displayName,
+      String? retryOfTaskId,
+      bool userActionRequired = false}) {
+    final job = get(jobId)!;
+    library.database.db.execute('''INSERT INTO library_task_details
+      (job_id,task_kind,priority,source_id,scope_descriptor,display_name,retry_of_task_id,user_action_required)
+      VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET
+      task_kind=excluded.task_kind, priority=excluded.priority,
+      display_name=COALESCE(excluded.display_name,display_name),
+      retry_of_task_id=COALESCE(excluded.retry_of_task_id,retry_of_task_id),
+      user_action_required=excluded.user_action_required''', [
+      jobId,
+      taskKind ?? job.taskKind,
+      priority,
+      job.sourcePath,
+      job.scopeNodeId ?? job.sourcePath,
+      displayName,
+      retryOfTaskId,
+      userActionRequired ? 1 : 0
+    ]);
+  }
+
+  @override
+  void recordTaskOperation(String jobId, String operation) {
+    library.database.db.execute(
+        'INSERT INTO library_task_events(job_id,event,message,created_at) VALUES(?,?,?,?)',
+        [jobId, 'operation', operation, nowMillis()]);
+  }
+
+  @override
+  void setTaskStatus(String jobId, LibraryBuildStatus status) {
+    _update(jobId, status: status);
+  }
+
+  @override
+  void setCurrentItem(String jobId, String item) {
+    library.database.db.execute(
+        'UPDATE library_task_details SET current_item=? WHERE job_id=?',
+        [item, jobId]);
+  }
+
+  @override
+  List<String> listAddedDirectories(String jobId) => library.database.db
+      .select(
+          "SELECT relative_path FROM library_task_directory_changes WHERE job_id=? AND change_kind='added' ORDER BY length(relative_path),relative_path",
+          [jobId])
+      .map((r) => r['relative_path'] as String)
+      .toList();
+
+  @override
+  void captureDirtyRevision(String jobId) {
+    library.database.db.execute(
+        '''INSERT OR REPLACE INTO library_task_dirty(job_id,node_id,revision)
+      SELECT ?,dirty.node_id,dirty.revision FROM node_preview_dirty dirty
+      JOIN library_node_preview_work work ON work.node_id=dirty.node_id WHERE work.job_id=?''',
+        [jobId, jobId]);
+  }
+
+  @override
+  void clearTaskDirtyRevision(String jobId) {
+    library.database.db.execute('''DELETE FROM node_preview_dirty WHERE EXISTS
+      (SELECT 1 FROM library_task_dirty snapshot WHERE snapshot.job_id=?
+      AND snapshot.node_id=node_preview_dirty.node_id AND snapshot.revision=node_preview_dirty.revision)''',
+        [jobId]);
+  }
+
+  /// Freeze the metadata diff once, before any entity writes. Unknown mtime
+  /// remains a candidate for fingerprint verification in the writer stage.
+  @override
+  void prepareChangeSet(String jobId, String rootId, String scopeId) {
+    final db = library.database.db;
+    if (_metadata(jobId)['change_set_revision'] != null) return;
+    library.writeTransaction(() {
+      recordTaskOperation(jobId, '正在计算差异');
+      db.execute(
+          'INSERT OR IGNORE INTO library_task_source_versions(root_id) VALUES(?)',
+          [rootId]);
+      db.execute(
+          'INSERT OR REPLACE INTO library_task_source_snapshot SELECT ?,root_id,revision FROM library_task_source_versions WHERE root_id=?',
+          [jobId, rootId]);
+      final scopePrefix = library.directoryNodeRelativePath(scopeId) ?? '';
+      final directories = db.select(
+          '''WITH RECURSIVE scope(id) AS (SELECT ? UNION ALL
+        SELECT n.id FROM index_nodes n JOIN scope ON n.parent_id=scope.id)
+        SELECT id,relative_source_path FROM index_nodes WHERE id IN (SELECT id FROM scope)''',
+          [scopeId]);
+      final byPath = <String, String>{};
+      for (final node in directories) {
+        if (node['id'] == scopeId) continue;
+        final relative = node['relative_source_path'] as String? ?? '';
+        final local = scopePrefix.isEmpty
+            ? relative
+            : relative.startsWith('$scopePrefix/')
+                ? relative.substring(scopePrefix.length + 1)
+                : relative;
+        byPath[local] = node['id'] as String;
+      }
+      final seen = <String>{};
+      for (final row in db.select(
+          'SELECT relative_path FROM scan_directories WHERE job_id=?',
+          [jobId])) {
+        final path = row['relative_path'] as String;
+        if (path.isEmpty) continue;
+        seen.add(path);
+        db.execute(
+            'INSERT INTO library_task_directory_changes VALUES(?,?,?,?)', [
+          jobId,
+          path,
+          byPath[path],
+          byPath.containsKey(path) ? 'unchanged' : 'added'
+        ]);
+      }
+      for (final entry in byPath.entries) {
+        if (!seen.contains(entry.key)) {
+          db.execute(
+              'INSERT INTO library_task_directory_changes VALUES(?,?,?,?)',
+              [jobId, entry.key, entry.value, 'removed']);
+        }
+      }
+      db.execute(
+          '''INSERT INTO library_task_changes(job_id,source_path,entity_id,source_revision,change_kind)
+        SELECT m.job_id,m.source_path,e.id,e.source_revision,
+          CASE WHEN e.id IS NULL THEN 'added' WHEN m.size=e.size
+          AND m.source_modified_at_ms>0 AND m.source_modified_at_ms=e.source_modified_at_ms
+          AND m.name=e.name AND m.format=e.format AND m.media_type=e.media_type
+          AND e.directory_root_id=? AND EXISTS (
+            SELECT 1 FROM index_node_entities link JOIN index_nodes n ON n.id=link.index_node_id
+            WHERE link.entity_id=e.id AND COALESCE(n.relative_source_path,'')=
+              rtrim(? || CASE WHEN length(m.relative_path)>length(m.name)
+                THEN substr(m.relative_path,1,length(m.relative_path)-length(m.name)-1) ELSE '' END, '/')
+          ) THEN 'unchanged' ELSE 'changed' END
+        FROM library_build_manifest m LEFT JOIN entities e ON e.path=m.source_path WHERE m.job_id=?''',
+          [rootId, scopePrefix.isEmpty ? '' : '$scopePrefix/', jobId]);
+      db.execute('''WITH RECURSIVE scope(id) AS (SELECT ? UNION ALL
+        SELECT n.id FROM index_nodes n JOIN scope ON n.parent_id=scope.id)
+        INSERT OR IGNORE INTO library_task_changes(job_id,source_path,entity_id,source_revision,change_kind)
+        SELECT ?,e.path,e.id,e.source_revision,'removed' FROM entities e
+        JOIN index_node_entities link ON link.entity_id=e.id
+        WHERE link.index_node_id IN (SELECT id FROM scope) AND e.directory_root_id=?
+        AND NOT EXISTS(SELECT 1 FROM library_build_manifest m WHERE m.job_id=? AND m.source_path=e.path)''',
+          [scopeId, jobId, rootId, jobId]);
+      db.execute('''UPDATE library_task_details SET change_set_revision=
+        (SELECT scan_generation FROM library_build_jobs WHERE id=?),
+        added_count=(SELECT COUNT(*) FROM library_task_changes WHERE job_id=? AND change_kind='added'),
+        changed_count=(SELECT COUNT(*) FROM library_task_changes WHERE job_id=? AND change_kind='changed'),
+        removed_count=(SELECT COUNT(*) FROM library_task_changes WHERE job_id=? AND change_kind='removed'),
+        skipped_count=(SELECT COUNT(*) FROM library_task_changes WHERE job_id=? AND change_kind='unchanged')
+        WHERE job_id=?''', [jobId, jobId, jobId, jobId, jobId, jobId]);
+      db.execute('''UPDATE library_build_manifest SET write_state='completed'
+        WHERE job_id=? AND source_path IN (SELECT source_path FROM library_task_changes
+        WHERE job_id=? AND change_kind='unchanged')''', [jobId, jobId]);
+      db.execute('''UPDATE library_build_jobs SET indexed_total=
+        (SELECT COUNT(*) FROM library_build_manifest WHERE job_id=? AND write_state='completed') WHERE id=?''',
+          [jobId, jobId]);
+      recordTaskOperation(jobId, '差异集合已冻结');
+    });
+  }
+
+  @override
+  LibraryBuildJob createRetryTask(String originalId, {bool nodesOnly = false}) {
+    final original = get(originalId)!;
+    validateScope(original);
+    validateTaskRevision(originalId);
+    final db = library.database.db;
+    final failures = db.select(
+        'SELECT * FROM library_task_failures WHERE job_id=?', [originalId]);
+    for (final f in failures) {
+      if (f['source_revision'] == null) continue;
+      final current = f['phase'] == 'nodePreviews'
+          ? db.select(
+              'SELECT revision AS source_revision FROM node_preview_versions WHERE node_id=?',
+              [
+                  f['item_id']
+                ])
+          : db.select('SELECT source_revision FROM entities WHERE id=?',
+              [f['item_id']]);
+      if (current.isEmpty ||
+          current.single['source_revision'] != f['source_revision']) {
+        throw StateError('失败项来源已更新，请重新读取目录');
+      }
+    }
+    final retry = create(
+        sourcePath: original.sourcePath,
+        operation: original.operation,
+        targetNodeId: original.targetNodeId,
+        kind: LibraryBuildKind.rebuildPreviews);
+    configureTask(retry.id,
+        taskKind: nodesOnly ? 'retryNodePreview' : 'retryPreview',
+        priority: 100,
+        retryOfTaskId: originalId);
+    db.execute(
+        'UPDATE library_task_details SET change_set_revision=? WHERE job_id=?',
+        [original.taskMetadata['change_set_revision'], retry.id]);
+    setRoots(jobId: retry.id, indexRootId: original.indexRootId!);
+    db.execute(
+        'INSERT OR REPLACE INTO library_task_source_snapshot SELECT ?,root_id,revision FROM library_task_source_snapshot WHERE job_id=?',
+        [retry.id, originalId]);
+    var first = LibraryBuildStage.nodePreviews;
+    for (final (phase, table, column) in [
+      ('documentPreviews', 'library_document_preview_work', 'entity_id'),
+      ('entityPreviews', 'library_entity_preview_work', 'entity_id'),
+      ('nodePreviews', 'library_node_preview_work', 'node_id')
+    ]) {
+      if (nodesOnly && phase != 'nodePreviews') continue;
+      // Retained legacy work is also accepted when upgrading old tasks.
+      db.execute(
+          '''INSERT OR IGNORE INTO $table(job_id,$column,state,attempts,updated_at)
+        SELECT ?,$column,'pending',0,? FROM $table WHERE job_id=? AND state='failed' ''',
+          [retry.id, nowMillis(), originalId]);
+      db.execute(
+          '''INSERT OR IGNORE INTO $table(job_id,$column,state,attempts,updated_at)
+        SELECT ?,item_id,'pending',0,? FROM library_task_failures WHERE job_id=? AND phase=?
+        AND item_id IN (SELECT id FROM ${column == 'node_id' ? 'index_nodes' : 'entities'})''',
+          [retry.id, nowMillis(), originalId, phase]);
+      if (_count(table, retry.id) > 0 &&
+          LibraryBuildStage.values.byName(phase).index < first.index) {
+        first = LibraryBuildStage.values.byName(phase);
+      }
+    }
+    _update(retry.id,
+        stage: first,
+        status: LibraryBuildStatus.pending,
+        documentPreviewTotal: _count('library_document_preview_work', retry.id),
+        entityPreviewTotal: _count('library_entity_preview_work', retry.id),
+        nodePreviewTotal: _count('library_node_preview_work', retry.id));
+    captureDirtyRevision(retry.id);
+    recordTaskOperation(originalId, '创建失败项重试任务：${retry.id}');
+    return get(retry.id)!;
+  }
+
   static const _jobSelect = '''SELECT library_build_jobs.*,
     (SELECT COUNT(*) FROM library_build_manifest m
      WHERE m.job_id = library_build_jobs.id AND m.write_state = 'failed') AS index_failed
@@ -16,6 +293,7 @@ class LibraryBuildRepository implements BuildAccess {
   @override
   void finalizeIndex(LibraryBuildJob job) {
     validateScope(job);
+    validateTaskRevision(job.id);
     if (!job.manifestComplete) {
       throw StateError('目录尚未完整枚举，不能对账移除资料');
     }
@@ -28,6 +306,13 @@ class LibraryBuildRepository implements BuildAccess {
     final scopeId = job.targetNodeId ?? rootId;
     library.reconcileDirectoryScan(
         jobId: job.id, rootId: rootId, nodeId: scopeId);
+    library.database.db.execute(
+        'UPDATE library_task_source_versions SET revision=revision+1 WHERE root_id=?',
+        [rootId]);
+    library.database.db.execute(
+        'UPDATE library_task_source_snapshot SET revision=(SELECT revision FROM library_task_source_versions WHERE root_id=?) WHERE job_id=?',
+        [rootId, job.id]);
+    recordTaskOperation(job.id, '资料更新完成，开始处理预览');
     if (job.targetNodeId == null) {
       if (job.stagingRootId != null) {
         library.replaceOverlappingDirectoryIndexRoots(
@@ -98,6 +383,7 @@ class LibraryBuildRepository implements BuildAccess {
       kind.name,
       targetNodeId,
     ]);
+    configureTask(job.id);
     return job;
   }
 
@@ -113,7 +399,7 @@ class LibraryBuildRepository implements BuildAccess {
   @override
   List<LibraryBuildJob> listRecoverable() => library.database.db.select('''
         $_jobSelect
-        WHERE status IN ('pending', 'running', 'pauseRequested', 'paused', 'blocked', 'failed', 'completedWithErrors')
+        WHERE status IN ('pending', 'running', 'pauseRequested', 'paused', 'interrupted', 'cancelRequested', 'blocked', 'failed', 'completedWithErrors')
           AND (stage != 'completed' OR status = 'completedWithErrors')
         ORDER BY updated_at DESC
       ''').map(_jobFromRow).toList(growable: false);
@@ -132,12 +418,16 @@ class LibraryBuildRepository implements BuildAccess {
   void markInterruptedRecoverable() {
     library.writeTransaction(() {
       final now = nowMillis();
+      for (final row in library.database.db.select(
+          "SELECT id FROM library_build_jobs WHERE status='cancelRequested'")) {
+        abandon(row['id'] as String);
+      }
       library.database.db.execute(
           "UPDATE entity_previews SET thumbnail_status = 'failed', thumbnail_error = '上次预览生成已中断' WHERE thumbnail_status = 'pending'");
       library.database.db.execute('''
         UPDATE library_build_jobs
-        SET status = 'paused', updated_at = ?
-        WHERE status = 'running'
+        SET status = CASE WHEN status='cancelRequested' THEN 'abandoned' ELSE 'interrupted' END, updated_at = ?
+        WHERE status IN ('running','pauseRequested','cancelRequested')
       ''', [now]);
       library.database.db.execute('''
         UPDATE library_entity_preview_work
@@ -200,6 +490,15 @@ class LibraryBuildRepository implements BuildAccess {
   }
 
   @override
+  void validateTaskRevision(String jobId) {
+    final mismatch = library.database.db.select(
+        '''SELECT 1 FROM library_task_source_snapshot s
+      JOIN library_task_source_versions v ON v.root_id=s.root_id WHERE s.job_id=? AND s.revision!=v.revision''',
+        [jobId]);
+    if (mismatch.isNotEmpty) throw StateError('来源索引已被其他任务更新，请重新读取目录');
+  }
+
+  @override
   void completeManifest(String jobId, int total) {
     library.writeTransaction(() {
       library.database.db.execute(
@@ -215,6 +514,7 @@ class LibraryBuildRepository implements BuildAccess {
   @override
   void abandon(String jobId) {
     library.writeTransaction(() {
+      clearTaskDirtyRevision(jobId);
       _update(jobId, status: LibraryBuildStatus.abandoned);
       _discardFinishedDetails(jobId, abandoned: true);
     });
@@ -282,6 +582,17 @@ class LibraryBuildRepository implements BuildAccess {
 
   void _discardFinishedDetails(String jobId, {bool abandoned = false}) {
     final db = library.database.db;
+    db.execute(
+        '''INSERT OR IGNORE INTO library_task_failures(job_id,phase,item_id,source_path,error)
+      SELECT job_id,'indexWrite',source_path,source_path,COALESCE(error,'读取失败')
+      FROM library_build_manifest WHERE job_id=? AND write_state='failed' ''',
+        [jobId]);
+    db.execute(
+        "DELETE FROM library_task_changes WHERE job_id=? AND change_kind='unchanged'",
+        [jobId]);
+    db.execute(
+        "DELETE FROM library_task_directory_changes WHERE job_id=? AND change_kind='unchanged'",
+        [jobId]);
     db.execute('DELETE FROM library_build_manifest WHERE job_id = ?', [jobId]);
     db.execute('DELETE FROM scan_directories WHERE job_id = ?', [jobId]);
     for (final table in [
@@ -293,11 +604,7 @@ class LibraryBuildRepository implements BuildAccess {
           "DELETE FROM $table WHERE job_id = ? ${abandoned ? '' : "AND state IN ('completed', 'skipped')"}",
           [jobId]);
     }
-    // Unresolved failures keep their parent task until repaired or abandoned.
-    db.execute('''DELETE FROM library_build_jobs WHERE id IN (
-      SELECT id FROM library_build_jobs WHERE status IN ('completed', 'abandoned')
-      ORDER BY updated_at DESC, id DESC LIMIT -1 OFFSET 100
-    )''');
+    // Task summaries and audit events are permanent; work queues are temporary.
   }
 
   @override
@@ -488,12 +795,14 @@ class LibraryBuildRepository implements BuildAccess {
       JOIN entity_details entity ON entity.id = link.entity_id
       WHERE link.index_node_id IN (SELECT id FROM subtree)
         AND entity.media_type IN ('image', 'video')
+        AND (NOT EXISTS (SELECT 1 FROM library_task_details WHERE job_id=? AND change_set_revision IS NOT NULL)
+          OR EXISTS (SELECT 1 FROM library_task_changes c WHERE c.job_id=? AND c.source_path=entity.path AND c.change_kind IN ('added','changed')))
         AND (
           entity.thumbnail_status != 'success' OR
           entity.thumbnail_key IS NULL OR
           (entity.thumbnail_key NOT LIKE 'v6_%' AND entity.thumbnail_key NOT LIKE 'v7_%')
         )
-    ''', [scopeNodeId, jobId, now]);
+    ''', [scopeNodeId, jobId, now, jobId, jobId]);
     final count = _remainingWorkCount('library_entity_preview_work', jobId) +
         get(jobId)!.entityPreviewDone;
     _update(jobId, entityPreviewTotal: count);
@@ -560,12 +869,14 @@ class LibraryBuildRepository implements BuildAccess {
       JOIN entity_details entity ON entity.id = link.entity_id
       WHERE link.index_node_id IN (SELECT id FROM subtree)
         AND entity.media_type IN ('text', 'external_link')
+        AND (NOT EXISTS (SELECT 1 FROM library_task_details WHERE job_id=? AND change_set_revision IS NOT NULL)
+          OR EXISTS (SELECT 1 FROM library_task_changes c WHERE c.job_id=? AND c.source_path=entity.path AND c.change_kind IN ('added','changed')))
         AND NOT EXISTS (SELECT 1 FROM document_preview_versions preview
           WHERE preview.entity_id = entity.id AND preview.source_revision = entity.source_revision
             AND (entity.format NOT IN ('epub', 'docx') OR (
               preview.cover_revision = entity.preview_revision AND entity.thumbnail_status IN ('none', 'success')
             )))
-    ''', [scopeNodeId, jobId, now]);
+    ''', [scopeNodeId, jobId, now, jobId, jobId]);
     final count = _remainingWorkCount('library_document_preview_work', jobId) +
         get(jobId)!.documentPreviewDone;
     _update(jobId, documentPreviewTotal: count);
@@ -605,10 +916,13 @@ class LibraryBuildRepository implements BuildAccess {
       SELECT ?, id, 'pending', 0, ?
       FROM ($selectedNodes)
       WHERE id IN (SELECT node_id FROM node_preview_dirty)
-    ''', [scopeNodeId, scopeNodeId, jobId, now]);
+        AND (NOT EXISTS(SELECT 1 FROM library_task_details WHERE job_id=? AND change_set_revision IS NOT NULL)
+          OR id IN (SELECT node_id FROM library_task_dirty WHERE job_id=?))
+    ''', [scopeNodeId, scopeNodeId, jobId, now, jobId, jobId]);
     final count = _remainingWorkCount('library_node_preview_work', jobId) +
         get(jobId)!.nodePreviewDone;
     _update(jobId, nodePreviewTotal: count);
+    captureDirtyRevision(jobId);
   }
 
   @override
@@ -832,6 +1146,13 @@ class LibraryBuildRepository implements BuildAccess {
     }
     library.writeTransaction(() {
       library.database.db
+          .execute('DELETE FROM library_task_changes WHERE job_id=?', [jobId]);
+      library.database.db.execute(
+          'DELETE FROM library_task_directory_changes WHERE job_id=?', [jobId]);
+      library.database.db.execute(
+          'UPDATE library_task_details SET change_set_revision=NULL WHERE job_id=?',
+          [jobId]);
+      library.database.db
           .execute('DELETE FROM scan_directories WHERE job_id = ?', [jobId]);
       library.database.db.execute(
         'DELETE FROM library_build_manifest WHERE job_id = ?',
@@ -972,7 +1293,32 @@ class LibraryBuildRepository implements BuildAccess {
               entry.value.state == LibraryBuildWorkState.skipped) {
             doneDelta++;
           }
-          if (entry.value.state == LibraryBuildWorkState.failed) failedDelta++;
+          if (entry.value.state == LibraryBuildWorkState.failed) {
+            failedDelta++;
+            final phase = switch (counter) {
+              _WorkCounter.document => 'documentPreviews',
+              _WorkCounter.entity => 'entityPreviews',
+              _WorkCounter.node => 'nodePreviews',
+            };
+            final source = idColumn == 'entity_id'
+                ? library.database.db.select(
+                    'SELECT path,source_revision FROM entities WHERE id=?',
+                    [entry.key])
+                : library.database.db.select(
+                    'SELECT name AS path,(SELECT revision FROM node_preview_versions WHERE node_id=index_nodes.id) AS source_revision FROM index_nodes WHERE id=?',
+                    [entry.key]);
+            library.database.db.execute(
+                '''INSERT OR REPLACE INTO library_task_failures
+              (job_id,phase,item_id,source_path,error,source_revision) VALUES(?,?,?,?,?,?)''',
+                [
+                  jobId,
+                  phase,
+                  entry.key,
+                  source.firstOrNull?['path'],
+                  entry.value.error ?? '处理失败',
+                  source.firstOrNull?['source_revision']
+                ]);
+          }
         }
       } finally {
         statement.dispose();
@@ -1006,6 +1352,7 @@ class LibraryBuildRepository implements BuildAccess {
   ''', [jobId]).isNotEmpty;
 
   LibraryBuildJob _jobFromRow(dynamic row) => LibraryBuildJob(
+        taskMetadata: _metadata(row['id'] as String),
         id: row['id'] as String,
         kind: LibraryBuildKind.values.byName(row['kind'] as String),
         scopeNodeId: row['scope_node_id'] as String?,

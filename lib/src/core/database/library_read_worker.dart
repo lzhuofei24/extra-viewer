@@ -41,29 +41,52 @@ class LibraryReadWorker implements LibraryQueries {
   LibraryReadWorker? _background;
   Timer? _statisticsTimer;
   bool _statisticsRunning = false;
+  int _statisticsGeneration = 0;
 
-  void stopStatisticsMaintenance() => _statisticsTimer?.cancel();
+  void stopStatisticsMaintenance() {
+    _statisticsGeneration++;
+    _statisticsTimer?.cancel();
+  }
 
   void startStatisticsMaintenance(
       Future<void> Function(List<Map<String, Object?>>) publish,
       {void Function(Object, StackTrace)? onError}) {
-    _statisticsTimer?.cancel();
-    _statisticsTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
-      if (_statisticsRunning || _closeFuture != null) return;
-      _statisticsRunning = true;
-      try {
-        final rows = await loadDirtyStatistics();
-        if (_closeFuture == null && rows.isNotEmpty) await publish(rows);
-      } catch (error, stack) {
-        if (_closeFuture == null) onError?.call(error, stack);
-      } finally {
-        _statisticsRunning = false;
-      }
-    });
+    stopStatisticsMaintenance();
+    final generation = _statisticsGeneration;
+    void schedule(Duration delay) {
+      if (_closeFuture != null || generation != _statisticsGeneration) return;
+      _statisticsTimer = Timer(delay, () async {
+        var hasMore = false;
+        if (_statisticsRunning ||
+            _closeFuture != null ||
+            generation != _statisticsGeneration) {
+          return;
+        }
+        _statisticsRunning = true;
+        try {
+          final rows = await loadDirtyStatistics(limit: 1);
+          hasMore = rows.isNotEmpty;
+          if (_closeFuture == null && rows.isNotEmpty) await publish(rows);
+        } catch (error, stack) {
+          if (_closeFuture == null) onError?.call(error, stack);
+        } finally {
+          _statisticsRunning = false;
+          if (generation == _statisticsGeneration) {
+            schedule(hasMore ? Duration.zero : const Duration(seconds: 2));
+          }
+        }
+      });
+    }
+
+    schedule(Duration.zero);
   }
 
-  Future<List<Map<String, Object?>>> loadDirtyStatistics() async {
-    final result = await _request({'type': 'dirtyStatistics'});
+  Future<List<Map<String, Object?>>> loadDirtyStatistics(
+      {int limit = 32}) async {
+    final result = await _request({
+      'type': 'dirtyStatistics',
+      'limit': limit.clamp(1, 32),
+    });
     return (result['rows'] as List).cast<Map<String, Object?>>();
   }
 
@@ -456,16 +479,7 @@ class LibraryReadWorker implements LibraryQueries {
 
   Future<Map<Object?, Object?>> _request(Map<String, Object?> request) async {
     _ensureOpen();
-    final createsSnapshot = request['sessionId'] == null &&
-        const {'rulePage', 'recursivePage'}.contains(request['type']);
-    if (_background != null &&
-        (createsSnapshot ||
-            const {
-              'ruleSummaries',
-              'ruleCovers',
-              'ruleFilterOptions',
-              'dirtyStatistics'
-            }.contains(request['type']))) {
+    if (_background != null && request['type'] == 'dirtyStatistics') {
       return _background!._request(request);
     }
     if (_terminalError != null) {
@@ -633,7 +647,10 @@ void _readWorkerMain(Map<String, Object> config) {
       if (request['type'] == 'dirtyStatistics') {
         database.execute('BEGIN');
         try {
-          final rows = computeDirtyStatistics(database);
+          final rows = computeDirtyStatistics(
+            database,
+            limit: (request['limit'] as int? ?? 32).clamp(1, 32),
+          );
           database.execute('COMMIT');
           replyPort.send({'ok': true, 'rows': rows});
         } catch (_) {
@@ -688,30 +705,43 @@ void _readWorkerMain(Map<String, Object> config) {
         final covers = <String, Object?>{};
         final now = DateTime.now().millisecondsSinceEpoch;
         for (final id in (request['ruleIds'] as List).cast<String>().toSet()) {
-          final cached = cache.get('cover:$id', now) as Map<String, Object?>?;
-          if (cached != null) {
-            if (cached['entity'] != null) covers[id] = cached['entity'];
-            continue;
-          }
           final rules = database
               .select('SELECT * FROM index_rules WHERE node_id = ?', [id]);
           if (rules.isEmpty) continue;
           final rule = rules.single;
-          final query = _ruleQuery(rule, now);
           final sort =
               RuleSortMode.values.byName(rule['default_sort'] as String);
+          // Access ordered rules change whenever an entity is opened. Avoid
+          // retaining a cover across that write; metadata ordered rules can
+          // continue using the derived cache and their expiry rules.
+          final cacheable =
+              sort != RuleSortMode.lastOpened && sort != RuleSortMode.openCount;
+          final cached = cacheable
+              ? cache.get('cover:$id', now) as Map<String, Object?>?
+              : null;
+          if (cached != null) {
+            if (cached['entity'] != null) covers[id] = cached['entity'];
+            continue;
+          }
+          final query = _ruleQuery(rule, now);
+          // Filter to visual media before applying the rule's ordering.  The
+          // previous outer query re-sorted the capped candidates by modified
+          // time, which made a "recently opened" rule show an unrelated cover.
+          // Keep the rule order authoritative and only then cap the result.
           final rows = database.select('''
-            SELECT * FROM (
-              SELECT e.* FROM entity_details e WHERE ${query.whereSql}
-              ORDER BY ${_ruleOrderBy(sort)} LIMIT ?
-            ) WHERE media_type IN ('image', 'video')
-            ORDER BY source_modified_at_ms DESC, id ASC LIMIT 1
-          ''', [...query.parameters, rule['max_results']]);
+            SELECT e.* FROM entity_details e
+            WHERE ${query.whereSql}
+              AND media_type IN ('image', 'video')
+            ORDER BY ${_ruleOrderBy(sort)}
+            LIMIT 1
+          ''', query.parameters);
           if (rows.isNotEmpty) {
             covers[id] = _entityToMap(rows.single, storageDirectoryPath);
           }
-          cache.put('cover:$id', {'entity': covers[id]},
-              expiresAt: _ruleExpiry(database, rule, query));
+          if (cacheable) {
+            cache.put('cover:$id', {'entity': covers[id]},
+                expiresAt: _ruleExpiry(database, rule, query));
+          }
         }
         replyPort.send({'ok': true, 'covers': covers});
         return;

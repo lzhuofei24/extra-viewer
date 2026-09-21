@@ -5,6 +5,104 @@ import 'package:best_viewer/src/core/domain/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('stable source identity moved between folders retains collection links',
+      () async {
+    final db = AppDatabase.openInMemory();
+    addTearDown(db.close);
+    final library = LibraryRepository(db);
+    final builds = LibraryBuildRepository(library);
+    final root = library.ensureDirectoryIndexRoot('/move');
+    final before = await library.ensureDirectoryFolderAsync(
+        parentId: root.id, name: 'before', relativePath: 'before');
+    final after = await library.ensureDirectoryFolderAsync(
+        parentId: root.id, name: 'after', relativePath: 'after');
+    final entity = library
+        .upsertEntity(
+            path: '/stable/a.jpg',
+            name: 'a.jpg',
+            format: 'jpg',
+            entityType: EntityType.image,
+            hash: 'same',
+            size: 1,
+            sourceCreatedAtMs: 1,
+            sourceModifiedAtMs: 1,
+            directoryRootId: root.id)
+        .entity;
+    library.linkEntityToIndexNode(entityId: entity.id, indexNodeId: before.id);
+    library.createCollectionWithEntities(name: 'keep', entityIds: [entity.id]);
+    final job = builds.create(
+        sourcePath: '/move', operation: LibraryBuildOperation.rootScan);
+    builds.setRoots(jobId: job.id, indexRootId: root.id);
+    final item = LibraryBuildManifestItem(
+        jobId: job.id,
+        sourcePath: entity.path,
+        relativePath: 'after/a.jpg',
+        sequence: 0,
+        name: 'a.jpg',
+        format: 'jpg',
+        entityType: EntityType.image,
+        size: 1,
+        sourceCreatedAtMs: 1,
+        sourceModifiedAtMs: 1);
+    builds.upsertManifest([item]);
+    builds.prepareChangeSet(job.id, root.id, root.id);
+    expect(builds.get(job.id)!.taskMetadata['changed_count'], 1);
+    library.commitInspectedPage(
+        job: job,
+        page: [item],
+        rootId: root.id,
+        existing: {entity.path: entity},
+        detailsBySequence: {0: ('same', 1, 1, 1, null, null)},
+        nodesBySequence: {0: after},
+        indexedBefore: 0);
+    final links = db.db.select(
+        'SELECT index_node_id FROM index_node_entities WHERE entity_id=?',
+        [entity.id]);
+    expect(links, hasLength(2));
+    expect(links.map((r) => r['index_node_id']), contains(after.id));
+    expect(links.map((r) => r['index_node_id']), isNot(contains(before.id)));
+    expect(library.getEntity(entity.id)!.hash, 'same');
+  });
+  test(
+      'failed preview retry creates linked audit history and refuses stale sources',
+      () {
+    final db = AppDatabase.openInMemory();
+    addTearDown(db.close);
+    final library = LibraryRepository(db);
+    final builds = LibraryBuildRepository(library);
+    final root = library.ensureDirectoryIndexRoot('/audit');
+    final e = library
+        .upsertEntity(
+            path: '/audit/a.jpg',
+            name: 'a.jpg',
+            format: 'jpg',
+            entityType: EntityType.image,
+            hash: 'one',
+            size: 1,
+            sourceCreatedAtMs: 1,
+            sourceModifiedAtMs: 1)
+        .entity;
+    library.linkEntityToIndexNode(entityId: e.id, indexNodeId: root.id);
+    final job = builds.create(
+        sourcePath: '/audit', operation: LibraryBuildOperation.rootScan);
+    builds.setRoots(jobId: job.id, indexRootId: root.id);
+    builds.prepareEntityPreviewWork(job.id, root.id);
+    final attempts = builds.claimEntityPreviewWork(job.id);
+    builds.completeEntityPreviewWork(
+        job.id, {e.id: (state: LibraryBuildWorkState.failed, error: 'decode')},
+        attempts: attempts);
+    builds.checkpointStage(jobId: job.id, stage: LibraryBuildStage.completed);
+    final retry = builds.createRetryTask(job.id);
+    expect(retry.retryOfTaskId, job.id);
+    expect(builds.get(job.id)!.status, LibraryBuildStatus.completedWithErrors);
+    expect(builds.loadTaskDetails(job.id)['failures'], hasLength(1));
+    expect((builds.loadTaskDetails(job.id)['events'] as List).length,
+        greaterThan(1));
+    db.db.execute(
+        'UPDATE entities SET source_revision=source_revision+1 WHERE id=?',
+        [e.id]);
+    expect(() => builds.createRetryTask(job.id), throwsStateError);
+  });
   test(
       'SQL reconciliation preserves other collection references and rejects incomplete scopes',
       () {
@@ -150,9 +248,7 @@ void main() {
     expect(builds.claimDocumentPreviewWork(next.id), isEmpty);
   });
 
-  test(
-      'history retention keeps unfinished tasks while bounding completed summaries',
-      () {
+  test('history pages are bounded but task summaries are permanent', () {
     final database = AppDatabase.openInMemory();
     addTearDown(database.close);
     final builds = LibraryBuildRepository(LibraryRepository(database));
@@ -169,7 +265,7 @@ void main() {
             .select(
                 "SELECT id FROM library_build_jobs WHERE status = 'completed'")
             .length,
-        100);
+        103);
     expect(builds.get(pending.id), isNotNull);
   });
 
@@ -297,6 +393,29 @@ void main() {
         {child.id: (state: LibraryBuildWorkState.completed, error: null)},
         attempts: first);
     expect(builds.claimNodePreviewWork(job.id).keys, [root.id]);
+  });
+
+  test('clearing an automatic preview scope removes dirty descendants', () {
+    final database = AppDatabase.openInMemory();
+    addTearDown(database.close);
+    final library = LibraryRepository(database);
+    final root = library.ensureCollectionIndexRoot('dirty');
+    final child = library.createCustomNode(parentId: root.id, name: 'child');
+
+    library.markIndexNodePreviewDirty(
+      root.id,
+      scope: IndexPreviewRebuildScope.subtree,
+      reason: 'test',
+    );
+    expect(library.listDirtyPreviewRoots(), isNotEmpty);
+
+    library.clearIndexNodePreviewDirty(
+      root.id,
+      scope: IndexPreviewRebuildScope.subtree,
+    );
+
+    expect(library.listDirtyPreviewRoots(), isEmpty);
+    expect(child.id, isNotEmpty);
   });
 
   test(

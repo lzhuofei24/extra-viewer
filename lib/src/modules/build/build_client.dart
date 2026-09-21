@@ -7,6 +7,84 @@ class BuildClient implements BuildAccess {
   BuildClient(this.host);
   final DatabaseHost host;
   @override
+  Future<List<LibraryBuildJob>> listTasks(
+      {int offset = 0, int limit = 100}) async {
+    return (await host
+            .call('build', 'listTasks', {'offset': offset, 'limit': limit}))
+        as List<LibraryBuildJob>;
+  }
+
+  @override
+  Future<Map<String, Object?>> loadTaskDetails(String jobId) async {
+    return (await host.call('build', 'loadTaskDetails', {'jobId': jobId}))
+        as Map<String, Object?>;
+  }
+
+  @override
+  Future<void> configureTask(String jobId,
+      {String? taskKind,
+      int priority = 70,
+      String? displayName,
+      String? retryOfTaskId,
+      bool userActionRequired = false}) async {
+    await host.call('build', 'configureTask', {
+      'jobId': jobId,
+      'taskKind': taskKind,
+      'priority': priority,
+      'displayName': displayName,
+      'retryOfTaskId': retryOfTaskId,
+      'userActionRequired': userActionRequired
+    });
+  }
+
+  @override
+  Future<void> recordTaskOperation(String jobId, String operation) async {
+    await host.call('build', 'recordTaskOperation',
+        {'jobId': jobId, 'operation': operation});
+  }
+
+  @override
+  Future<void> setTaskStatus(String jobId, LibraryBuildStatus status) async {
+    await host
+        .call('build', 'setTaskStatus', {'jobId': jobId, 'status': status});
+  }
+
+  @override
+  Future<void> setCurrentItem(String jobId, String item) async {
+    await host.call('build', 'setCurrentItem', {'jobId': jobId, 'item': item});
+  }
+
+  @override
+  Future<List<String>> listAddedDirectories(String jobId) async {
+    return (await host.call('build', 'listAddedDirectories', {'jobId': jobId}))
+        as List<String>;
+  }
+
+  @override
+  Future<void> captureDirtyRevision(String jobId) async {
+    await host.call('build', 'captureDirtyRevision', {'jobId': jobId});
+  }
+
+  @override
+  Future<void> clearTaskDirtyRevision(String jobId) async {
+    await host.call('build', 'clearTaskDirtyRevision', {'jobId': jobId});
+  }
+
+  @override
+  Future<void> prepareChangeSet(
+      String jobId, String rootId, String scopeId) async {
+    await host.call('build', 'prepareChangeSet',
+        {'jobId': jobId, 'rootId': rootId, 'scopeId': scopeId});
+  }
+
+  @override
+  Future<LibraryBuildJob> createRetryTask(String originalId,
+      {bool nodesOnly = false}) async {
+    return (await host.call('build', 'createRetryTask',
+        {'originalId': originalId, 'nodesOnly': nodesOnly})) as LibraryBuildJob;
+  }
+
+  @override
   Future<void> finalizeIndex(LibraryBuildJob job) async {
     await host.call('build', 'finalizeIndex', {'job': job});
   }
@@ -75,6 +153,11 @@ class BuildClient implements BuildAccess {
   @override
   Future<void> validateScope(LibraryBuildJob job) async {
     await host.call('build', 'validateScope', {'job': job});
+  }
+
+  @override
+  Future<void> validateTaskRevision(String jobId) async {
+    await host.call('build', 'validateTaskRevision', {'jobId': jobId});
   }
 
   @override

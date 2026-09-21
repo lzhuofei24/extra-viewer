@@ -3,6 +3,23 @@ import 'dart:async';
 import '../../core/domain/models.dart';
 
 abstract interface class BuildAccess {
+  FutureOr<List<LibraryBuildJob>> listTasks({int offset = 0, int limit = 100});
+  FutureOr<Map<String, Object?>> loadTaskDetails(String jobId);
+  FutureOr<void> configureTask(String jobId,
+      {String? taskKind,
+      int priority = 70,
+      String? displayName,
+      String? retryOfTaskId,
+      bool userActionRequired = false});
+  FutureOr<void> recordTaskOperation(String jobId, String operation);
+  FutureOr<void> setTaskStatus(String jobId, LibraryBuildStatus status);
+  FutureOr<void> setCurrentItem(String jobId, String item);
+  FutureOr<List<String>> listAddedDirectories(String jobId);
+  FutureOr<void> captureDirtyRevision(String jobId);
+  FutureOr<void> clearTaskDirtyRevision(String jobId);
+  FutureOr<void> prepareChangeSet(String jobId, String rootId, String scopeId);
+  FutureOr<LibraryBuildJob> createRetryTask(String originalId,
+      {bool nodesOnly = false});
   FutureOr<void> finalizeIndex(LibraryBuildJob job);
   FutureOr<LibraryBuildJob> create(
       {required String sourcePath,
@@ -18,6 +35,7 @@ abstract interface class BuildAccess {
   FutureOr<LibraryBuildJob> fail(String jobId, Object error);
   FutureOr<LibraryBuildJob> block(String jobId, Object error);
   FutureOr<void> validateScope(LibraryBuildJob job);
+  FutureOr<void> validateTaskRevision(String jobId);
   FutureOr<void> completeManifest(String jobId, int total);
   FutureOr<void> abandon(String jobId);
   FutureOr<LibraryBuildJob> setRoots(

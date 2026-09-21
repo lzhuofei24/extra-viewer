@@ -414,7 +414,42 @@ class LibraryRepositoryBase {
     });
   }
 
+  void clearIndexNodePreviewDirty(
+    String nodeId, {
+    IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,
+  }) {
+    writeTransaction(() {
+      database.db.execute('''
+        WITH RECURSIVE descendants(id) AS (
+          SELECT id FROM index_nodes WHERE id = ?
+          UNION ALL
+          SELECT node.id FROM index_nodes node JOIN descendants
+            ON node.parent_id = descendants.id
+          WHERE ?
+        ), ancestors(id) AS (
+          SELECT id FROM index_nodes WHERE id = ?
+          UNION ALL
+          SELECT parent.parent_id FROM index_nodes parent JOIN ancestors
+            ON parent.id = ancestors.id
+          WHERE parent.parent_id IS NOT NULL
+        ), affected(id) AS (
+          SELECT id FROM descendants
+          UNION SELECT id FROM ancestors
+        )
+        DELETE FROM node_preview_dirty
+        WHERE node_id IN (SELECT id FROM affected)
+      ''', [nodeId, scope == IndexPreviewRebuildScope.subtree ? 1 : 0, nodeId]);
+    });
+  }
+
   // --- Thumbnail file cleanup (called from IndexBuildMixin) ----------------
+  void _recordTaskAffected(String jobId, String nodeId) {
+    database.db.execute('''WITH RECURSIVE ancestors(id) AS (
+      SELECT ? UNION SELECT n.parent_id FROM index_nodes n JOIN ancestors a ON n.id=a.id WHERE n.parent_id IS NOT NULL)
+      INSERT OR REPLACE INTO library_task_dirty(job_id,node_id,revision)
+      SELECT ?,node_id,revision FROM node_preview_dirty WHERE node_id IN (SELECT id FROM ancestors)''',
+        [nodeId, jobId]);
+  }
 
   void _deleteUnreferencedThumbnailFiles(Iterable<String> keys) {
     for (final key in keys.toSet()) {

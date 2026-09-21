@@ -824,6 +824,8 @@ enum LibraryBuildStatus {
   running,
   pauseRequested,
   paused,
+  interrupted,
+  cancelRequested,
   blocked,
   failed,
   abandoned,
@@ -871,10 +873,35 @@ class PreparedEntityPreview {
 }
 
 class LibraryBuildJob {
+  String get taskPhase => switch (stage) {
+        LibraryBuildStage.manifest => 'scanning',
+        LibraryBuildStage.indexWrite => 'indexWriting',
+        LibraryBuildStage.finalize => 'finalizing',
+        _ => stage.name,
+      };
+  String get taskKind =>
+      taskMetadata['task_kind'] as String? ??
+      (kind == LibraryBuildKind.rebuildPreviews
+          ? 'retryNodePreview'
+          : operation == LibraryBuildOperation.rootScan
+              ? 'import'
+              : 'update');
+  String get taskStatus => switch (status) {
+        LibraryBuildStatus.pending => 'queued',
+        LibraryBuildStatus.abandoned => 'cancelled',
+        _ => status.name,
+      };
+  int get priority => taskMetadata['priority'] as int? ?? 70;
+  String? get displayName => taskMetadata['display_name'] as String?;
+  String? get currentItem => taskMetadata['current_item'] as String?;
+  String? get retryOfTaskId => taskMetadata['retry_of_task_id'] as String?;
+  bool get userActionRequired => taskMetadata['user_action_required'] == 1;
+  bool get isTerminal => isCompleted || status == LibraryBuildStatus.abandoned;
   bool get isCompleted =>
       status == LibraryBuildStatus.completed ||
       status == LibraryBuildStatus.completedWithErrors;
   const LibraryBuildJob({
+    this.taskMetadata = const {},
     required this.id,
     required this.sourcePath,
     required this.operation,
@@ -905,6 +932,7 @@ class LibraryBuildJob {
   });
 
   final String id;
+  final Map<String, Object?> taskMetadata;
   final LibraryBuildKind kind;
   final String? scopeNodeId;
   final bool manifestComplete;

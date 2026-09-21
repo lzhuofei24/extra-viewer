@@ -4,6 +4,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('management separates task center without adding a destination',
+      (tester) async {
+    await _pumpManagement(tester, const Size(320, 640));
+    expect(find.text('资料管理'), findsOneWidget);
+    expect(find.text('可恢复任务'), findsNothing);
+    await tester.tap(find.text('任务中心'));
+    await tester.pumpAndSettle();
+    expect(find.text('暂无任务'), findsOneWidget);
+    expect(find.text('全部资料'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets('management roots use two portrait columns', (tester) async {
     await _pumpManagement(tester, const Size(400, 800));
     for (final grid in tester.widgetList<GridView>(find.byType(GridView))) {

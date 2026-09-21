@@ -5,6 +5,47 @@ import '../../core/database/library_build_repository.dart';
 Future<Object?> dispatchBuild(LibraryBuildRepository repository, String method,
     Map<String, Object?> args) async {
   switch (method) {
+    case 'listTasks':
+      return repository.listTasks(
+          offset: (args['offset'] as int?) ?? 0,
+          limit: (args['limit'] as int?) ?? 100);
+    case 'loadTaskDetails':
+      return repository.loadTaskDetails(args['jobId'] as String);
+    case 'configureTask':
+      repository.configureTask(args['jobId'] as String,
+          taskKind: args['taskKind'] as String?,
+          priority: (args['priority'] as int?) ?? 70,
+          displayName: args['displayName'] as String?,
+          retryOfTaskId: args['retryOfTaskId'] as String?,
+          userActionRequired: (args['userActionRequired'] as bool?) ?? false);
+      return null;
+    case 'recordTaskOperation':
+      repository.recordTaskOperation(
+          args['jobId'] as String, args['operation'] as String);
+      return null;
+    case 'setTaskStatus':
+      repository.setTaskStatus(
+          args['jobId'] as String, args['status'] as LibraryBuildStatus);
+      return null;
+    case 'setCurrentItem':
+      repository.setCurrentItem(
+          args['jobId'] as String, args['item'] as String);
+      return null;
+    case 'listAddedDirectories':
+      return repository.listAddedDirectories(args['jobId'] as String);
+    case 'captureDirtyRevision':
+      repository.captureDirtyRevision(args['jobId'] as String);
+      return null;
+    case 'clearTaskDirtyRevision':
+      repository.clearTaskDirtyRevision(args['jobId'] as String);
+      return null;
+    case 'prepareChangeSet':
+      repository.prepareChangeSet(args['jobId'] as String,
+          args['rootId'] as String, args['scopeId'] as String);
+      return null;
+    case 'createRetryTask':
+      return repository.createRetryTask(args['originalId'] as String,
+          nodesOnly: (args['nodesOnly'] as bool?) ?? false);
     case 'finalizeIndex':
       repository.finalizeIndex(args['job'] as LibraryBuildJob);
       return null;
@@ -34,6 +75,9 @@ Future<Object?> dispatchBuild(LibraryBuildRepository repository, String method,
       return repository.block(args['jobId'] as String, args['error'] as Object);
     case 'validateScope':
       repository.validateScope(args['job'] as LibraryBuildJob);
+      return null;
+    case 'validateTaskRevision':
+      repository.validateTaskRevision(args['jobId'] as String);
       return null;
     case 'completeManifest':
       repository.completeManifest(

@@ -58,8 +58,11 @@ void main() {
           original.map((rule) => rule.node.id));
     }
     await worker.exitForTesting(background: true);
+    final page =
+        await worker.loadRulePage(ruleNodeId: original.first.node.id, limit: 1);
+    expect(page.items, isEmpty);
     expect(
-        await worker.loadRuleSummaries([original.first.node.id]), hasLength(1));
+        await worker.loadDirtyStatistics(), isA<List<Map<String, Object?>>>());
     await worker.exitForTesting();
     final pending = worker.listRules();
     final assertion = expectLater(pending, throwsStateError);

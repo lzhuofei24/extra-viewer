@@ -35,6 +35,22 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
       final current = existing[item.sourcePath];
       final entityId = current?.id ?? newId();
       locations[entityId] = item.sourcePath;
+      if (current != null) {
+        // Some SAF providers retain the URI when a file moves. Replace only
+        // directory links within this scan; user collection links survive.
+        final previous = database.db.select('''WITH RECURSIVE scope(id) AS (
+          SELECT ? UNION ALL SELECT n.id FROM index_nodes n JOIN scope ON n.parent_id=scope.id
+        ) SELECT index_node_id FROM index_node_entities WHERE entity_id=?
+          AND index_node_id IN (SELECT id FROM scope) AND index_node_id!=?''',
+            [job.scopeNodeId ?? rootId, entityId, node.id]);
+        for (final row in previous) {
+          final previousId = row['index_node_id'] as String;
+          touchedNodes.add(previousId);
+          statements.add(LibraryWriteStatement(
+              'DELETE FROM index_node_entities WHERE index_node_id=? AND entity_id=?',
+              [previousId, entityId]));
+        }
+      }
       if (current == null) {
         statements.add(LibraryWriteStatement(
           '''
@@ -165,6 +181,7 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
         }
         for (final nodeId in touchedNodes) {
           markIndexNodePreviewDirty(nodeId, reason: 'index_page_committed');
+          _recordTaskAffected(job.id, nodeId);
         }
         final rootLocator = _nodeById(rootId)?.sourcePath;
         for (final entry in locations.entries) {
@@ -597,7 +614,17 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
           AND entity.directory_root_id = ?
           AND NOT EXISTS (SELECT 1 FROM library_build_manifest manifest
             WHERE manifest.job_id = ? AND manifest.source_path = entity.path)
-      ''', [nodeId, rootId, jobId]);
+          AND (NOT EXISTS(SELECT 1 FROM library_task_details task WHERE task.job_id=? AND task.change_set_revision IS NOT NULL)
+            OR EXISTS(SELECT 1 FROM library_task_changes change WHERE change.job_id=?
+            AND change.entity_id=entity.id AND change.change_kind='removed' AND change.source_revision=entity.source_revision))
+      ''', [nodeId, rootId, jobId, jobId, jobId]);
+      for (final row in database.db
+          .select('''SELECT DISTINCT index_node_id FROM index_node_entities
+        WHERE entity_id IN (SELECT id FROM stale_scan_entities)''')) {
+        markIndexNodePreviewDirty(row['index_node_id'] as String,
+            reason: 'scan_removed_entities');
+        _recordTaskAffected(jobId, row['index_node_id'] as String);
+      }
       database.db.execute('''
         WITH RECURSIVE subtree(id) AS (
           SELECT ? UNION ALL SELECT child.id FROM index_nodes child
@@ -612,7 +639,23 @@ mixin IndexBuildMixin on LibraryRepositoryBase {
       ''');
       database.db.execute('DELETE FROM stale_scan_entities');
     });
-    pruneEmptyDirectoryNodes(nodeId);
+    final scopedChangeSet = database.db.select(
+        'SELECT 1 FROM library_task_details WHERE job_id=? AND change_set_revision IS NOT NULL',
+        [jobId]).isNotEmpty;
+    if (scopedChangeSet) {
+      // Remove only directories proven missing, deepest first. Empty source
+      // directories still present in the snapshot must remain visible.
+      for (final row in database.db.select(
+          "SELECT node_id FROM library_task_directory_changes WHERE job_id=? AND change_kind='removed' ORDER BY length(relative_path) DESC",
+          [jobId])) {
+        database.db.execute('''DELETE FROM index_nodes WHERE id=?
+          AND NOT EXISTS(SELECT 1 FROM index_node_entities WHERE index_node_id=index_nodes.id)
+          AND NOT EXISTS(SELECT 1 FROM index_nodes child WHERE child.parent_id=index_nodes.id)''',
+            [row['node_id']]);
+      }
+    } else {
+      pruneEmptyDirectoryNodes(nodeId);
+    }
   }
 
   void pruneEmptyDirectoryNodes(String rootId) {

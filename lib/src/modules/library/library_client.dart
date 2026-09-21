@@ -609,6 +609,13 @@ class LibraryClient implements LibraryAccess {
   }
 
   @override
+  Future<void> clearIndexNodePreviewDirty(String nodeId,
+      {IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node}) async {
+    await host.call('library', 'clearIndexNodePreviewDirty',
+        {'nodeId': nodeId, 'scope': scope});
+  }
+
+  @override
   Future<Map<String, String>> listDirtyPreviewRoots() async {
     return (await host.call('library', 'listDirtyPreviewRoots', {}))
         as Map<String, String>;

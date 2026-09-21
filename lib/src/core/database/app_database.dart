@@ -3,8 +3,9 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'schema_current.dart';
+import 'task_schema.dart';
 
-/// App-owned storage. This release starts a new library without migration.
+/// App-owned storage with non-destructive compatibility patches.
 class AppDatabase {
   AppDatabase._(this.db, this.storageDirectoryPath, this.databasePath);
   static const currentSchemaVersion = 14;
@@ -26,29 +27,8 @@ class AppDatabase {
   static AppDatabase openAtPath(String path) {
     final file = File(p.normalize(p.absolute(path)));
     file.parent.createSync(recursive: true);
-    final pendingReset = File('${file.path}.reset-pending');
-    if (pendingReset.existsSync()) {
-      _clearOwnedStorage(file.path);
-      pendingReset.deleteSync();
-    }
-    var database = sqlite3.open(file.path);
-    final old = database.userVersion > 0 &&
-        database.userVersion < currentSchemaVersion &&
-        database
-            .select(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entities'")
-            .isNotEmpty &&
-        database
-            .select(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='index_nodes'")
-            .isNotEmpty;
-    if (old) {
-      database.dispose();
-      pendingReset.writeAsStringSync('14', flush: true);
-      _clearOwnedStorage(file.path);
-      pendingReset.deleteSync();
-      database = sqlite3.open(file.path);
-    }
+    // A legacy reset marker is not permission to erase an existing library.
+    final database = sqlite3.open(file.path);
     return _initialize(database, file.parent.path, file.path);
   }
 
@@ -57,7 +37,19 @@ class AppDatabase {
     try {
       database.execute('''PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;
         PRAGMA busy_timeout=3000; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-16384;''');
-      if (database.userVersion == currentSchemaVersion) return app;
+      if (database.userVersion == currentSchemaVersion) {
+        // Compatibility index for libraries created before this index was
+        // added. Without it, final reconciliation of a large directory scans
+        // the full manifest once per entity and can monopolize the writer for
+        // minutes. Creating an index is non-destructive and avoids a schema
+        // version bump that would reset existing libraries.
+        database.execute('''
+          CREATE INDEX IF NOT EXISTS idx_library_build_manifest_source_path
+          ON library_build_manifest(job_id, source_path)
+        ''');
+        database.execute(taskSchemaSql);
+        return app;
+      }
       final populated = database
           .select(
               "SELECT 1 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1")
@@ -68,6 +60,7 @@ class AppDatabase {
       database.execute('BEGIN IMMEDIATE');
       try {
         database.execute(currentSchemaSql);
+        database.execute(taskSchemaSql);
         _seedSystemNodes(database);
         database.execute('DELETE FROM query_revision_dirty');
         if (database.select('PRAGMA foreign_key_check').isNotEmpty) {

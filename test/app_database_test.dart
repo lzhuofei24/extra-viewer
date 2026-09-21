@@ -5,7 +5,31 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 void main() {
-  test('interrupted reset resumes before creating a fresh library', () {
+  test('task tables hot patch a current library without touching user records',
+      () {
+    final dir = Directory.systemTemp.createTempSync('task_hot_patch_');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final path = '${dir.path}/library.db';
+    final first = AppDatabase.openAtPath(path);
+    final root = LibraryRepository(first).ensureCollectionIndexRoot('Keep');
+    first.db.execute('DROP TRIGGER task_created; DROP TRIGGER task_transition');
+    for (final table in [
+      'library_task_dirty',
+      'library_task_changes',
+      'library_task_failures',
+      'library_task_events',
+      'library_task_details'
+    ]) {
+      first.db.execute('DROP TABLE $table');
+    }
+    first.close();
+    final next = AppDatabase.openAtPath(path);
+    expect(LibraryRepository(next).getIndexNode(root.id)?.name, 'Keep');
+    expect(next.db.select('SELECT * FROM library_task_events'), isEmpty);
+    expect(next.db.select('PRAGMA foreign_key_check'), isEmpty);
+    next.close();
+  });
+  test('legacy reset marker never removes preview assets on opening', () {
     final dir = Directory.systemTemp.createTempSync('interrupted_reset_');
     addTearDown(() => dir.deleteSync(recursive: true));
     final path = '${dir.path}/library.db';
@@ -14,8 +38,8 @@ void main() {
     File('${dir.path}/thumbnails/old.webp').writeAsStringSync('stale');
     final db = AppDatabase.openAtPath(path);
     addTearDown(db.close);
-    expect(File('$path.reset-pending').existsSync(), isFalse);
-    expect(Directory('${dir.path}/thumbnails').existsSync(), isFalse);
+    expect(File('$path.reset-pending').existsSync(), isTrue);
+    expect(File('${dir.path}/thumbnails/old.webp').readAsStringSync(), 'stale');
     expect(db.db.select('SELECT * FROM entities'), isEmpty);
   });
 
@@ -54,7 +78,7 @@ void main() {
         throwsA(isA<SqliteException>()));
   });
 
-  test('old library reset removes generated data only', () {
+  test('unsupported old library retains all records and preview assets', () {
     final dir = Directory.systemTemp.createTempSync('library_reset_');
     addTearDown(() => dir.deleteSync(recursive: true));
     final path = '${dir.path}/library.db';
@@ -70,11 +94,14 @@ void main() {
     final key = File('${dir.path}/release.jks')..writeAsStringSync('signing');
     Directory('${dir.path}/node_previews').createSync();
     File('${dir.path}/node_previews/old.webp').writeAsStringSync('preview');
-    final db = AppDatabase.openAtPath(path);
-    addTearDown(db.close);
-    expect(db.db.select('SELECT * FROM entities'), isEmpty);
-    expect(backup.existsSync(), isFalse);
-    expect(Directory('${dir.path}/node_previews').existsSync(), isFalse);
+    expect(() => AppDatabase.openAtPath(path),
+        throwsA(isA<AppDatabaseResetRequired>()));
+    final retained = sqlite3.open(path);
+    addTearDown(retained.dispose);
+    expect(retained.select('SELECT id FROM entities').single['id'], 'old');
+    expect(backup.existsSync(), isTrue);
+    expect(File('${dir.path}/node_previews/old.webp').readAsStringSync(),
+        'preview');
     expect(original.readAsStringSync(), 'original');
     expect(key.readAsStringSync(), 'signing');
   });
@@ -93,6 +120,26 @@ void main() {
         next.db
             .select("SELECT * FROM index_nodes WHERE system_key='favorites'"),
         hasLength(1));
+  });
+
+  test('current library adds the manifest reconciliation index on reopen', () {
+    final dir = Directory.systemTemp.createTempSync('library_index_hotfix_');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final path = '${dir.path}/library.db';
+    final first = AppDatabase.openAtPath(path);
+    first.db.execute('DROP INDEX idx_library_build_manifest_source_path');
+    first.close();
+
+    final reopened = AppDatabase.openAtPath(path);
+    addTearDown(reopened.close);
+    expect(
+      reopened.db.select('''
+        SELECT 1 FROM sqlite_master
+        WHERE type = 'index'
+          AND name = 'idx_library_build_manifest_source_path'
+      '''),
+      hasLength(1),
+    );
   });
 
   test('unrecognized databases are rejected without deletion', () {

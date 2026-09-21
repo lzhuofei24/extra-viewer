@@ -30,6 +30,10 @@ void main() {
         'UPDATE entities SET source_modified_at_ms = 2 WHERE id = ?',
         [newSmall.id]);
     database.db.execute(
+        'UPDATE entities SET last_opened_at = 20 WHERE id = ?', [oldLarge.id]);
+    database.db.execute(
+        'UPDATE entities SET last_opened_at = 10 WHERE id = ?', [newSmall.id]);
+    database.db.execute(
         'UPDATE entities SET source_modified_at_ms = 999 WHERE id = ?',
         [outside.id]);
     repository.linkEntitiesToIndexNode(
@@ -50,18 +54,18 @@ void main() {
     final covers = await worker
         .loadRuleCovers([capped.node.id, all.node.id, text.node.id, 'deleted']);
     expect(covers[capped.node.id]!.id, oldLarge.id);
-    expect(covers[all.node.id]!.id, newSmall.id);
+    expect(covers[all.node.id]!.id, oldLarge.id);
     expect(covers.containsKey(text.node.id), isFalse);
     expect(covers.containsKey('deleted'), isFalse);
     await worker.loadRulePage(
         ruleNodeId: all.node.id, sortMode: RuleSortMode.name);
     expect((await worker.loadRuleCovers([all.node.id]))[all.node.id]!.id,
-        newSmall.id);
+        oldLarge.id);
     database.db.execute(
         'UPDATE entities SET source_modified_at_ms = 2 WHERE id = ?',
         [oldLarge.id]);
     expect((await worker.loadRuleCovers([all.node.id]))[all.node.id]!.id,
-        ([oldLarge.id, newSmall.id]..sort()).first);
+        oldLarge.id);
   });
 
   test('system favorites and built-in rules reject rename and delete', () {

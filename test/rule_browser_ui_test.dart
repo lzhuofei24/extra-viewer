@@ -101,6 +101,9 @@ void main() {
               portraitFolders: FolderViewSettings(squareColumns: columns)),
           onThumbnail: (e) => requests.add(e.id));
       expect(find.byType(BrowserNodeGridSliver), findsOneWidget);
+      final ruleGrid = tester
+          .widget<BrowserNodeGridSliver>(find.byType(BrowserNodeGridSliver));
+      expect(ruleGrid.coverAspectRatio!(queries.rules.first.node), 1);
       expect(find.byType(IndexNodePreviewCard), findsNWidgets(2));
       expect(find.byType(EntityArtwork), findsNWidgets(2));
       final grid = tester.widget<SliverGrid>(find.byType(SliverGrid));

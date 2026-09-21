@@ -634,6 +634,13 @@ class _AppShellState extends State<AppShell> {
       onError: (error, stack) => AppDiagnosticLog.instance
           .error('dirty_preview_scheduler_failed', error, stack),
     )..start();
+    buildTasks.completedTasks.stream.listen((job) {
+      if (mounted && !_runtime.isClosing) {
+        _reload(
+            indexNodeId: _currentIndexNode?.id, invalidateBrowserCache: true);
+        _ruleBrowserController?.refreshCovers();
+      }
+    });
     final activeSessions = (await repository.listAudioPlaybackSessions());
     if (!mounted) return;
     final activeSession =
@@ -1703,48 +1710,32 @@ class _AppShellState extends State<AppShell> {
   }
 
   Future<void> _scan({String? rootDisplayName}) async {
-    final rootPath = _indexPathController.text.trim();
     final tasks = _buildTasks;
-    if (tasks == null || tasks.isRunning) return;
-    setState(() => _indexError = null);
-    final result = await tasks.startRoot(
-      rootPath,
-      displayName: rootDisplayName,
-    );
-    if (!mounted) return;
-    final createdIndex = result?.indexRootId == null
-        ? null
-        : (await _repository?.getIndexNode(result!.indexRootId!));
-    if (result?.isCompleted == true && createdIndex != null) {
-      if (!mounted) return;
-      setState(() {
-        _selectedIndexRoot = createdIndex;
-        _selectedItem = null;
-        _section = AppSection.indexes;
-      });
-      _reload(indexNodeId: createdIndex.id, invalidateBrowserCache: true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('扫描完成，文件预览和目录封面已保存。'),
-        ),
-      );
+    if (tasks == null) return;
+    try {
+      await tasks.createImportTask(_indexPathController.text.trim(),
+          displayName: rootDisplayName);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('导入任务已加入任务中心')));
+      }
+    } catch (error) {
+      if (mounted) setState(() => _indexError = '$error');
     }
   }
 
   Future<void> _updateDirectoryNode(IndexNode node) async {
     final tasks = _buildTasks;
-    if (tasks == null || tasks.isRunning) return;
-    setState(() => _indexError = null);
-    final result = await tasks.updateNode(node);
-    if (!mounted || result?.isCompleted != true) return;
-    _reload(indexNodeId: node.id, invalidateBrowserCache: true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          '已更新“${node.name}”及其下级，并完成预览资产构建。',
-        ),
-      ),
-    );
+    if (tasks == null) return;
+    try {
+      await tasks.createUpdateTask(node);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('更新任务已加入任务中心')));
+      }
+    } catch (error) {
+      if (mounted) setState(() => _indexError = '$error');
+    }
   }
 
   Future<void> _updateCurrentDirectoryNode() async {
@@ -1760,7 +1751,7 @@ class _AppShellState extends State<AppShell> {
 
   Future<void> _chooseDirectoryUpdateNode(IndexNode root) async {
     final repository = _repository;
-    if (repository == null || _scanning) return;
+    if (repository == null) return;
     final tree = (await repository.listIndexTree(root.id));
     final entityCount = await repository.countEntitiesUnderIndexNode(root.id);
     if (!mounted) return;
@@ -1800,7 +1791,7 @@ class _AppShellState extends State<AppShell> {
 
   Future<void> _showRebuildNodePreviews(IndexNode root) async {
     final repository = _repository;
-    if (repository == null || _scanning) return;
+    if (repository == null) return;
     final confirmed = await _confirm(
       title: '重新生成封面',
       message: '将重新生成“${root.name}”及全部下级文件夹或分类的封面。',
@@ -1814,7 +1805,7 @@ class _AppShellState extends State<AppShell> {
     _reload(invalidateBrowserCache: true);
     if (mounted) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('封面已重新生成')));
+          .showSnackBar(const SnackBar(content: Text('封面修复已加入任务中心')));
     }
   }
 
@@ -1922,36 +1913,46 @@ class _AppShellState extends State<AppShell> {
     bool recheck = false,
   }) async {
     final tasks = _buildTasks;
-    if (tasks == null || tasks.isRunning) return;
+    if (tasks == null) return;
     setState(() => _indexError = null);
-    final result = recheck
-        ? await tasks.recheck(job)
-        : retryFailed
-            ? await tasks.retryFailed(job)
-            : await tasks.resume(job);
-    if (!mounted) return;
-    if (result?.status == LibraryBuildStatus.completedWithErrors) {
+    try {
+      final result = recheck
+          ? await tasks.recheck(job)
+          : retryFailed
+              ? await tasks.retryFailed(job)
+              : await tasks.resume(job);
+      if (!mounted) return;
+      if (result?.status == LibraryBuildStatus.pending ||
+          result?.status == LibraryBuildStatus.running) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('已加入任务队列')));
+        return;
+      }
+      if (result?.status == LibraryBuildStatus.completedWithErrors) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '重试已执行，但仍有失败项：文件预览 ${result!.entityPreviewFailed}，目录封面 ${result.nodePreviewFailed}。',
+            ),
+          ),
+        );
+        return;
+      }
+      if (result?.status != LibraryBuildStatus.completed) return;
+      final targetNode = result?.indexRootId == null
+          ? null
+          : (await _repository?.getIndexNode(result!.indexRootId!));
+      if (!mounted) return;
+      if (targetNode != null) _openIndexNode(targetNode);
+      _reload(indexNodeId: targetNode?.id, invalidateBrowserCache: true);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            '重试已执行，但仍有失败项：文件预览 ${result!.entityPreviewFailed}，目录封面 ${result.nodePreviewFailed}。',
-          ),
+          content: Text(retryFailed ? '失败项重试完成。' : '扫描任务完成。'),
         ),
       );
-      return;
+    } catch (error) {
+      if (mounted) setState(() => _indexError = '$error');
     }
-    if (result?.status != LibraryBuildStatus.completed) return;
-    final targetNode = result?.indexRootId == null
-        ? null
-        : (await _repository?.getIndexNode(result!.indexRootId!));
-    if (!mounted) return;
-    if (targetNode != null) _openIndexNode(targetNode);
-    _reload(indexNodeId: targetNode?.id, invalidateBrowserCache: true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(retryFailed ? '失败项重试完成。' : '扫描任务完成。'),
-      ),
-    );
   }
 
   void _discardRecoverableIndexJob(LibraryBuildJob job) {
@@ -2003,10 +2004,23 @@ class _AppShellState extends State<AppShell> {
     final repository = _repository;
     final audioController = _audioController;
     if (repository == null || audioController == null) return;
-    (await repository.markOpened(entity.id));
-    final detail = (await repository.getEntity(entity.id));
-    if (!mounted || _viewerSessions.isStopped) return;
-    setState(() => _detail = detail);
+    // Viewing must not wait behind a large index transaction. Access history
+    // is useful bookkeeping, but failure or writer congestion must never
+    // prevent an image or video from opening.
+    unawaited(() async {
+      try {
+        await repository.markOpened(entity.id);
+        // The rule home may remain mounted behind the viewer. Refresh its
+        // cover after the access write commits so "最近图片" immediately
+        // reflects the image that was just opened.
+        await _ruleBrowserController?.refreshCovers();
+      } catch (error) {
+        AppDiagnosticLog.instance.warning(
+          'mark_opened_deferred_failed',
+          fields: {'entityId': entity.id, 'error': '$error'},
+        );
+      }
+    }());
     final sourceNode = detachSourceNode ? null : _currentIndexNode;
     final playbackQueue = playbackQueueOverride ??
         (entity.entityType == EntityType.audio && sourceNode != null
@@ -2042,16 +2056,24 @@ class _AppShellState extends State<AppShell> {
           ),
           audioController: audioController,
           onEntityOpened: (opened) async {
-            (await repository.markOpened(opened.id));
-            final detail = await repository.getEntity(opened.id);
-            if (mounted) {
-              setState(() {
-                _detail = detail;
-                if (_mediaOverlay != null) {
-                  _mediaOverlayEntityType = opened.entityType;
-                }
-              });
-            }
+            unawaited(() async {
+              try {
+                await repository.markOpened(opened.id);
+                await _ruleBrowserController?.refreshCovers();
+              } catch (error) {
+                AppDiagnosticLog.instance.warning(
+                  'mark_opened_deferred_failed',
+                  fields: {'entityId': opened.id, 'error': '$error'},
+                );
+              }
+            }());
+            if (!mounted) return;
+            setState(() {
+              _detail = null;
+              if (_mediaOverlay != null) {
+                _mediaOverlayEntityType = opened.entityType;
+              }
+            });
           },
           onShowDetails: (opened) => _showEntityDetail(opened),
           onOpenDirectoryRoot: _openDirectoryRootForEntity,
@@ -2818,7 +2840,7 @@ class _AppShellState extends State<AppShell> {
 
   Future<void> _renameIndexNode(IndexNode index) async {
     final repository = _repository;
-    if (repository == null || _scanning) return;
+    if (repository == null) return;
     final newName = await showDialog<String>(
       context: context,
       builder: (_) => TextPromptDialog(
@@ -2850,7 +2872,7 @@ class _AppShellState extends State<AppShell> {
 
   Future<void> _deleteIndexNode(IndexNode index) async {
     final repository = _repository;
-    if (repository == null || _scanning) return;
+    if (repository == null) return;
     if (index.nodeType == NodeType.directoryIndexRoot) {
       final report = (await repository.inspectDirectoryIndexDeletion(index.id));
       final force = await _confirmDirectoryIndexDeletion(report);
@@ -3176,6 +3198,7 @@ class _AppShellState extends State<AppShell> {
           },
         ),
       AppSection.indexes => IndexManagementPage(
+          taskController: _buildTasks,
           roots: _indexRoots,
           rules: _rules,
           rootCounts: _rootCounts,
