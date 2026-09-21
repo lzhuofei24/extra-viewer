@@ -40,6 +40,13 @@ class RuleBrowserController extends ChangeNotifier {
     }
   }
 
+  Future<void> refreshAfterAccess() async {
+    await refreshCovers();
+    if (activeRule != null) {
+      await loadPage(reset: true);
+    }
+  }
+
   bool immersive = false;
   void setImmersive(bool value) {
     if (immersive == value) return;
@@ -99,7 +106,9 @@ class RuleBrowserController extends ChangeNotifier {
   }
 
   Future<void> sort(RuleSortMode value) async {
-    if (activeRule == null || activeRule!.isBuiltIn) return;
+    if (activeRule == null || activeRule!.isBuiltIn) {
+      return;
+    }
     temporarySort = value;
     await loadPage(reset: true);
   }

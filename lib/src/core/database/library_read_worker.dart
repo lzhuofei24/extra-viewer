@@ -12,7 +12,6 @@ import 'node_search_query.dart';
 import 'browse_sessions.dart';
 import 'browse_cache_files.dart';
 import 'local_statistics.dart';
-import 'query_cache.dart';
 
 enum RecursiveReadScope { node, directoryHome, collectionHome }
 
@@ -630,7 +629,6 @@ void _readWorkerMain(Map<String, Object> config) {
     database.dispose();
     rethrow;
   }
-  final cache = QueryCache();
   final requestPort = ReceivePort();
   readyPort.send(requestPort.sendPort);
   requestPort.listen((message) {
@@ -681,10 +679,8 @@ void _readWorkerMain(Map<String, Object> config) {
         return;
       }
       if (request['type'] == 'ruleSummaries') {
-        cache.synchronize(database);
         final ids = (request['ruleIds'] as List).cast<String>().toSet();
-        final rules =
-            _loadRules(database, includeCounts: true, ids: ids, cache: cache);
+        final rules = _loadRules(database, includeCounts: true, ids: ids);
         replyPort.send({
           'ok': true,
           'counts': {
@@ -701,9 +697,7 @@ void _readWorkerMain(Map<String, Object> config) {
         return;
       }
       if (request['type'] == 'ruleCovers') {
-        cache.synchronize(database);
         final covers = <String, Object?>{};
-        final now = DateTime.now().millisecondsSinceEpoch;
         for (final id in (request['ruleIds'] as List).cast<String>().toSet()) {
           final rules = database
               .select('SELECT * FROM index_rules WHERE node_id = ?', [id]);
@@ -711,36 +705,16 @@ void _readWorkerMain(Map<String, Object> config) {
           final rule = rules.single;
           final sort =
               RuleSortMode.values.byName(rule['default_sort'] as String);
-          // Access ordered rules change whenever an entity is opened. Avoid
-          // retaining a cover across that write; metadata ordered rules can
-          // continue using the derived cache and their expiry rules.
-          final cacheable =
-              sort != RuleSortMode.lastOpened && sort != RuleSortMode.openCount;
-          final cached = cacheable
-              ? cache.get('cover:$id', now) as Map<String, Object?>?
-              : null;
-          if (cached != null) {
-            if (cached['entity'] != null) covers[id] = cached['entity'];
-            continue;
-          }
-          final query = _ruleQuery(rule, now);
-          // Filter to visual media before applying the rule's ordering.  The
-          // previous outer query re-sorted the capped candidates by modified
-          // time, which made a "recently opened" rule show an unrelated cover.
-          // Keep the rule order authoritative and only then cap the result.
           final rows = database.select('''
-            SELECT e.* FROM entity_details e
-            WHERE ${query.whereSql}
-              AND media_type IN ('image', 'video')
+            SELECT e.* FROM rule_access_items item
+            JOIN entity_details e ON e.id = item.entity_id
+            WHERE item.rule_id = ? AND e.archived = 0
+              AND e.media_type IN ('image', 'video')
             ORDER BY ${_ruleOrderBy(sort)}
             LIMIT 1
-          ''', query.parameters);
+          ''', [id]);
           if (rows.isNotEmpty) {
             covers[id] = _entityToMap(rows.single, storageDirectoryPath);
-          }
-          if (cacheable) {
-            cache.put('cover:$id', {'entity': covers[id]},
-                expiresAt: _ruleExpiry(database, rule, query));
           }
         }
         replyPort.send({'ok': true, 'covers': covers});
@@ -793,7 +767,7 @@ void _readWorkerMain(Map<String, Object> config) {
 }
 
 List<Map<String, Object?>> _loadRules(Database database,
-    {bool includeCounts = false, Set<String>? ids, QueryCache? cache}) {
+    {bool includeCounts = false, Set<String>? ids}) {
   final rows = database.select('''
     SELECT node.*, rule.entity_types_json, rule.extensions_json,
            rule.scope_node_id, rule.scope_state, rule.min_size, rule.max_size,
@@ -808,40 +782,14 @@ List<Map<String, Object?>> _loadRules(Database database,
   ''');
   return rows.where((row) => ids == null || ids.contains(row['id'])).map((row) {
     if (!includeCounts) return _ruleToMessage(row, null);
-    final key = 'count:${row['id']}';
-    final cached =
-        cache?.get(key, DateTime.now().millisecondsSinceEpoch) as int?;
-    if (cached != null) return _ruleToMessage(row, cached);
-    final query = _ruleQuery(row, DateTime.now().millisecondsSinceEpoch);
     final count = database.select(
-      'SELECT COUNT(*) AS count FROM (SELECT 1 FROM entities e WHERE ${query.whereSql} LIMIT ?)',
-      [...query.parameters, row['max_results']],
+      '''SELECT COUNT(*) AS count FROM rule_access_items item
+         JOIN entities e ON e.id = item.entity_id
+         WHERE item.rule_id = ? AND e.archived = 0''',
+      [row['id']],
     ).single['count'] as int;
-    cache?.put(key, count, expiresAt: _ruleExpiry(database, row, query));
-    return _ruleToMessage(row, count.clamp(0, row['max_results'] as int));
+    return _ruleToMessage(row, count);
   }).toList(growable: false);
-}
-
-int? _ruleExpiry(Database database, Row rule, _RuleQueryParts query) {
-  final terms = <String>[];
-  final modifiedDays = rule['modified_within_days'] as int?;
-  final openedDays = rule['opened_within_days'] as int?;
-  if (modifiedDays != null) {
-    terms.add(
-        'MIN(e.source_modified_at_ms) + ${modifiedDays * Duration.millisecondsPerDay + 1}');
-  }
-  if (openedDays != null) {
-    terms.add(
-        'MIN(e.last_opened_at) + ${openedDays * Duration.millisecondsPerDay + 1}');
-  }
-  if (terms.isEmpty) return null;
-  final expression =
-      terms.length == 1 ? terms.single : 'MIN(${terms.join(',')})';
-  return database
-      .select(
-          'SELECT $expression AS expiry FROM entities e WHERE ${query.whereSql}',
-          query.parameters)
-      .single['expiry'] as int?;
 }
 
 Map<String, Object?> _loadRulePage(
@@ -871,30 +819,19 @@ Map<String, Object?> _loadRulePage(
       ? RuleSortMode.values.byName(requestedSort)
       : RuleSortMode.values.byName(rule['default_sort'] as String);
   final consumed = request['consumed'] as int? ?? 0;
-  final maxResults = rule['max_results'] as int;
   final limit = (request['limit'] as int? ?? 60).clamp(1, 60);
-  if (rule['scope_state'] == 'missing') {
-    return const {
-      'entities': <Object?>[],
-      'hasMore': false,
-      'ruleCursor': null
-    };
-  }
   final excludeAudio = request['excludeAudio'] == true;
-  final scope = 'rule:${request['ruleNodeId']}:${sort.name}:$excludeAudio';
-  var sessionId = request['sessionId'] as String?;
-  if (sessionId == null) {
-    if (consumed != 0) throw StateError('浏览会话已失效，请刷新');
-    final query = _ruleQuery(rule, DateTime.now().millisecondsSinceEpoch,
-        excludeAudio: excludeAudio);
-    sessionId = sessions.create(scope, '''SELECT e.id FROM entities e
-      WHERE ${query.whereSql} ORDER BY ${_ruleOrderBy(sort)} LIMIT ?''',
-        [...query.parameters, maxResults]);
-  }
-  sessions.validate(sessionId, scope);
-  final entityRows = sessions.page(sessionId, consumed, limit);
+  final entityRows = database.select('''
+    SELECT e.* FROM rule_access_items item
+    JOIN entity_details e ON e.id = item.entity_id
+    WHERE item.rule_id = ? AND e.archived = 0
+      ${excludeAudio ? "AND e.media_type <> 'audio'" : ''}
+    ORDER BY ${_ruleOrderBy(sort)}
+    LIMIT ? OFFSET ?
+  ''', [request['ruleNodeId'], limit + 1, consumed]);
   final hasMore = entityRows.length > limit;
   final visible = entityRows.take(limit).toList(growable: false);
+  final nextConsumed = consumed + visible.length;
   final last = visible.isEmpty ? null : visible.last;
   return {
     'entities': visible
@@ -904,10 +841,11 @@ Map<String, Object?> _loadRulePage(
     'ruleCursor': last == null
         ? null
         : {
-            ..._ruleCursorValues(last, sort),
+            'primary': nextConsumed,
+            'secondary': null,
             'entityId': last['id'],
-            'consumed': last['session_ordinal'],
-            'sessionId': sessionId,
+            'consumed': nextConsumed,
+            'sessionId': null,
           },
   };
 }
@@ -935,85 +873,10 @@ Map<String, Object?> _loadRuleFilterOptions(
         .putIfAbsent(row['media_type'] as String, () => <String>[])
         .add(row['extension'] as String);
   }
-  final scopes = database.select('''
-    SELECT * FROM index_nodes
-    WHERE is_staging = 0
-      AND node_type IN ('directory_index_root', 'folder',
-                        'category_index_root', 'category')
-    ORDER BY CASE system_key WHEN 'favorites' THEN 0 ELSE 1 END,
-             name COLLATE NOCASE, id
-  ''');
   return {
     'extensionsByType': extensions,
-    'scopeNodes': scopes.map(_nodeToMap).toList(growable: false),
+    'scopeNodes': const <Object?>[],
   };
-}
-
-class _RuleQueryParts {
-  const _RuleQueryParts(this.whereSql, this.parameters);
-  final String whereSql;
-  final List<Object?> parameters;
-}
-
-_RuleQueryParts _ruleQuery(Row rule, int nowMs, {bool excludeAudio = false}) {
-  final clauses = <String>['e.archived = 0'];
-  if (excludeAudio) clauses.add("e.media_type <> 'audio'");
-  if (rule['scope_state'] == 'missing') clauses.add('0');
-  final parameters = <Object?>[];
-  final builtIn = rule['built_in_kind'] as String?;
-  if (builtIn == BuiltInRuleKind.frequent.name) {
-    clauses.add('e.open_count > 0');
-  } else if (builtIn != null) {
-    clauses.add('e.last_opened_at IS NOT NULL');
-  }
-  final types =
-      (jsonDecode(rule['entity_types_json'] as String) as List).cast<String>();
-  if (types.isNotEmpty) {
-    clauses
-        .add('e.media_type IN (${List.filled(types.length, '?').join(',')})');
-    parameters.addAll(types);
-  }
-  final extensions =
-      (jsonDecode(rule['extensions_json'] as String) as List).cast<String>();
-  if (extensions.isNotEmpty) {
-    clauses.add(
-        'lower(e.format) IN (${List.filled(extensions.length, '?').join(',')})');
-    parameters.addAll(extensions);
-  }
-  final scopeNodeId = rule['scope_node_id'] as String?;
-  if (scopeNodeId != null) {
-    clauses.add('''e.id IN (
-      WITH RECURSIVE subtree(id) AS (
-        SELECT ? UNION ALL
-        SELECT node.id FROM index_nodes node JOIN subtree parent
-          ON node.parent_id = parent.id
-      )
-      SELECT link.entity_id FROM index_node_entities link
-      WHERE link.index_node_id IN (SELECT id FROM subtree)
-    )''');
-    parameters.add(scopeNodeId);
-  }
-  final minSize = rule['min_size'] as int?;
-  final maxSize = rule['max_size'] as int?;
-  if (minSize != null) {
-    clauses.add('e.size >= ?');
-    parameters.add(minSize);
-  }
-  if (maxSize != null) {
-    clauses.add('e.size <= ?');
-    parameters.add(maxSize);
-  }
-  final modifiedDays = rule['modified_within_days'] as int?;
-  if (modifiedDays != null) {
-    clauses.add('e.source_modified_at_ms >= ?');
-    parameters.add(nowMs - modifiedDays * Duration.millisecondsPerDay);
-  }
-  final openedDays = rule['opened_within_days'] as int?;
-  if (openedDays != null) {
-    clauses.add('e.last_opened_at IS NOT NULL AND e.last_opened_at >= ?');
-    parameters.add(nowMs - openedDays * Duration.millisecondsPerDay);
-  }
-  return _RuleQueryParts(clauses.join(' AND '), parameters);
 }
 
 String _ruleOrderBy(RuleSortMode sort) => switch (sort) {
@@ -1025,40 +888,16 @@ String _ruleOrderBy(RuleSortMode sort) => switch (sort) {
       RuleSortMode.size => 'e.size DESC, e.id ASC',
     };
 
-Map<String, Object?> _ruleCursorValues(Row row, RuleSortMode sort) =>
-    switch (sort) {
-      RuleSortMode.lastOpened => {
-          'primary': row['last_opened_at'] as int? ?? 0,
-          'secondary': null,
-        },
-      RuleSortMode.openCount => {
-          'primary': row['open_count'] as int,
-          'secondary': row['last_opened_at'] as int? ?? 0,
-        },
-      RuleSortMode.modified => {
-          'primary': row['source_modified_at_ms'] as int,
-          'secondary': null,
-        },
-      RuleSortMode.name => {
-          'primary': row['name'] as String,
-          'secondary': null,
-        },
-      RuleSortMode.size => {
-          'primary': row['size'] as int,
-          'secondary': null,
-        },
-    };
-
 Map<String, Object?> _ruleToMessage(Row row, int? resultCount) => {
       'node': _nodeToMap(row),
       'entityTypes': (jsonDecode(row['entity_types_json'] as String) as List),
       'extensions': (jsonDecode(row['extensions_json'] as String) as List),
-      'scopeNodeId': row['scope_node_id'],
-      'scopeMissing': row['scope_state'] == 'missing',
+      'scopeNodeId': null,
+      'scopeMissing': false,
       'minSize': row['min_size'],
       'maxSize': row['max_size'],
-      'modifiedWithinDays': row['modified_within_days'],
-      'openedWithinDays': row['opened_within_days'],
+      'modifiedWithinDays': null,
+      'openedWithinDays': null,
       'defaultSort': row['default_sort'],
       'maxResults': row['max_results'],
       'builtInKind': row['built_in_kind'],

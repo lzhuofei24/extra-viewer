@@ -132,6 +132,10 @@ mixin RuleRepositoryMixin on LibraryRepositoryBase {
         defaultSort: defaultSort,
         maxResults: maxResults,
       );
+      database.db.execute(
+        'DELETE FROM rule_access_items WHERE rule_id = ?',
+        [nodeId],
+      );
       return _ruleById(nodeId)!;
     });
   }
@@ -172,7 +176,7 @@ mixin RuleRepositoryMixin on LibraryRepositoryBase {
       (node_id, entity_types_json, extensions_json, scope_node_id, min_size,
        max_size, modified_within_days, opened_within_days, default_sort,
        max_results, updated_at, scope_state)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, NULL, ?, ?, NULL, NULL, ?, ?, ?, 'all')
       ON CONFLICT(node_id) DO UPDATE SET
         entity_types_json = excluded.entity_types_json,
         extensions_json = excluded.extensions_json,
@@ -190,15 +194,11 @@ mixin RuleRepositoryMixin on LibraryRepositoryBase {
         nodeId,
         jsonEncode(entityTypes.map((value) => value.value).toList()),
         jsonEncode(normalizedExtensions),
-        scopeNodeId,
         minSize,
         maxSize,
-        modifiedWithinDays,
-        openedWithinDays,
         defaultSort.name,
         maxResults,
         now,
-        scopeNodeId == null ? 'all' : 'node',
       ],
     );
   }
@@ -217,26 +217,13 @@ mixin RuleRepositoryMixin on LibraryRepositoryBase {
     if (minSize != null && maxSize != null && minSize > maxSize) {
       throw ArgumentError('Rule minimum size exceeds maximum size');
     }
-    if ((modifiedWithinDays != null && modifiedWithinDays < 1) ||
-        (openedWithinDays != null && openedWithinDays < 1)) {
-      throw ArgumentError('Rule relative days must be positive');
+    if (scopeNodeId != null ||
+        modifiedWithinDays != null ||
+        openedWithinDays != null) {
+      throw ArgumentError('Access rules only support type, extension and size');
     }
-    if (maxResults < 1 || maxResults > 100000) {
+    if (maxResults < 1 || maxResults > 1000) {
       throw ArgumentError.value(maxResults, 'maxResults');
-    }
-    if (scopeNodeId != null) {
-      final scope = _nodeById(scopeNodeId);
-      if (scope == null ||
-          (scope.nodeType != NodeType.directoryIndexRoot &&
-              scope.nodeType != NodeType.folder &&
-              scope.nodeType != NodeType.customIndexRoot &&
-              scope.nodeType != NodeType.customNode)) {
-        throw ArgumentError.value(
-          scopeNodeId,
-          'scopeNodeId',
-          'Rule scope must be a directory or category',
-        );
-      }
     }
   }
 
@@ -277,12 +264,12 @@ RuleDefinition _ruleFromRow(Row row) {
         .map(EntityType.fromValue)
         .toList(growable: false),
     extensions: strings('extensions_json'),
-    scopeNodeId: row['scope_node_id'] as String?,
-    scopeMissing: row['scope_state'] == 'missing',
+    scopeNodeId: null,
+    scopeMissing: false,
     minSize: row['min_size'] as int?,
     maxSize: row['max_size'] as int?,
-    modifiedWithinDays: row['modified_within_days'] as int?,
-    openedWithinDays: row['opened_within_days'] as int?,
+    modifiedWithinDays: null,
+    openedWithinDays: null,
     defaultSort: RuleSortMode.values.byName(row['default_sort'] as String),
     maxResults: row['max_results'] as int,
     builtInKind:
@@ -290,3 +277,15 @@ RuleDefinition _ruleFromRow(Row row) {
     updatedAtMs: row['rule_updated_at'] as int,
   );
 }
+
+String _accessRuleOrderBy(RuleSortMode sort, {String alias = 'e'}) =>
+    switch (sort) {
+      RuleSortMode.lastOpened =>
+        'COALESCE($alias.last_opened_at, 0) DESC, $alias.id ASC',
+      RuleSortMode.openCount =>
+        '$alias.open_count DESC, COALESCE($alias.last_opened_at, 0) DESC, $alias.id ASC',
+      RuleSortMode.modified =>
+        '$alias.source_modified_at_ms DESC, $alias.id ASC',
+      RuleSortMode.name => '$alias.name COLLATE NOCASE ASC, $alias.id ASC',
+      RuleSortMode.size => '$alias.size DESC, $alias.id ASC',
+    };

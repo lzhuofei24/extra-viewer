@@ -264,7 +264,7 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
                 widget.browserState.copyWith(folderCoverStyle: value))
             : null,
         onAdd: rule == null ? widget.onCreateRule : null,
-        addLabel: '新建规则',
+        addLabel: '新建访问规则',
         onToggleImmersive: rule == null ? null : () => _setImmersive(true),
         selectionMode: _selectionMode,
         onToggleSelection: _selectionMode ? _exitSelection : () => _select(),
@@ -440,8 +440,6 @@ IconData _ruleIcon(BuiltInRuleKind? kind) => switch (kind) {
       BuiltInRuleKind.frequent => Icons.local_fire_department_outlined,
       BuiltInRuleKind.recentImages => Icons.image_outlined,
       BuiltInRuleKind.recentVideos => Icons.movie_outlined,
-      BuiltInRuleKind.recentText => Icons.article_outlined,
-      BuiltInRuleKind.recentMusic => Icons.music_note_outlined,
       null => Icons.rule_outlined,
     };
 
@@ -451,8 +449,6 @@ String _ruleSummary(RuleDefinition rule) {
       BuiltInRuleKind.frequent => '访问越多，位置越靠前',
       BuiltInRuleKind.recentImages => '最近打开过的图片',
       BuiltInRuleKind.recentVideos => '最近打开过的视频',
-      BuiltInRuleKind.recentText => '最近打开过的文本和文档',
-      BuiltInRuleKind.recentMusic => '最近打开过的音乐',
     };
   }
   final parts = <String>[];
@@ -460,9 +456,6 @@ String _ruleSummary(RuleDefinition rule) {
     parts.add(rule.entityTypes.map((e) => e.value).join('、'));
   }
   if (rule.extensions.isNotEmpty) parts.add(rule.extensions.join('、'));
-  if (rule.scopeNodeId != null) parts.add('限定位置');
   if (rule.minSize != null || rule.maxSize != null) parts.add('限定大小');
-  if (rule.modifiedWithinDays != null) parts.add('最近修改');
-  if (rule.openedWithinDays != null) parts.add('最近打开');
   return parts.isEmpty ? '全部文件' : parts.join(' · ');
 }

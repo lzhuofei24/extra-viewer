@@ -343,11 +343,13 @@ mixin EntityRepositoryMixin on LibraryRepositoryBase {
   void markOpened(String entityId) {
     _requireEntityExists(entityId);
     final now = nowMillis();
-    _enqueueBackgroundWrite(
-      'mark_opened',
-      'UPDATE entities SET last_opened_at = ?, open_count = open_count + 1, updated_at = ? WHERE id = ?',
-      [now, now, entityId],
-    );
+    writeTransaction(() {
+      database.db.execute(
+        'UPDATE entities SET last_opened_at = ?, open_count = open_count + 1, updated_at = ? WHERE id = ?',
+        [now, now, entityId],
+      );
+      _evaluateAccessRules(entityId, now);
+    });
   }
 
   void savePlaybackState({

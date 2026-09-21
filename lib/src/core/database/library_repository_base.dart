@@ -94,6 +94,63 @@ class LibraryRepositoryBase {
     database.db.execute(sql, parameters);
   }
 
+  void _evaluateAccessRules(String entityId, int openedAt) {
+    final entities = database.db.select(
+      'SELECT * FROM entities WHERE id = ? AND archived = 0 LIMIT 1',
+      [entityId],
+    );
+    if (entities.isEmpty) return;
+    final entity = entities.single;
+    final rules = database.db.select('SELECT * FROM index_rules');
+    for (final rule in rules) {
+      final types = (jsonDecode(rule['entity_types_json'] as String) as List)
+          .cast<String>();
+      final extensions = (jsonDecode(rule['extensions_json'] as String) as List)
+          .cast<String>();
+      final mediaType = entity['media_type'] as String;
+      final format = (entity['format'] as String).toLowerCase();
+      final size = entity['size'] as int;
+      final minSize = rule['min_size'] as int?;
+      final maxSize = rule['max_size'] as int?;
+      final matches = (types.isEmpty || types.contains(mediaType)) &&
+          (extensions.isEmpty || extensions.contains(format)) &&
+          (minSize == null || size >= minSize) &&
+          (maxSize == null || size <= maxSize);
+      final ruleId = rule['node_id'] as String;
+      if (!matches) {
+        database.db.execute(
+          'DELETE FROM rule_access_items WHERE rule_id = ? AND entity_id = ?',
+          [ruleId, entityId],
+        );
+        continue;
+      }
+      database.db.execute('''
+        INSERT INTO rule_access_items(rule_id, entity_id, matched_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(rule_id, entity_id)
+        DO UPDATE SET matched_at = excluded.matched_at
+      ''', [ruleId, entityId, openedAt]);
+      final sort = RuleSortMode.values.byName(rule['default_sort'] as String);
+      final limit = (rule['max_results'] as int).clamp(1, 1000);
+      final count = database.db.select(
+        'SELECT COUNT(*) AS count FROM rule_access_items WHERE rule_id = ?',
+        [ruleId],
+      ).single['count'] as int;
+      if (count <= limit) continue;
+      database.db.execute('''
+        DELETE FROM rule_access_items
+        WHERE rule_id = ? AND entity_id NOT IN (
+          SELECT item.entity_id
+          FROM rule_access_items item
+          JOIN entities e ON e.id = item.entity_id
+          WHERE item.rule_id = ? AND e.archived = 0
+          ORDER BY ${_accessRuleOrderBy(sort)}
+          LIMIT ?
+        )
+      ''', [ruleId, ruleId, limit]);
+    }
+  }
+
   T batchIndexMutations<T>(T Function() action) {
     _indexStatsBatchDepth++;
     try {

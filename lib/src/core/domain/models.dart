@@ -232,13 +232,7 @@ class NodePreviewBuildInput {
 
 enum NodeSearchScope { all, directory, collection, rule }
 
-enum BuiltInRuleKind {
-  frequent,
-  recentImages,
-  recentVideos,
-  recentText,
-  recentMusic
-}
+enum BuiltInRuleKind { frequent, recentImages, recentVideos }
 
 enum RuleSortMode { lastOpened, openCount, modified, name, size }
 

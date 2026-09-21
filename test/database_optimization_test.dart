@@ -179,8 +179,7 @@ void main() {
     expect(repo.getEntity(first.id), isNotNull);
     expect(repo.getEntity(other.id), isNotNull);
   });
-  test('rule sessions keep membership and order while visits and files change',
-      () async {
+  test('rule membership changes only when a file is visited', () async {
     final dir = Directory.systemTemp.createTempSync('stable_rule_');
     final db = AppDatabase.openAtPath('${dir.path}/library.db');
     final repo = LibraryRepository(db);
@@ -194,16 +193,25 @@ void main() {
     final reader = await LibraryReadWorker.start(
         databasePath: db.databasePath!, storageDirectoryPath: dir.path);
     try {
-      final first = await reader.loadRulePage(
+      expect(
+          (await reader.loadRulePage(
+                  ruleNodeId: 'system-rule-frequent', limit: 2))
+              .items,
+          isEmpty);
+      repo.markOpened('e0');
+      repo.markOpened('e1');
+      final visited = await reader.loadRulePage(
           ruleNodeId: 'system-rule-frequent', limit: 2);
-      expect(first.items.map((e) => e.id), ['e0', 'e1']);
+      expect(visited.items.map((e) => e.id), ['e0', 'e1']);
       db.db.execute("UPDATE entities SET open_count=100 WHERE id='e4'");
       db.db.execute("DELETE FROM entities WHERE id='e2'");
-      final second = await reader.loadRulePage(
-          ruleNodeId: 'system-rule-frequent', after: first.cursor, limit: 2);
-      expect(second.items.map((e) => e.id), ['e3', 'e4']);
-      expect(second.hasMore, isFalse);
-      repo.markOpened('e3');
+      expect(
+          (await reader.loadRulePage(
+                  ruleNodeId: 'system-rule-frequent', limit: 5))
+              .items
+              .map((e) => e.id),
+          ['e0', 'e1']);
+      repo.markOpened('e4');
       final refreshed = await reader.loadRulePage(
           ruleNodeId: 'system-rule-frequent', limit: 2);
       expect(refreshed.items.first.id, 'e4');
@@ -269,32 +277,15 @@ void main() {
             'SELECT * FROM node_preview_dirty WHERE node_id=?', [root.id]),
         isNotEmpty);
   });
-  test('deleting a scope cannot turn a rule into an unrestricted query',
-      () async {
-    final dir = Directory.systemTemp.createTempSync('rule_scope_');
-    final db = AppDatabase.openAtPath('${dir.path}/library.db');
+  test('access rules reject directory scopes', () {
+    final db = AppDatabase.openInMemory();
+    addTearDown(db.close);
     final repo = LibraryRepository(db);
     final scope = repo.ensureCollectionIndexRoot('scope');
-    final rule = repo.createRule(name: 'scoped', scopeNodeId: scope.id);
-    db.db.execute('DELETE FROM index_nodes WHERE id = ?', [scope.id]);
-    expect(repo.getRule(rule.node.id)!.scopeMissing, isTrue);
-    final reader = await LibraryReadWorker.start(
-        databasePath: db.databasePath!, storageDirectoryPath: dir.path);
-    try {
-      expect(
-          (await reader.loadRulePage(ruleNodeId: rule.node.id)).items, isEmpty);
-      expect(
-          (await reader.listRules())
-              .singleWhere((r) => r.node.id == rule.node.id)
-              .scopeMissing,
-          isTrue);
-      repo.updateRule(nodeId: rule.node.id, name: 'all');
-      expect(repo.getRule(rule.node.id)!.scopeMissing, isFalse);
-    } finally {
-      await reader.close();
-      db.close();
-      dir.deleteSync(recursive: true);
-    }
+    expect(
+      () => repo.createRule(name: 'scoped', scopeNodeId: scope.id),
+      throwsArgumentError,
+    );
   });
 
   test('SQL cannot bypass protected nodes or create ancestry cycles', () {
@@ -316,13 +307,12 @@ void main() {
         throwsA(isA<SqliteException>()));
   });
 
-  test('frequent ordering is entirely index backed', () {
+  test('access-rule membership lookup is index backed', () {
     final db = AppDatabase.openInMemory();
     addTearDown(db.close);
     final details = db.db
-        .select('''EXPLAIN QUERY PLAN SELECT id FROM entities
-      WHERE archived=0 AND open_count>0
-      ORDER BY open_count DESC, COALESCE(last_opened_at,0) DESC, id LIMIT 61''')
+        .select('''EXPLAIN QUERY PLAN SELECT entity_id FROM rule_access_items
+      WHERE rule_id = 'system-rule-frequent' LIMIT 61''')
         .map((r) => r['detail'])
         .join('\n');
     expect(details, isNot(contains('TEMP B-TREE')));

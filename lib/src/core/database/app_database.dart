@@ -38,6 +38,7 @@ class AppDatabase {
       database.execute('''PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;
         PRAGMA busy_timeout=3000; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-16384;''');
       if (database.userVersion == currentSchemaVersion) {
+        _ensureAccessRuleSchema(database);
         // Compatibility index for libraries created before this index was
         // added. Without it, final reconciliation of a large directory scans
         // the full manifest once per entity and can monopolize the writer for
@@ -81,6 +82,52 @@ class AppDatabase {
     }
   }
 
+  static void _ensureAccessRuleSchema(Database database) {
+    database.execute('''
+      CREATE TABLE IF NOT EXISTS app_compatibility_migrations (
+        migration_key TEXT PRIMARY KEY,
+        applied_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS rule_access_items (
+        rule_id TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        matched_at INTEGER NOT NULL,
+        PRIMARY KEY(rule_id, entity_id),
+        FOREIGN KEY(rule_id) REFERENCES index_nodes(id) ON DELETE CASCADE,
+        FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_rule_access_entity
+      ON rule_access_items(entity_id, rule_id);
+    ''');
+    final migrated = database.select('''
+      SELECT 1 FROM app_compatibility_migrations
+      WHERE migration_key = 'access_rules_only_v1'
+    ''').isNotEmpty;
+    if (migrated) return;
+    database.execute('BEGIN IMMEDIATE');
+    try {
+      database.execute('''
+        DELETE FROM index_nodes
+        WHERE id IN (
+          SELECT node_id FROM index_rules
+          WHERE built_in_kind IS NULL
+        )
+      ''');
+      database.execute('''
+        DELETE FROM index_rules
+        WHERE built_in_kind IN ('recentText', 'recentMusic')
+      ''');
+      database.execute('''
+        INSERT INTO app_compatibility_migrations(migration_key, applied_at)
+        VALUES('access_rules_only_v1', ?)
+      ''', [DateTime.now().millisecondsSinceEpoch]);
+      database.execute('COMMIT');
+    } catch (_) {
+      database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
   static void _seedSystemNodes(Database db) {
     final now = DateTime.now().millisecondsSinceEpoch;
     void node(String id, String? parent, String name, String type, String? key,
@@ -98,9 +145,7 @@ class AppDatabase {
     final rules = [
       ('frequent', '常用', '[]'),
       ('recentImages', '最近图片', '["image"]'),
-      ('recentVideos', '最近视频', '["video"]'),
-      ('recentText', '最近文本', '["text","external_link"]'),
-      ('recentMusic', '最近音乐', '["audio"]')
+      ('recentVideos', '最近视频', '["video"]')
     ];
     for (var i = 0; i < rules.length; i++) {
       final (key, name, types) = rules[i];

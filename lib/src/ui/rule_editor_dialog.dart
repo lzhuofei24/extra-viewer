@@ -8,22 +8,16 @@ class RuleDraft {
     required this.name,
     required this.entityTypes,
     required this.extensions,
-    required this.scopeNodeId,
     required this.minSize,
     required this.maxSize,
-    required this.modifiedWithinDays,
-    required this.openedWithinDays,
     required this.defaultSort,
   });
 
   final String name;
   final List<EntityType> entityTypes;
   final List<String> extensions;
-  final String? scopeNodeId;
   final int? minSize;
   final int? maxSize;
-  final int? modifiedWithinDays;
-  final int? openedWithinDays;
   final RuleSortMode defaultSort;
 }
 
@@ -44,13 +38,8 @@ class _RuleEditorDialogState extends State<RuleEditorDialog> {
       TextEditingController(text: _megabytes(widget.initial?.minSize));
   late final TextEditingController _maxSize =
       TextEditingController(text: _megabytes(widget.initial?.maxSize));
-  late final TextEditingController _modifiedDays = TextEditingController(
-      text: widget.initial?.modifiedWithinDays?.toString() ?? '');
-  late final TextEditingController _openedDays = TextEditingController(
-      text: widget.initial?.openedWithinDays?.toString() ?? '');
   late final Set<EntityType> _types = {...?widget.initial?.entityTypes};
   late final Set<String> _extensions = {...?widget.initial?.extensions};
-  late String? _scopeNodeId = widget.initial?.scopeNodeId;
   late RuleSortMode _sort =
       widget.initial?.defaultSort ?? RuleSortMode.lastOpened;
   RuleFilterOptions? _options;
@@ -68,8 +57,6 @@ class _RuleEditorDialogState extends State<RuleEditorDialog> {
     _name.dispose();
     _minSize.dispose();
     _maxSize.dispose();
-    _modifiedDays.dispose();
-    _openedDays.dispose();
     super.dispose();
   }
 
@@ -99,7 +86,7 @@ class _RuleEditorDialogState extends State<RuleEditorDialog> {
   Widget build(BuildContext context) {
     final options = _options;
     return AlertDialog(
-      title: Text(widget.initial == null ? '新建规则' : '编辑规则'),
+      title: Text(widget.initial == null ? '新建访问规则' : '编辑访问规则'),
       content: SizedBox(
         width: 560,
         child: _loading
@@ -159,20 +146,6 @@ class _RuleEditorDialogState extends State<RuleEditorDialog> {
                             ],
                           ),
                         const SizedBox(height: 12),
-                        DropdownButtonFormField<String?>(
-                          initialValue: _scopeNodeId,
-                          decoration:
-                              const InputDecoration(labelText: '所在目录或分类'),
-                          items: [
-                            const DropdownMenuItem<String?>(
-                                value: null, child: Text('不限位置')),
-                            for (final node in options.scopeNodes)
-                              DropdownMenuItem<String?>(
-                                  value: node.id, child: Text(node.name)),
-                          ],
-                          onChanged: (value) => _scopeNodeId = value,
-                        ),
-                        const SizedBox(height: 12),
                         Row(children: [
                           Expanded(
                               child: TextField(
@@ -188,26 +161,6 @@ class _RuleEditorDialogState extends State<RuleEditorDialog> {
                             keyboardType: TextInputType.number,
                             decoration:
                                 const InputDecoration(labelText: '最大大小 (MB)'),
-                          )),
-                        ]),
-                        const SizedBox(height: 12),
-                        Row(children: [
-                          Expanded(
-                              child: TextField(
-                            controller: _modifiedDays,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                                labelText: '最近修改 (天)',
-                                hintText: '1 / 7 / 30 / 90'),
-                          )),
-                          const SizedBox(width: 12),
-                          Expanded(
-                              child: TextField(
-                            controller: _openedDays,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                                labelText: '最近打开 (天)',
-                                hintText: '1 / 7 / 30 / 90'),
                           )),
                         ]),
                         const SizedBox(height: 12),
@@ -246,11 +199,8 @@ class _RuleEditorDialogState extends State<RuleEditorDialog> {
         name: name,
         entityTypes: _types.toList(growable: false),
         extensions: _extensions.toList(growable: false),
-        scopeNodeId: _scopeNodeId,
         minSize: _bytes(_minSize.text),
         maxSize: _bytes(_maxSize.text),
-        modifiedWithinDays: _positiveInt(_modifiedDays.text),
-        openedWithinDays: _positiveInt(_openedDays.text),
         defaultSort: _sort,
       ),
     );
@@ -263,11 +213,6 @@ String _megabytes(int? bytes) =>
 int? _bytes(String value) {
   final parsed = double.tryParse(value.trim());
   return parsed == null ? null : (parsed * 1024 * 1024).round();
-}
-
-int? _positiveInt(String value) {
-  final parsed = int.tryParse(value.trim());
-  return parsed == null || parsed < 1 ? null : parsed;
 }
 
 String _typeLabel(EntityType type) => switch (type) {

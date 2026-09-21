@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:best_viewer/src/core/database/app_database.dart';
 import 'package:best_viewer/src/core/database/library_repository.dart';
+import 'package:best_viewer/src/core/domain/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 
@@ -63,7 +64,13 @@ void main() {
         db.db.select(
             "SELECT name FROM sqlite_master WHERE name IN ('index_node_edges','graph_node_positions')"),
         isEmpty);
-    expect(db.db.select('SELECT * FROM index_rules'), hasLength(5));
+    expect(db.db.select('SELECT * FROM index_rules'), hasLength(3));
+    expect(
+      db.db
+          .select('SELECT built_in_kind FROM index_rules')
+          .map((row) => row['built_in_kind']),
+      containsAll(['frequent', 'recentImages', 'recentVideos']),
+    );
     final root = LibraryRepository(db).ensureCollectionIndexRoot('Books');
     expect(
         () => db.db.execute(
@@ -120,6 +127,75 @@ void main() {
         next.db
             .select("SELECT * FROM index_nodes WHERE system_key='favorites'"),
         hasLength(1));
+  });
+
+  test('access-rule migration removes legacy rules once and preserves data',
+      () {
+    final dir = Directory.systemTemp.createTempSync('access_rule_migration_');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final path = '${dir.path}/library.db';
+    final first = AppDatabase.openAtPath(path);
+    final repository = LibraryRepository(first);
+    final custom = repository.createRule(name: '旧自定义规则');
+    final entity = repository
+        .upsertEntity(
+          path: '/keep.jpg',
+          name: 'keep.jpg',
+          format: 'jpg',
+          entityType: EntityType.image,
+          hash: 'keep',
+          size: 1,
+          sourceCreatedAtMs: 1,
+          sourceModifiedAtMs: 1,
+        )
+        .entity;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    first.db.execute('''
+      INSERT INTO index_nodes(
+        id,parent_id,name,node_type,system_key,is_protected,
+        sort_order,created_at,updated_at
+      ) VALUES('system-rule-recentText','system-rules','最近文本','rule',
+        'rule.recentText',1,3,?,?)
+    ''', [now, now]);
+    first.db.execute('''
+      INSERT INTO index_rules(
+        node_id,entity_types_json,extensions_json,default_sort,
+        max_results,built_in_kind,updated_at
+      ) VALUES('system-rule-recentText','["text","external_link"]','[]',
+        'lastOpened',1000,'recentText',?)
+    ''', [now]);
+    first.db.execute('''
+      DELETE FROM app_compatibility_migrations
+      WHERE migration_key = 'access_rules_only_v1'
+    ''');
+    first.close();
+
+    final migrated = AppDatabase.openAtPath(path);
+    expect(
+      migrated.db.select('SELECT id FROM entities WHERE id = ?', [entity.id]),
+      hasLength(1),
+    );
+    expect(
+      migrated.db
+          .select('SELECT id FROM index_nodes WHERE id = ?', [custom.node.id]),
+      isEmpty,
+    );
+    expect(
+      migrated.db.select(
+        "SELECT node_id FROM index_rules WHERE built_in_kind IN ('recentText','recentMusic')",
+      ),
+      isEmpty,
+    );
+    final replacement = LibraryRepository(migrated).createRule(name: '新访问规则');
+    migrated.close();
+
+    final reopened = AppDatabase.openAtPath(path);
+    addTearDown(reopened.close);
+    expect(
+      reopened.db.select(
+          'SELECT id FROM index_nodes WHERE id = ?', [replacement.node.id]),
+      hasLength(1),
+    );
   });
 
   test('current library adds the manifest reconciliation index on reopen', () {

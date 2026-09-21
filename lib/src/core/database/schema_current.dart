@@ -2,6 +2,12 @@
 const currentSchemaSql = r'''
 CREATE TABLE schema_identity (id INTEGER PRIMARY KEY CHECK(id=1), application TEXT NOT NULL);
 INSERT INTO schema_identity VALUES(1,'extra-viewer');
+CREATE TABLE app_compatibility_migrations (
+  migration_key TEXT PRIMARY KEY,
+  applied_at INTEGER NOT NULL
+);
+INSERT INTO app_compatibility_migrations
+VALUES('access_rules_only_v1', 0);
 CREATE TABLE audio_playback_session_entries (
   session_id TEXT NOT NULL,
   sort_order INTEGER NOT NULL,
@@ -145,13 +151,23 @@ CREATE TABLE index_rules (
   modified_within_days INTEGER CHECK(modified_within_days IS NULL OR modified_within_days>0),
   opened_within_days INTEGER CHECK(opened_within_days IS NULL OR opened_within_days>0),
   default_sort TEXT NOT NULL DEFAULT 'lastOpened' CHECK(default_sort IN ('lastOpened','openCount','modified','name','size')),
-  max_results INTEGER NOT NULL DEFAULT 1000 CHECK(max_results BETWEEN 1 AND 100000),
+  max_results INTEGER NOT NULL DEFAULT 1000 CHECK(max_results BETWEEN 1 AND 1000),
   built_in_kind TEXT,
   updated_at INTEGER NOT NULL, scope_state TEXT NOT NULL DEFAULT 'all'
         CHECK(scope_state IN ('all', 'node', 'missing')),
   FOREIGN KEY(node_id) REFERENCES index_nodes(id) ON DELETE CASCADE,
   FOREIGN KEY(scope_node_id) REFERENCES index_nodes(id) ON DELETE SET NULL
 );
+
+CREATE TABLE rule_access_items (
+  rule_id TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  matched_at INTEGER NOT NULL,
+  PRIMARY KEY(rule_id, entity_id),
+  FOREIGN KEY(rule_id) REFERENCES index_nodes(id) ON DELETE CASCADE,
+  FOREIGN KEY(entity_id) REFERENCES entities(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_rule_access_entity ON rule_access_items(entity_id, rule_id);
 
 CREATE TABLE index_stats_dirty (
       node_id TEXT PRIMARY KEY REFERENCES index_nodes(id) ON DELETE CASCADE,
@@ -703,7 +719,7 @@ CREATE TRIGGER validate_rule_insert
         (NEW.min_size IS NOT NULL AND NEW.max_size IS NOT NULL AND NEW.min_size > NEW.max_size) OR
         (NEW.modified_within_days IS NOT NULL AND NEW.modified_within_days < 1) OR
         (NEW.opened_within_days IS NOT NULL AND NEW.opened_within_days < 1) OR
-        NEW.max_results NOT BETWEEN 1 AND 100000 OR
+        NEW.max_results NOT BETWEEN 1 AND 1000 OR
         (NEW.scope_state = 'node' AND NEW.scope_node_id IS NULL) OR
         (NEW.scope_state <> 'node' AND NEW.scope_node_id IS NOT NULL) OR
         (NEW.scope_node_id IS NOT NULL AND NOT EXISTS (
@@ -718,7 +734,7 @@ CREATE TRIGGER validate_rule_update
         (NEW.min_size IS NOT NULL AND NEW.max_size IS NOT NULL AND NEW.min_size > NEW.max_size) OR
         (NEW.modified_within_days IS NOT NULL AND NEW.modified_within_days < 1) OR
         (NEW.opened_within_days IS NOT NULL AND NEW.opened_within_days < 1) OR
-        NEW.max_results NOT BETWEEN 1 AND 100000 OR
+        NEW.max_results NOT BETWEEN 1 AND 1000 OR
         (NEW.scope_state = 'node' AND NEW.scope_node_id IS NULL) OR
         (NEW.scope_state <> 'node' AND NEW.scope_node_id IS NOT NULL) OR
         (NEW.scope_node_id IS NOT NULL AND NOT EXISTS (

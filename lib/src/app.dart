@@ -1633,11 +1633,8 @@ class _AppShellState extends State<AppShell> {
         name: draft.name,
         entityTypes: draft.entityTypes,
         extensions: draft.extensions,
-        scopeNodeId: draft.scopeNodeId,
         minSize: draft.minSize,
         maxSize: draft.maxSize,
-        modifiedWithinDays: draft.modifiedWithinDays,
-        openedWithinDays: draft.openedWithinDays,
         defaultSort: draft.defaultSort,
       );
       if (mounted) {
@@ -1669,11 +1666,8 @@ class _AppShellState extends State<AppShell> {
         name: draft.name,
         entityTypes: draft.entityTypes,
         extensions: draft.extensions,
-        scopeNodeId: draft.scopeNodeId,
         minSize: draft.minSize,
         maxSize: draft.maxSize,
-        modifiedWithinDays: draft.modifiedWithinDays,
-        openedWithinDays: draft.openedWithinDays,
         defaultSort: draft.defaultSort,
       );
       if (mounted) {
@@ -2013,7 +2007,7 @@ class _AppShellState extends State<AppShell> {
         // The rule home may remain mounted behind the viewer. Refresh its
         // cover after the access write commits so "最近图片" immediately
         // reflects the image that was just opened.
-        await _ruleBrowserController?.refreshCovers();
+        await _ruleBrowserController?.refreshAfterAccess();
       } catch (error) {
         AppDiagnosticLog.instance.warning(
           'mark_opened_deferred_failed',
@@ -2059,7 +2053,7 @@ class _AppShellState extends State<AppShell> {
             unawaited(() async {
               try {
                 await repository.markOpened(opened.id);
-                await _ruleBrowserController?.refreshCovers();
+                await _ruleBrowserController?.refreshAfterAccess();
               } catch (error) {
                 AppDiagnosticLog.instance.warning(
                   'mark_opened_deferred_failed',

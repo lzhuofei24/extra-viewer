@@ -8,8 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
-  test(
-      'rule covers select latest visual within capped default results and scope',
+  test('access rule covers use visited visual results and configured order',
       () async {
     final temp = await Directory.systemTemp.createTemp('rule_covers_');
     addTearDown(() => temp.delete(recursive: true));
@@ -17,8 +16,6 @@ void main() {
         AppDatabase.openAtPathForTesting(p.join(temp.path, 'library.db'));
     addTearDown(database.close);
     final repository = LibraryRepository(database);
-    final scope = repository.ensureCollectionIndexRoot('范围');
-    final child = repository.createCustomNode(parentId: scope.id, name: '子分类');
     final oldLarge = _entity(repository, 'large.jpg', EntityType.image, 100);
     final newSmall = _entity(repository, 'small.mp4', EntityType.video, 10);
     final outside = _entity(repository, 'outside.jpg', EntityType.image, 1000);
@@ -30,23 +27,21 @@ void main() {
         'UPDATE entities SET source_modified_at_ms = 2 WHERE id = ?',
         [newSmall.id]);
     database.db.execute(
-        'UPDATE entities SET last_opened_at = 20 WHERE id = ?', [oldLarge.id]);
-    database.db.execute(
-        'UPDATE entities SET last_opened_at = 10 WHERE id = ?', [newSmall.id]);
-    database.db.execute(
         'UPDATE entities SET source_modified_at_ms = 999 WHERE id = ?',
         [outside.id]);
-    repository.linkEntitiesToIndexNode(
-        entityIds: [oldLarge.id, newSmall.id, note.id], indexNodeId: child.id);
     final capped = repository.createRule(
         name: '限制',
-        scopeNodeId: scope.id,
         entityTypes: [EntityType.image, EntityType.video],
+        maxSize: 100,
         defaultSort: RuleSortMode.size,
         maxResults: 1);
-    final all = repository.createRule(name: '全部视觉', scopeNodeId: scope.id);
+    final all = repository.createRule(name: '全部视觉');
     final text =
         repository.createRule(name: '文本', entityTypes: [EntityType.text]);
+    repository.markOpened(newSmall.id);
+    repository.markOpened(outside.id);
+    repository.markOpened(note.id);
+    repository.markOpened(oldLarge.id);
     final worker = await LibraryReadWorker.start(
         databasePath: database.databasePath!,
         storageDirectoryPath: database.storageDirectoryPath);
@@ -61,9 +56,6 @@ void main() {
         ruleNodeId: all.node.id, sortMode: RuleSortMode.name);
     expect((await worker.loadRuleCovers([all.node.id]))[all.node.id]!.id,
         oldLarge.id);
-    database.db.execute(
-        'UPDATE entities SET source_modified_at_ms = 2 WHERE id = ?',
-        [oldLarge.id]);
     expect((await worker.loadRuleCovers([all.node.id]))[all.node.id]!.id,
         oldLarge.id);
   });
@@ -99,7 +91,7 @@ void main() {
     expect(opened.lastOpenedAtMs, isNotNull);
   });
 
-  test('built-in and custom rules filter, sort and paginate dynamically',
+  test('built-in and custom access rules filter, sort and paginate visits',
       () async {
     final temp = await Directory.systemTemp.createTemp('rule_index_test_');
     addTearDown(() => temp.delete(recursive: true));
@@ -111,13 +103,6 @@ void main() {
     final text = _entity(repository, 'note.md', EntityType.text, 20);
     final document = _entity(repository, 'book.epub', EntityType.document, 30);
     final audio = _entity(repository, 'song.mp3', EntityType.audio, 40);
-    for (var i = 0; i < 3; i++) {
-      repository.markOpened(image.id);
-    }
-    repository.markOpened(text.id);
-    repository.markOpened(document.id);
-    repository.markOpened(audio.id);
-
     final custom = repository.createRule(
       name: '小型文本',
       entityTypes: const [EntityType.text, EntityType.document],
@@ -126,18 +111,22 @@ void main() {
       maxSize: 35,
       defaultSort: RuleSortMode.size,
     );
+    for (var i = 0; i < 3; i++) {
+      repository.markOpened(image.id);
+    }
+    repository.markOpened(text.id);
+    repository.markOpened(document.id);
+    repository.markOpened(audio.id);
     final worker = await LibraryReadWorker.start(
       databasePath: database.databasePath!,
       storageDirectoryPath: database.storageDirectoryPath,
     );
     addTearDown(worker.close);
     final rules = await worker.listRules();
-    expect(rules.take(5).map((rule) => rule.node.name), [
+    expect(rules.take(3).map((rule) => rule.node.name), [
       '常用',
       '最近图片',
       '最近视频',
-      '最近文本',
-      '最近音乐',
     ]);
 
     final frequent = await worker.loadRulePage(
@@ -159,62 +148,19 @@ void main() {
       hasLength(4),
     );
 
-    final recentText = rules.firstWhere(
-      (rule) => rule.builtInKind == BuiltInRuleKind.recentText,
-    );
-    final textPage = await worker.loadRulePage(ruleNodeId: recentText.node.id);
-    expect(
-        textPage.items.map((item) => item.id).toSet(), {text.id, document.id});
-
     final customPage = await worker.loadRulePage(ruleNodeId: custom.node.id);
     expect(customPage.items.map((item) => item.id), [document.id, text.id]);
-    expect(() => repository.createRule(name: '嵌套', scopeNodeId: custom.node.id),
-        throwsArgumentError);
   });
 
-  test('rule scope is recursive and relative time filters combine with AND',
-      () async {
-    final temp = await Directory.systemTemp.createTemp('rule_scope_test_');
-    addTearDown(() => temp.delete(recursive: true));
-    final database =
-        AppDatabase.openAtPathForTesting(p.join(temp.path, 'library.db'));
+  test('access rules reject directory and relative-time conditions', () {
+    final database = AppDatabase.openInMemory();
     addTearDown(database.close);
     final repository = LibraryRepository(database);
     final root = repository.ensureDirectoryIndexRoot('/scope');
-    final child = repository.ensureIndexNode(
-      parentId: root.id,
-      name: 'child',
-      nodeType: NodeType.folder,
-      viewType: ViewType.tree,
-    );
-    final inside = _entity(repository, 'inside.jpg', EntityType.image, 10);
-    final outside = _entity(repository, 'outside.jpg', EntityType.image, 10);
-    repository.linkEntityToIndexNode(
-        entityId: inside.id, indexNodeId: child.id);
-    repository.linkEntityToIndexNode(
-        entityId: outside.id, indexNodeId: root.id);
-    repository.markOpened(inside.id);
-    repository.markOpened(outside.id);
-    final now = DateTime.now().millisecondsSinceEpoch;
-    database.db.execute(
-      'UPDATE entities SET source_modified_at_ms = ? WHERE id = ?',
-      [now - const Duration(days: 40).inMilliseconds, outside.id],
-    );
-    final scoped = repository.createRule(
-      name: '范围和时间',
-      entityTypes: const [EntityType.image],
-      scopeNodeId: child.id,
-      modifiedWithinDays: 7,
-      openedWithinDays: 7,
-    );
-    final worker = await LibraryReadWorker.start(
-      databasePath: database.databasePath!,
-      storageDirectoryPath: database.storageDirectoryPath,
-    );
-    addTearDown(worker.close);
-
-    final page = await worker.loadRulePage(ruleNodeId: scoped.node.id);
-    expect(page.items.map((item) => item.id), [inside.id]);
+    expect(() => repository.createRule(name: '范围', scopeNodeId: root.id),
+        throwsArgumentError);
+    expect(() => repository.createRule(name: '时间', openedWithinDays: 7),
+        throwsArgumentError);
   });
 
   test('built-in rules enforce the 1000 result cap across pages', () async {
@@ -253,6 +199,58 @@ void main() {
     } while (cursor != null);
 
     expect(ids, hasLength(1000));
+  });
+
+  test('custom rules only accumulate matching files after they are visited',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('access_rule_test_');
+    addTearDown(() => temp.delete(recursive: true));
+    final database =
+        AppDatabase.openAtPathForTesting(p.join(temp.path, 'library.db'));
+    addTearDown(database.close);
+    final repository = LibraryRepository(database);
+    final first = _entity(repository, 'first.jpg', EntityType.image, 10);
+    final text = _entity(repository, 'note.txt', EntityType.text, 20);
+    final newest = _entity(repository, 'newest.mp4', EntityType.video, 30);
+    final rule = repository.createRule(
+      name: '访问过的视觉文件',
+      entityTypes: const [EntityType.image, EntityType.video],
+    );
+
+    final worker = await LibraryReadWorker.start(
+      databasePath: database.databasePath!,
+      storageDirectoryPath: database.storageDirectoryPath,
+    );
+    addTearDown(worker.close);
+    expect(
+        (await worker.loadRulePage(ruleNodeId: rule.node.id)).items, isEmpty);
+    repository.markOpened(first.id);
+    repository.markOpened(text.id);
+    repository.markOpened(newest.id);
+    final summaries = await worker.loadRuleSummaries([rule.node.id]);
+    expect(summaries[rule.node.id]!.count, 2);
+    expect(summaries[rule.node.id]!.cover!.id, newest.id);
+    final page = await worker.loadRulePage(ruleNodeId: rule.node.id);
+    expect(page.items.map((item) => item.id), [newest.id, first.id]);
+    repository.markOpened(first.id);
+    final covers = await worker.loadRuleCovers([rule.node.id]);
+    expect(covers[rule.node.id]!.id, first.id);
+
+    repository.updateRule(
+      nodeId: rule.node.id,
+      name: rule.node.name,
+      entityTypes: const [EntityType.video],
+    );
+    expect(
+        (await worker.loadRulePage(ruleNodeId: rule.node.id)).items, isEmpty);
+    repository.markOpened(first.id);
+    repository.markOpened(newest.id);
+    expect(
+      (await worker.loadRulePage(ruleNodeId: rule.node.id))
+          .items
+          .map((item) => item.id),
+      [newest.id],
+    );
   });
 }
 
