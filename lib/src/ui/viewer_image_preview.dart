@@ -4,8 +4,6 @@ class _ImagePreview extends StatefulWidget {
   const _ImagePreview({
     super.key,
     required this.sessions,
-    required this.toolbarCollapsed,
-    required this.onToggleToolbar,
     required this.entity,
     required this.sourceResolver,
     this.transparentStage = false,
@@ -21,8 +19,6 @@ class _ImagePreview extends StatefulWidget {
   });
 
   final EntityListItem entity;
-  final bool toolbarCollapsed;
-  final VoidCallback onToggleToolbar;
   final ViewerSessions sessions;
   final MediaSourceResolver sourceResolver;
   final bool transparentStage;
@@ -159,72 +155,61 @@ class _ImagePreviewState extends State<_ImagePreview> {
           child: SafeArea(
             top: false,
             child: Align(
-              alignment: widget.toolbarCollapsed
-                  ? Alignment.bottomRight
-                  : Alignment.bottomCenter,
+              alignment: Alignment.bottomCenter,
               child: FloatingGlassSurface(
                 borderRadius: 28,
                 child: SizedBox(
-                  width: widget.toolbarCollapsed
-                      ? 48
-                      : min(MediaQuery.sizeOf(context).width - 24, 432),
+                  width: min(MediaQuery.sizeOf(context).width - 24, 432),
                   height: 48,
                   child: SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        toolbarButton(
-                          tooltip: widget.toolbarCollapsed ? '展开工具栏' : '收起工具栏',
-                          onPressed: widget.onToggleToolbar,
-                          iconWidget: const CollapseGripIcon(),
-                        ),
-                        if (!widget.toolbarCollapsed) ...[
-                          if (widget.onReturnToSource != null)
-                            toolbarButton(
-                              tooltip: '返回所在位置',
-                              onPressed: widget.onReturnToSource,
-                              icon: Icons.arrow_back_rounded,
-                            ),
-                          if (widget.onDirectoryRoot != null)
-                            toolbarButton(
-                              tooltip: '返回目录',
-                              onPressed: widget.onDirectoryRoot,
-                              icon: Icons.account_tree_outlined,
-                            ),
-                          if (widget.onShowDetails != null)
-                            toolbarButton(
-                              tooltip: '详情',
-                              onPressed: () => widget.onShowDetails?.call(),
-                              icon: Icons.info_outline_rounded,
-                            ),
-                          SizedBox(
-                            width: 48,
-                            child: Center(
-                              child: Text(
-                                '${widget.currentIndex + 1}/${widget.total}',
-                              ),
+                        if (widget.onReturnToSource != null)
+                          toolbarButton(
+                            tooltip: '返回所在位置',
+                            onPressed: widget.onReturnToSource,
+                            icon: Icons.arrow_back_rounded,
+                          ),
+                        if (widget.onDirectoryRoot != null)
+                          toolbarButton(
+                            tooltip: '返回目录',
+                            onPressed: widget.onDirectoryRoot,
+                            icon: Icons.account_tree_outlined,
+                          ),
+                        if (widget.onShowDetails != null)
+                          toolbarButton(
+                            tooltip: '详情',
+                            onPressed: () => widget.onShowDetails?.call(),
+                            icon: Icons.info_outline_rounded,
+                          ),
+                        SizedBox(
+                          width: 48,
+                          child: Center(
+                            child: Text(
+                              '${widget.currentIndex + 1}/${widget.total}',
                             ),
                           ),
-                          if (!widget.transparentStage)
-                            toolbarButton(
-                              tooltip: '切换背景',
-                              onPressed: _nextBackground,
-                              icon: Icons.contrast,
-                            ),
-                          if (widget.onPrevious != null)
-                            toolbarButton(
-                              tooltip: '上一项',
-                              onPressed: widget.onPrevious,
-                              icon: Icons.skip_previous_rounded,
-                            ),
-                          if (widget.onNext != null)
-                            toolbarButton(
-                              tooltip: '下一项',
-                              onPressed: widget.onNext,
-                              icon: Icons.skip_next_rounded,
-                            ),
-                        ],
+                        ),
+                        if (!widget.transparentStage)
+                          toolbarButton(
+                            tooltip: '切换背景',
+                            onPressed: _nextBackground,
+                            icon: Icons.contrast,
+                          ),
+                        if (widget.onPrevious != null)
+                          toolbarButton(
+                            tooltip: '上一项',
+                            onPressed: widget.onPrevious,
+                            icon: Icons.skip_previous_rounded,
+                          ),
+                        if (widget.onNext != null)
+                          toolbarButton(
+                            tooltip: '下一项',
+                            onPressed: widget.onNext,
+                            icon: Icons.skip_next_rounded,
+                          ),
                       ],
                     ),
                   ),

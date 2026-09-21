@@ -10,8 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
 void main() {
-  testWidgets(
-      'collapsed image controls stay right aligned across image changes',
+  testWidgets('image controls stay visible across image changes',
       (tester) async {
     final temp = Directory.systemTemp.createTempSync('image_toolbar_');
     final sessions = ViewerSessions();
@@ -60,26 +59,19 @@ void main() {
         await tester.runAsync(
             () => Future<void>.delayed(const Duration(milliseconds: 10)));
         await tester.pump();
-        if (find.byTooltip('收起工具栏').evaluate().isNotEmpty ||
-            find.byTooltip('展开工具栏').evaluate().isNotEmpty) {
+        if (find.text('1/2').evaluate().isNotEmpty) {
           return;
         }
       }
     }
 
     await settleImage();
-    await tester.tap(find.byTooltip('收起工具栏'));
-    await tester.pump();
-    final collapsed = find.byTooltip('展开工具栏');
-    expect(collapsed, findsOneWidget);
-    expect(tester.getCenter(collapsed).dx, greaterThan(700));
+    expect(find.byTooltip('收起工具栏'), findsNothing);
+    expect(find.byTooltip('展开工具栏'), findsNothing);
+    expect(find.text('1/2'), findsOneWidget);
     await tester.dragFrom(const Offset(400, 250), const Offset(-150, 0));
     await settleImage();
     expect(opened.last, queue.last.id);
-    expect(collapsed, findsOneWidget);
-    expect(find.byTooltip('收起工具栏'), findsNothing);
-    await tester.tap(collapsed);
-    await tester.pump();
     expect(find.text('2/2'), findsOneWidget);
     expect(tester.takeException(), isNull);
     for (var i = 0; i < 20; i++) {

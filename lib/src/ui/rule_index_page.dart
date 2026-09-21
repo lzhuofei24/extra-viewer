@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'browser_node_grid.dart';
 import 'browser_path_rail.dart';
 import 'library_widgets.dart';
@@ -62,6 +64,9 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
   void _setImmersive(bool value) {
     _controller.setImmersive(value);
     widget.onImmersiveChanged?.call(value);
+    if (_controller.activeRule != null) {
+      unawaited(_controller.loadPage(reset: true));
+    }
   }
 
   bool _selectionMode = false;
@@ -174,7 +179,9 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
                   child: Center(
                       child: Text(_controller.activeRule?.scopeMissing == true
                           ? '原目录或分类已删除，请编辑规则重新选择范围'
-                          : '没有符合规则的文件')))
+                          : _immersive
+                              ? '没有可沉浸浏览的文件'
+                              : '没有符合规则的文件')))
             else
               BrowserEntitySliver(
                   entities: _controller.items,
@@ -213,8 +220,8 @@ class _RuleIndexPageState extends State<RuleIndexPage> {
   }
 
   Widget _toolbar(RuleDefinition? rule) => BrowserToolbar(
-        showFiles: rule != null,
-        showFolders: rule == null,
+        showFiles: true,
+        showFolders: true,
         leading: BrowserPathRail(
             currentNode: rule?.node,
             path: [if (rule != null) rule.node],

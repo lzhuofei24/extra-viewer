@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../core/domain/models.dart';
+import '../core/database/library_read_worker.dart';
 import '../modules/library/library_queries.dart';
 
 class RuleBrowserController extends ChangeNotifier {
@@ -141,10 +142,16 @@ class RuleBrowserController extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
-      final page = await queries.loadRulePage(
-          ruleNodeId: rule.node.id,
-          sortMode: rule.isBuiltIn ? null : temporarySort,
-          after: reset ? null : cursor);
+      final page = queries is LibraryReadWorker && immersive
+          ? await (queries as LibraryReadWorker).loadRulePage(
+              ruleNodeId: rule.node.id,
+              sortMode: rule.isBuiltIn ? null : temporarySort,
+              after: reset ? null : cursor,
+              excludeAudio: true)
+          : await queries.loadRulePage(
+              ruleNodeId: rule.node.id,
+              sortMode: rule.isBuiltIn ? null : temporarySort,
+              after: reset ? null : cursor);
       if (!_current(generation)) return;
       final seen = <String>{};
       items = [

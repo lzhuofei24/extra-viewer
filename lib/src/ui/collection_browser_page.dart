@@ -275,7 +275,7 @@ class CollectionBrowserPage extends StatelessWidget {
                                     ? '${browserState.rootTab.label}中暂无内容'
                                     : '当前分组为空',
                             message: immersiveBrowsing
-                                ? '当前分组及其下级分组中没有可展示的文件。'
+                                ? '没有可沉浸浏览的文件。'
                                 : '可从“管理”页面重新检查，或返回首页继续浏览。',
                           ),
                         ),
@@ -488,8 +488,8 @@ class _PathBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BrowserToolbar(
-      showFiles: showFiles,
-      showFolders: showFolders,
+      showFiles: true,
+      showFolders: true,
       allowGridStyle: showFiles,
       leading: BrowserPathRail(
         currentNode: currentNode,

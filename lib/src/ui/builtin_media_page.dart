@@ -30,8 +30,8 @@ import '../core/readers/epub_decoder.dart';
 import '../core/readers/archive_session.dart';
 import '../core/readers/reflow_document.dart';
 import '../core/readers/reflow_text_decoder.dart';
-import 'collapse_grip_icon.dart';
 import 'app_sidebar.dart';
+import 'glass_notice.dart';
 
 part 'viewer_text_reader.dart';
 part 'viewer_pdf_epub_preview.dart';
@@ -112,7 +112,6 @@ class EntityViewerPage extends StatefulWidget {
 class _EntityViewerPageState extends State<EntityViewerPage> {
   late final ViewerSession _session;
   bool _closing = false;
-  bool _imageToolbarCollapsed = false;
   Future<void>? _prefetchDrain;
   final _retiredDocuments = <Future<void>>{};
 
@@ -509,6 +508,10 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
       _goTo(_previousIndex!);
     } else if (delta.dx < 0 && _nextIndex != null) {
       _goTo(_nextIndex!);
+    } else if (_current.entityType == EntityType.image && delta.dx > 0) {
+      GlassNoticeController.instance.show('已经是第一张', dedupeKey: 'image-first');
+    } else if (_current.entityType == EntityType.image && delta.dx < 0) {
+      GlassNoticeController.instance.show('已经是最后一张', dedupeKey: 'image-last');
     }
   }
 
@@ -688,11 +691,6 @@ class _EntityViewerPageState extends State<EntityViewerPage> {
                           ),
                         _ => switch (entity.entityType) {
                             EntityType.image => _ImagePreview(
-                                toolbarCollapsed: _imageToolbarCollapsed,
-                                onToggleToolbar: () => setState(() {
-                                  _imageToolbarCollapsed =
-                                      !_imageToolbarCollapsed;
-                                }),
                                 sessions: widget.sessions,
                                 key: ValueKey(entity.id),
                                 entity: entity,

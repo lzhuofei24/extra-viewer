@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import '../domain/models.dart';
 import '../sources/platform_directory_picker.dart';
 import '../sources/source_handle.dart';
+import '../../modules/viewer/media_directory_location.dart';
 import '../thumbnails/thumbnail_cancellation.dart';
 import '../../modules/sources/source_file_cache.dart';
 export '../../modules/sources/source_file_cache.dart' show SourceFileLease;
@@ -14,11 +15,13 @@ class MediaSourceResolver {
 
   static final _sessionCache = _AndroidSourceSessionCache();
   static const _channel = MethodChannel('best_viewer/directory_picker');
+
   /// mpv must consume the existing descriptor rather than reopen its proc path.
   static String playbackSourceForFile(File file) {
     final match = RegExp(r'^/proc/self/fd/(\d+)$').firstMatch(file.path);
     return match == null ? file.path : 'fd://${match.group(1)}';
   }
+
   static bool bypassSourceCache(EntityListItem entity) =>
       (entity.entityType == EntityType.image ||
           entity.entityType == EntityType.video) &&
@@ -67,7 +70,11 @@ class MediaSourceResolver {
 
   String playerSource(EntityListItem entity) => launchUri(entity).toString();
 
-  String displayLocation(EntityListItem entity) => entity.path;
+  String displayLocation(EntityListItem entity) {
+    final source = SourceHandle.parse(entity.path);
+    if (source.isLocalFile) return source.raw;
+    return formatSafDisplayPath(entity.path, fallback: entity.path);
+  }
 }
 
 class _AndroidSourceSessionCache {

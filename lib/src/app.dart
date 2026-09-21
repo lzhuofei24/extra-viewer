@@ -49,6 +49,7 @@ import 'ui/now_playing_page.dart';
 import 'ui/node_preview_picker.dart';
 import 'ui/dialogs/app_dialogs.dart';
 import 'ui/widgets/app_widgets.dart';
+import 'ui/glass_notice.dart';
 
 class BestViewerApp extends StatefulWidget {
   const BestViewerApp({super.key, this.databaseFactory, this.preferences});
@@ -257,6 +258,7 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    GlassNoticeController.instance.dispose();
     _dirtyPreviews?.stop();
     _readWorker?.stopStatisticsMaintenance();
     _ruleBrowserController?.dispose();
@@ -799,6 +801,7 @@ class _AppShellState extends State<AppShell> {
                       : requestedScope,
               sortMode: sortMode,
               limit: _entityPageSize,
+              excludeAudio: true,
             ),
           );
           if (!mounted || generation != _reloadGeneration) return;
@@ -1115,6 +1118,7 @@ class _AppShellState extends State<AppShell> {
             sortMode: sortMode,
             after: _recursiveEntityCursor,
             limit: _entityPageSize,
+            excludeAudio: true,
           ),
         );
         page = EntityPage(
@@ -2204,6 +2208,18 @@ class _AppShellState extends State<AppShell> {
               elevation: 24,
               child: EntityDetailSheet(
                 detail: detail,
+                displayPath: const MediaSourceResolver().displayLocation(
+                  EntityListItem(
+                    id: detail.id,
+                    title: detail.name,
+                    entityType: detail.entityType,
+                    path: detail.path,
+                    format: detail.format,
+                    size: detail.size,
+                    modifiedAtMs: detail.sourceModifiedAtMs,
+                    localPath: detail.localPath,
+                  ),
+                ),
               ),
             ),
           ),
@@ -3271,6 +3287,12 @@ class _AppShellState extends State<AppShell> {
                     ),
                   if (_mediaOverlay case final overlay?)
                     Positioned.fill(child: overlay),
+                  const Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    child: GlassNoticeHost(),
+                  ),
                   if (showMiniPlayer)
                     Positioned(
                       right: AppNavigation.outerMargin,

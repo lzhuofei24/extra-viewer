@@ -283,6 +283,7 @@ class LibraryReadWorker implements LibraryQueries {
     RuleSortMode? sortMode,
     RulePageCursor? after,
     int limit = 60,
+    bool excludeAudio = false,
   }) async {
     final response = await _request({
       'type': 'rulePage',
@@ -294,6 +295,7 @@ class LibraryReadWorker implements LibraryQueries {
       'consumed': after?.consumed ?? 0,
       'sessionId': after?.sessionId,
       'limit': limit,
+      'excludeAudio': excludeAudio,
     });
     final cursor = response['ruleCursor'] as Map<Object?, Object?>?;
     return RuleResultPage(
@@ -342,6 +344,7 @@ class LibraryReadWorker implements LibraryQueries {
     required EntitySortMode sortMode,
     RecursiveEntityPageCursor? after,
     int? limit,
+    bool excludeAudio = false,
   }) async {
     final message = await _request(<String, Object?>{
       'type': 'recursivePage',
@@ -355,6 +358,7 @@ class LibraryReadWorker implements LibraryQueries {
       'cursorSecondary': after?.entityCursor.secondary,
       'cursorEntityId': after?.entityCursor.entityId,
       'limit': limit,
+      'excludeAudio': excludeAudio,
     });
     return LibraryReadPage.fromMessage(message);
   }
@@ -846,11 +850,13 @@ Map<String, Object?> _loadRulePage(
       'ruleCursor': null
     };
   }
-  final scope = 'rule:${request['ruleNodeId']}:${sort.name}';
+  final excludeAudio = request['excludeAudio'] == true;
+  final scope = 'rule:${request['ruleNodeId']}:${sort.name}:$excludeAudio';
   var sessionId = request['sessionId'] as String?;
   if (sessionId == null) {
     if (consumed != 0) throw StateError('浏览会话已失效，请刷新');
-    final query = _ruleQuery(rule, DateTime.now().millisecondsSinceEpoch);
+    final query = _ruleQuery(rule, DateTime.now().millisecondsSinceEpoch,
+        excludeAudio: excludeAudio);
     sessionId = sessions.create(scope, '''SELECT e.id FROM entities e
       WHERE ${query.whereSql} ORDER BY ${_ruleOrderBy(sort)} LIMIT ?''',
         [...query.parameters, maxResults]);
@@ -919,8 +925,9 @@ class _RuleQueryParts {
   final List<Object?> parameters;
 }
 
-_RuleQueryParts _ruleQuery(Row rule, int nowMs) {
+_RuleQueryParts _ruleQuery(Row rule, int nowMs, {bool excludeAudio = false}) {
   final clauses = <String>['e.archived = 0'];
+  if (excludeAudio) clauses.add("e.media_type <> 'audio'");
   if (rule['scope_state'] == 'missing') clauses.add('0');
   final parameters = <Object?>[];
   final builtIn = rule['built_in_kind'] as String?;
@@ -1512,7 +1519,8 @@ _RawReadPage _loadRecursivePage(
           .select('SELECT 1 FROM index_nodes WHERE id=?', [nodeId]).isEmpty) {
     throw StateError('浏览目录已删除');
   }
-  final sessionScope = 'recursive:$scope:$nodeId:$sortName';
+  final excludeAudio = request['excludeAudio'] == true;
+  final sessionScope = 'recursive:$scope:$nodeId:$sortName:$excludeAudio';
   var sessionId = request['sessionId'] as String?;
   sessionId ??= sessions.create(
     sessionScope,
@@ -1541,6 +1549,7 @@ _RawReadPage _loadRecursivePage(
     FROM entity_nodes
     JOIN entities entity ON entity.id = entity_nodes.entity_id
     WHERE entity.archived = 0
+      ${excludeAudio ? "AND entity.media_type <> 'audio'" : ''}
     ORDER BY entity_nodes.hierarchy_path ASC, ${_orderBy(sortName)}
     ''',
     parameters,

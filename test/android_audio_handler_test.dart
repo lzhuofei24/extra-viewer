@@ -92,6 +92,11 @@ void main() {
     expect(handler.mediaItem.value?.title, 'Song 0');
     expect(handler.mediaItem.value?.duration, const Duration(minutes: 3));
     expect(handler.playbackState.value.controls, contains(MediaControl.play));
+    expect(handler.playbackState.value.controls, hasLength(3));
+    expect(handler.playbackState.value.controls,
+        isNot(contains(MediaControl.stop)));
+    expect(handler.playbackState.value.systemActions,
+        isNot(contains(MediaAction.stop)));
     await handler.play();
     expect(controller.isPlaying, isTrue);
     expect(handler.playbackState.value.controls, contains(MediaControl.pause));

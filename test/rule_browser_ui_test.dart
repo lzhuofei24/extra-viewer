@@ -270,7 +270,7 @@ void main() {
     expect(find.text('排序'), findsNothing);
     expect(find.text('样式'), findsNothing);
     expect(find.text('文件夹设置'), findsOneWidget);
-    expect(find.text('文件设置'), findsNothing);
+    expect(find.text('文件设置'), findsOneWidget);
     expect(find.text('主题'), findsOneWidget);
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();

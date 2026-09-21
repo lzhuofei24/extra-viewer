@@ -8,9 +8,11 @@ class EntityDetailSheet extends StatelessWidget {
   const EntityDetailSheet({
     super.key,
     required this.detail,
+    this.displayPath,
   });
 
   final Entity detail;
+  final String? displayPath;
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +38,7 @@ class EntityDetailSheet extends StatelessWidget {
             Text(detail.title, style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 12),
             MetaLine(label: '类型', value: entityTypeLabel(detail.entityType)),
-            MetaLine(label: '路径', value: detail.path),
+            MetaLine(label: '路径', value: displayPath ?? detail.path),
             MetaLine(label: '大小', value: formatSize(detail.size)),
             MetaLine(label: '格式', value: detail.format),
             MetaLine(label: '源创建', value: formatTime(detail.sourceCreatedAtMs)),
@@ -58,12 +60,6 @@ class EntityDetailSheet extends StatelessWidget {
                 label: '阅读位置',
                 value: formatScrollOffset(detail.readerScrollOffset),
               ),
-            if (detail.entityType == EntityType.image)
-              MetaLine(
-                label: '图片缩放',
-                value: formatZoomScale(detail.zoomScale),
-              ),
-            const MetaLine(label: '只读策略', value: '源文件只读，不在源目录写入缓存'),
           ],
         ),
       ),
