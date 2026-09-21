@@ -1,7 +1,7 @@
 name: best_viewer
 description: Local-first multimedia reader and indexed library manager.
 publish_to: "none"
-version: 1.0.3+4
+version: 1.0.4+10004
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
