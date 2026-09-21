@@ -23,6 +23,7 @@ import '../thumbnails/thumbnail_service.dart';
 import '../thumbnails/thumbnail_cancellation.dart';
 import '../thumbnails/cancellable_thumbnail_task.dart';
 import '../utils/file_fingerprint.dart';
+import '../sync/directory_diff_scanner.dart';
 
 class LibraryBuildProgress {
   const LibraryBuildProgress({
@@ -169,6 +170,56 @@ class LibraryBuildTaskController extends ChangeNotifier {
         ));
         return _run(job);
       });
+
+  Future<List<LibraryBuildJob>> enqueueDirectoryUpdates(
+    Iterable<DirectorySyncRoot> roots,
+  ) async {
+    final existing = await builds.listRecoverable();
+    final created = <LibraryBuildJob>[];
+    final seen = <String>{};
+    for (final root in roots) {
+      if (!seen.add(root.rootId)) continue;
+      final sourcePath = _normalizeSource(root.sourcePath);
+      final duplicate = existing.any((job) =>
+          job.operation == LibraryBuildOperation.subtreeRefresh &&
+          job.targetNodeId == root.rootId &&
+          _normalizeSource(job.sourcePath) == sourcePath);
+      if (duplicate) continue;
+      final job = await builds.create(
+        sourcePath: sourcePath,
+        operation: LibraryBuildOperation.subtreeRefresh,
+        targetNodeId: root.rootId,
+      );
+      created.add(job);
+    }
+    await refresh();
+    return created;
+  }
+
+  Future<void> drainRecoverableQueue() async {
+    if (_disposed || _closing || isRunning) return;
+    while (!_disposed && !_closing && !isRunning) {
+      final jobs = (await builds.listRecoverable())
+          .where((job) =>
+              job.status == LibraryBuildStatus.pending ||
+              job.status == LibraryBuildStatus.running ||
+              job.status == LibraryBuildStatus.pauseRequested ||
+              job.status == LibraryBuildStatus.paused)
+          .toList(growable: false);
+      if (jobs.isEmpty) {
+        await refresh();
+        return;
+      }
+      jobs.sort((a, b) => a.createdAtMs.compareTo(b.createdAtMs));
+      final job = jobs.first;
+      await _schedule(() async {
+        if (job.status == LibraryBuildStatus.completedWithErrors) {
+          await builds.retryFailedAssets(job.id);
+        }
+        return _run((await builds.get(job.id)) ?? job);
+      });
+    }
+  }
 
   Future<LibraryBuildJob?> resume(LibraryBuildJob job) =>
       job.status == LibraryBuildStatus.completedWithErrors

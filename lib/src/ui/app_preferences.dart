@@ -9,6 +9,18 @@ import 'browser_state.dart';
 import 'design_tokens.dart';
 import 'gallery_layout_settings.dart';
 
+enum AutoSyncInterval {
+  fiveSeconds,
+  thirtyMinutes,
+  daily;
+
+  Duration get duration => switch (this) {
+        AutoSyncInterval.fiveSeconds => const Duration(seconds: 5),
+        AutoSyncInterval.thirtyMinutes => const Duration(minutes: 30),
+        AutoSyncInterval.daily => const Duration(days: 1),
+      };
+}
+
 @immutable
 class AppPreferencesData {
   const AppPreferencesData({
@@ -19,6 +31,9 @@ class AppPreferencesData {
     this.folderCoverStyle = FolderCoverStyle.automatic,
     this.listStyle = BrowserListStyle.normal,
     this.layout = const GalleryLayoutSettings(),
+    this.autoSyncEnabled = false,
+    this.autoSyncInterval = AutoSyncInterval.thirtyMinutes,
+    this.autoSyncResultJson,
   });
 
   final ViewerThemeChoice themeChoice;
@@ -28,6 +43,9 @@ class AppPreferencesData {
   final FolderCoverStyle folderCoverStyle;
   final BrowserListStyle listStyle;
   final GalleryLayoutSettings layout;
+  final bool autoSyncEnabled;
+  final AutoSyncInterval autoSyncInterval;
+  final String? autoSyncResultJson;
 
   AppPreferencesData copyWith({
     ViewerThemeChoice? themeChoice,
@@ -37,6 +55,10 @@ class AppPreferencesData {
     BrowserListStyle? listStyle,
     FolderCoverStyle? folderCoverStyle,
     GalleryLayoutSettings? layout,
+    bool? autoSyncEnabled,
+    AutoSyncInterval? autoSyncInterval,
+    String? autoSyncResultJson,
+    bool clearAutoSyncResult = false,
   }) =>
       AppPreferencesData(
         themeChoice: themeChoice ?? this.themeChoice,
@@ -46,6 +68,11 @@ class AppPreferencesData {
         folderCoverStyle: folderCoverStyle ?? this.folderCoverStyle,
         listStyle: listStyle ?? this.listStyle,
         layout: layout ?? this.layout,
+        autoSyncEnabled: autoSyncEnabled ?? this.autoSyncEnabled,
+        autoSyncInterval: autoSyncInterval ?? this.autoSyncInterval,
+        autoSyncResultJson: clearAutoSyncResult
+            ? null
+            : autoSyncResultJson ?? this.autoSyncResultJson,
       );
 }
 
@@ -70,6 +97,9 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
   static const _folderCoverKey = 'preferences.browser.folderCover';
   static const _listStyleKey = 'preferences.browser.listStyle';
   static const _galleryLayoutKey = 'preferences.gallery.counts.v1';
+  static const _autoSyncEnabledKey = 'preferences.autoSync.enabled';
+  static const _autoSyncIntervalKey = 'preferences.autoSync.interval';
+  static const _autoSyncResultKey = 'preferences.autoSync.result.v1';
 
   GalleryLayoutSettings _loadLayout() {
     try {
@@ -130,6 +160,13 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
             ? BrowserListStyle.text
             : BrowserListStyle.normal,
         layout: _loadLayout(),
+        autoSyncEnabled: _preferences.getBool(_autoSyncEnabledKey) ?? false,
+        autoSyncInterval: _enumValue(
+          AutoSyncInterval.values,
+          _preferences.getString(_autoSyncIntervalKey),
+          AutoSyncInterval.thirtyMinutes,
+        ),
+        autoSyncResultJson: _preferences.getString(_autoSyncResultKey),
       );
 
   @override
@@ -143,6 +180,12 @@ class SharedPreferencesAppPreferencesStore implements AppPreferencesStore {
       _preferences.setString(_listStyleKey, value.listStyle.name),
       _preferences.setString(
           _galleryLayoutKey, jsonEncode(value.layout.normalized().toMap())),
+      _preferences.setBool(_autoSyncEnabledKey, value.autoSyncEnabled),
+      _preferences.setString(_autoSyncIntervalKey, value.autoSyncInterval.name),
+      if (value.autoSyncResultJson == null)
+        _preferences.remove(_autoSyncResultKey)
+      else
+        _preferences.setString(_autoSyncResultKey, value.autoSyncResultJson!),
     ]);
   }
 }
@@ -198,6 +241,18 @@ class AppPreferencesController extends ChangeNotifier {
 
   void setLayout(GalleryLayoutSettings value) =>
       _update(_value.copyWith(layout: value.normalized()));
+
+  void setAutoSyncEnabled(bool enabled) =>
+      _update(_value.copyWith(autoSyncEnabled: enabled));
+
+  void setAutoSyncInterval(AutoSyncInterval interval) =>
+      _update(_value.copyWith(autoSyncInterval: interval));
+
+  void setAutoSyncResultJson(String? result) => _update(
+        result == null
+            ? _value.copyWith(clearAutoSyncResult: true)
+            : _value.copyWith(autoSyncResultJson: result),
+      );
 
   Future<void> flush() => _pendingWrite;
 

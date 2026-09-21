@@ -36,10 +36,13 @@ class LocalSourceAdapter implements SourceAdapter {
     var page = <SourceEntry>[];
     await for (final entry in Directory(locator).list(followLinks: false)) {
       if (entry is! File && entry is! Directory) continue;
+      final stat = await entry.stat();
       page.add(SourceEntry(
           locator: p.normalize(entry.path),
           name: p.basename(entry.path),
-          isDirectory: entry is Directory));
+          isDirectory: entry is Directory,
+          size: entry is File ? stat.size : 0,
+          modifiedAtMs: stat.modified.toUtc().millisecondsSinceEpoch));
       if (page.length == 200) {
         yield page;
         page = [];

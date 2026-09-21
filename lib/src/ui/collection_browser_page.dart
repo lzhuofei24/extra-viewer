@@ -23,6 +23,7 @@ class CollectionBrowserPage extends StatelessWidget {
     this.loadError,
     this.onRetry,
     this.onSearchNodes,
+    this.onAutoSync,
     this.onFolderCoverChanged,
     this.onAdd,
     this.addLabel = '添加',
@@ -86,6 +87,7 @@ class CollectionBrowserPage extends StatelessWidget {
   final VoidCallback? onRetry;
   final IndexNode? currentNode;
   final VoidCallback? onSearchNodes;
+  final VoidCallback? onAutoSync;
   final ValueChanged<FolderCoverStyle>? onFolderCoverChanged;
   final VoidCallback? onAdd;
   final String addLabel;
@@ -347,6 +349,7 @@ class CollectionBrowserPage extends StatelessWidget {
         onFolderCoverChanged: onFolderCoverChanged,
         addLabel: addLabel,
         onSearchNodes: onSearchNodes,
+        onAutoSync: onAutoSync,
         currentNode: currentNode,
         path: nodePath,
         onOpenRootIndex: onOpenRootIndex,
@@ -426,6 +429,7 @@ class _PathBar extends StatelessWidget {
     required this.showFiles,
     required this.showFolders,
     this.onSearchNodes,
+    this.onAutoSync,
     this.onFolderCoverChanged,
     this.onAdd,
     this.addLabel = '添加',
@@ -459,6 +463,7 @@ class _PathBar extends StatelessWidget {
   final IndexNode? currentNode;
   final List<IndexNode> path;
   final VoidCallback? onSearchNodes;
+  final VoidCallback? onAutoSync;
   final ValueChanged<FolderCoverStyle>? onFolderCoverChanged;
   final VoidCallback? onAdd;
   final String addLabel;
@@ -507,6 +512,7 @@ class _PathBar extends StatelessWidget {
       layoutSettings: layoutSettings,
       onLayoutChanged: onLayoutChanged,
       onSearch: onSearchNodes,
+      onAutoSync: onAutoSync,
       onAdd: onAdd,
       onFolderCoverChanged: onFolderCoverChanged,
       addLabel: addLabel,

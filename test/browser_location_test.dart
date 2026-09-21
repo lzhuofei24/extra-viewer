@@ -51,14 +51,14 @@ void main() {
         () =>
             find.byType(CollectionBrowserPage).evaluate().isNotEmpty &&
             !page(tester).loading);
-    expect(find.byTooltip('添加目录'), findsOneWidget);
+    expect(find.byTooltip('浏览选项'), findsOneWidget);
     page(tester).onOpenNode(directory);
     await tester.pump();
     expect(page(tester).currentNode!.id, directory.id);
     expect(page(tester).childNodes.any((node) => node.id == directory.id),
         isFalse);
     await settleUntil(tester, () => !page(tester).loading);
-    expect(find.byTooltip('添加目录'), findsNothing);
+    expect(find.byTooltip('浏览选项'), findsOneWidget);
     page(tester).onOpenNode(dirA);
     await tester.pump();
     page(tester).onOpenNode(dirB);
@@ -76,14 +76,14 @@ void main() {
     await tester.pump();
     await settleUntil(tester, () => !page(tester).loading);
     expect(page(tester).currentNode, isNull);
-    expect(find.byTooltip('新建分类'), findsOneWidget);
+    expect(find.byTooltip('浏览选项'), findsOneWidget);
     page(tester).onOpenNode(collection);
     await tester.pump();
     await settleUntil(tester, () => !page(tester).loading);
     page(tester).onOpenNode(category);
     await tester.pump();
     await settleUntil(tester, () => !page(tester).loading);
-    expect(find.byTooltip('新建子分类'), findsOneWidget);
+    expect(find.byTooltip('浏览选项'), findsOneWidget);
     await tester.drag(find.byType(CustomScrollView), const Offset(0, -650));
     await tester.pumpAndSettle();
     final offset = tester
@@ -160,7 +160,7 @@ void main() {
     await settleUntil(tester, () => !rules.loading);
     expect(navigation(tester).current, AppSection.rules);
     expect(rules.activeRule, isNull);
-    expect(find.byTooltip('新建规则'), findsOneWidget);
+    expect(find.byTooltip('浏览选项'), findsOneWidget);
 
     await tester.runAsync(() async {
       await tester.pumpWidget(const SizedBox());

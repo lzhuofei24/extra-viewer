@@ -19,6 +19,7 @@ import 'modules/build/build_client.dart';
 import 'core/database/library_read_worker.dart';
 import 'core/diagnostics/app_diagnostic_log.dart';
 import 'core/controllers/library_build_task_controller.dart';
+import 'core/sync/auto_sync_coordinator.dart';
 import 'core/controllers/selection_controller.dart';
 import 'core/domain/models.dart';
 import 'core/formats/file_format_handlers.dart';
@@ -50,6 +51,7 @@ import 'ui/node_preview_picker.dart';
 import 'ui/dialogs/app_dialogs.dart';
 import 'ui/widgets/app_widgets.dart';
 import 'ui/glass_notice.dart';
+import 'ui/auto_sync_panel.dart';
 
 class BestViewerApp extends StatefulWidget {
   const BestViewerApp({super.key, this.databaseFactory, this.preferences});
@@ -133,6 +135,7 @@ class _AppShellState extends State<AppShell> {
   BrowsingThumbnailController? _browsingThumbnails;
   AppAudioController? _audioController;
   LibraryBuildTaskController? _buildTasks;
+  AutoSyncCoordinator? _autoSync;
   bool _loading = true;
   int? _incompatibleSchemaVersion;
   bool _resettingLocalIndex = false;
@@ -250,6 +253,9 @@ class _AppShellState extends State<AppShell> {
         AppDiagnosticLog.instance.info('app_lifecycle_changed', fields: {
           'state': state.name,
         });
+        if (state == AppLifecycleState.resumed) {
+          unawaited(_autoSync?.onResumed());
+        }
       },
     );
     AppDiagnosticLog.instance.info('app_shell_initialized');
@@ -266,6 +272,7 @@ class _AppShellState extends State<AppShell> {
     _indexPathController.dispose();
     _buildTasks?.removeListener(_handleBuildTaskChanged);
     _buildTasks?.dispose();
+    _autoSync?.dispose();
     _thumbnailRefreshTimer?.cancel();
     _lifecycleListener.dispose();
     unawaited(_closeRuntimeResources());
@@ -514,6 +521,16 @@ class _AppShellState extends State<AppShell> {
       return;
     }
     buildTasks.addListener(_handleBuildTaskChanged);
+    final autoSync = AutoSyncCoordinator(
+      library: repository,
+      tasks: buildTasks,
+      preferences: widget.preferences,
+      isClosing: () => _runtime.isClosing,
+      onRefresh: () => _reload(
+        indexNodeId: _currentIndexNode?.id,
+        invalidateBrowserCache: true,
+      ),
+    );
     final imageCache = PaintingBinding.instance.imageCache;
     imageCache.maximumSizeBytes =
         Platform.isAndroid ? 512 * 1024 * 1024 : 1024 * 1024 * 1024;
@@ -600,6 +617,7 @@ class _AppShellState extends State<AppShell> {
       _readWorker = readWorker;
       _browsingThumbnails = browsingThumbnails;
       _buildTasks = buildTasks;
+      _autoSync = autoSync;
       _loading = false;
     });
     _dirtyPreviews = DirtyPreviewScheduler(
@@ -687,6 +705,8 @@ class _AppShellState extends State<AppShell> {
       _buildTasks?.removeListener(_handleBuildTaskChanged);
       _buildTasks?.dispose();
       _buildTasks = null;
+      _autoSync?.dispose();
+      _autoSync = null;
       _database = null;
       _repository = null;
       await AppDatabase.resetLocalIndexStorage();
@@ -1731,6 +1751,16 @@ class _AppShellState extends State<AppShell> {
     final node = _currentIndexNode;
     if (node == null) return;
     await _updateDirectoryNode(node);
+  }
+
+  void _openAutoSyncPanel() {
+    final coordinator = _autoSync;
+    if (coordinator == null) return;
+    unawaited(showAutoSyncPanel(
+      context,
+      coordinator: coordinator,
+      preferences: widget.preferences,
+    ));
   }
 
   Future<void> _chooseDirectoryUpdateNode(IndexNode root) async {
@@ -3036,6 +3066,7 @@ class _AppShellState extends State<AppShell> {
             widget.preferences.setBrowser(folderCoverStyle: value);
           },
           onSearchNodes: _searchNodes,
+          onAutoSync: _openAutoSyncPanel,
           currentNode: _currentIndexNode,
           loading: _navigationLoading,
           loadError: _navigationError,
@@ -3128,6 +3159,7 @@ class _AppShellState extends State<AppShell> {
           queries: _readWorker!,
           controller: _ruleBrowser,
           onCreateRule: _scanning ? null : _createRule,
+          onAutoSync: _openAutoSyncPanel,
           initialRuleId: _requestedRuleId,
           browserState: _browserState,
           layoutSettings: widget.preferences.value.layout,

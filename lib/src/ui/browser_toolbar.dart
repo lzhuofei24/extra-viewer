@@ -41,6 +41,7 @@ class BrowserToolbar extends StatelessWidget {
     this.onSearch,
     this.onAdd,
     this.addLabel = '添加',
+    this.onAutoSync,
     this.allowSorting = true,
     this.allowGridStyle = true,
     this.sortDescription,
@@ -69,6 +70,7 @@ class BrowserToolbar extends StatelessWidget {
   final VoidCallback? onSearch;
   final VoidCallback? onAdd;
   final String addLabel;
+  final VoidCallback? onAutoSync;
   final bool immersive;
   final VoidCallback? onToggleImmersive;
   final bool selectionMode;
@@ -80,11 +82,6 @@ class BrowserToolbar extends StatelessWidget {
           final actions = Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (onAdd != null)
-                IconButton(
-                    tooltip: addLabel,
-                    onPressed: onAdd,
-                    icon: const Icon(Icons.add)),
               if (onSearch != null)
                 IconButton(
                   tooltip: '搜索目录、分类或规则',
@@ -108,7 +105,15 @@ class BrowserToolbar extends StatelessWidget {
                       : Icons.checklist_outlined),
                 ),
               const SizedBox(width: 4),
+              if (onAutoSync != null)
+                IconButton(
+                  tooltip: '目录自动同步',
+                  onPressed: onAutoSync,
+                  icon: const Icon(Icons.sync_rounded),
+                ),
               _BrowserOptionsMenu(
+                onAdd: onAdd,
+                addLabel: addLabel,
                 onFolderCoverChanged: onFolderCoverChanged,
                 onFileDisplayChanged: onFileDisplayChanged,
                 allowSorting: allowSorting,
@@ -185,6 +190,8 @@ class _BrowserOptionsMenu extends StatefulWidget {
     this.showFiles = true,
     this.showFolders = true,
     required this.onLayoutChanged,
+    this.onAdd,
+    this.addLabel = '添加',
   });
 
   final bool allowSorting, allowGridStyle;
@@ -202,6 +209,8 @@ class _BrowserOptionsMenu extends StatefulWidget {
   final GalleryLayoutSettings layoutSettings;
   final bool showFiles, showFolders;
   final ValueChanged<GalleryLayoutSettings> onLayoutChanged;
+  final VoidCallback? onAdd;
+  final String addLabel;
 
   @override
   State<_BrowserOptionsMenu> createState() => _BrowserOptionsMenuState();
@@ -366,6 +375,12 @@ class _BrowserOptionsPanelState extends State<_BrowserOptionsPanel> {
                 onSelected: config.onThemeChanged)),
         if (config.showFolders) _entry('文件夹设置', _OptionsSection.folders),
         if (config.showFiles) _entry('文件设置', _OptionsSection.files),
+        if (config.onAdd != null)
+          TextButton.icon(
+            onPressed: config.onAdd,
+            icon: const Icon(Icons.add),
+            label: Text(config.addLabel),
+          ),
       ];
     }
     if (_section == _OptionsSection.folders) {

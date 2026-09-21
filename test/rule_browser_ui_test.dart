@@ -107,10 +107,10 @@ void main() {
       expect((grid.gridDelegate as AspectRatioGridDelegate).columns, columns);
       expect(requests, contains('image'));
       expect(requests, isNot(contains('failed')));
-      expect(find.byTooltip('新建规则'), findsOneWidget);
+      expect(find.byTooltip('浏览选项'), findsOneWidget);
       await tester.tap(find.text('常用'));
       await tester.pumpAndSettle();
-      expect(find.byTooltip('新建规则'), findsNothing);
+      expect(find.byTooltip('浏览选项'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       await tester.pumpAndSettle();
     }
