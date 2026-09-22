@@ -289,6 +289,11 @@ Future<Object?> dispatchLibrary(LibraryRepository repository, String method,
               IndexPreviewRebuildScope.node,
           reason: args['reason'] as String?);
       return null;
+    case 'markIndexNodePreviewDirtyForEntities':
+      repository.markIndexNodePreviewDirtyForEntities(
+          (args['entityIds'] as List).cast<String>(),
+          reason: args['reason'] as String?);
+      return null;
     case 'clearIndexNodePreviewDirty':
       repository.clearIndexNodePreviewDirty(args['nodeId'] as String,
           scope: (args['scope'] as IndexPreviewRebuildScope?) ??
@@ -371,7 +376,9 @@ Future<Object?> dispatchLibrary(LibraryRepository repository, String method,
       return repository.commitEntityPreview(
           args['ticket'] as EntityPreviewTicket,
           args['update'] as ThumbnailDatabaseUpdate,
-          byteSize: (args['byteSize'] as int?) ?? 0);
+          byteSize: (args['byteSize'] as int?) ?? 0,
+          markNodePreviewDirty:
+              (args['markNodePreviewDirty'] as bool?) ?? true);
     default:
       throw ArgumentError.value(method, 'method', 'Unknown library operation');
   }

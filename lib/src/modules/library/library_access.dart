@@ -163,6 +163,9 @@ abstract interface class LibraryAccess {
   FutureOr<void> markIndexNodePreviewDirty(String nodeId,
       {IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,
       String? reason});
+  FutureOr<void> markIndexNodePreviewDirtyForEntities(
+      Iterable<String> entityIds,
+      {String? reason});
   FutureOr<void> clearIndexNodePreviewDirty(String nodeId,
       {IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node});
   FutureOr<Map<String, String>> listDirtyPreviewRoots();
@@ -210,5 +213,5 @@ abstract interface class LibraryAccess {
   FutureOr<EntityPreviewTicket> beginEntityPreview(Entity entity);
   FutureOr<bool> commitEntityPreview(
       EntityPreviewTicket ticket, ThumbnailDatabaseUpdate update,
-      {int byteSize = 0});
+      {int byteSize = 0, bool markNodePreviewDirty = true});
 }

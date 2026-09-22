@@ -41,11 +41,13 @@ class ThumbnailService {
   Future<bool> ensureThumbnail(
     Entity entity, {
     bool force = false,
+    bool markNodePreviewDirty = true,
     ThumbnailCancellationToken? cancellationToken,
   }) =>
       _ensureThumbnail(
         entity,
         force: force,
+        markNodePreviewDirty: markNodePreviewDirty,
         cancellationToken: cancellationToken,
       );
 
@@ -55,18 +57,21 @@ class ThumbnailService {
     Entity entity,
     File sourceFile, {
     bool force = false,
+    bool markNodePreviewDirty = true,
     ThumbnailCancellationToken? cancellationToken,
   }) =>
       _ensureThumbnail(
         entity,
         sourceFileOverride: sourceFile,
         force: force,
+        markNodePreviewDirty: markNodePreviewDirty,
         cancellationToken: cancellationToken,
       );
 
   Future<bool> _ensureThumbnail(
     Entity entity, {
     bool force = false,
+    bool markNodePreviewDirty = true,
     ThumbnailCancellationToken? cancellationToken,
     File? sourceFileOverride,
   }) async {
@@ -191,7 +196,8 @@ class ThumbnailService {
           ),
           byteSize: artifact.persistedPath == null
               ? artifact.bytes.length
-              : await File(artifact.persistedPath!).length());
+              : await File(artifact.persistedPath!).length(),
+          markNodePreviewDirty: markNodePreviewDirty);
       return true;
     } on ThumbnailTaskPausedException {
       rethrow;

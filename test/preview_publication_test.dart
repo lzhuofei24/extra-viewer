@@ -83,6 +83,25 @@ void main() {
     expect(await file.exists(), isFalse);
   });
 
+  test('batch entity preview dirty marking deduplicates affected ancestry', () {
+    final root = library.ensureCollectionIndexRoot('batch-dirty');
+    final child = library.createCustomNode(parentId: root.id, name: 'child');
+    final first = entity('batch-first');
+    final second = entity('batch-second');
+    library.linkEntitiesToIndexNode(
+        entityIds: [first.id, second.id], indexNodeId: child.id);
+    database.db.execute('DELETE FROM node_preview_dirty');
+
+    library.markIndexNodePreviewDirtyForEntities([first.id, second.id],
+        reason: 'batch');
+
+    final rows = database.db.select(
+        'SELECT node_id, reason FROM node_preview_dirty ORDER BY node_id');
+    expect(rows.map((row) => row['node_id']), containsAll([root.id, child.id]));
+    expect(rows, hasLength(3));
+    expect(rows.every((row) => row['reason'] == 'batch'), isTrue);
+  });
+
   test(
       'automatic node cover skips missing first thumbnail and propagates ready cover',
       () async {

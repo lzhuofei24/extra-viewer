@@ -471,6 +471,64 @@ class LibraryRepositoryBase {
     });
   }
 
+  /// Marks all node previews affected by a completed media batch in one
+  /// recursive query and transaction. Individual thumbnail publication must
+  /// not repeatedly walk the same directory ancestry for large imports.
+  void markIndexNodePreviewDirtyForEntities(
+    Iterable<String> entityIds, {
+    String? reason,
+  }) {
+    final ids = entityIds.toSet().toList(growable: false);
+    if (ids.isEmpty) return;
+    writeTransaction(() {
+      final placeholders = List.filled(ids.length, '?').join(',');
+      final rows = database.db.select('''
+        WITH RECURSIVE entity_nodes(id) AS (
+          SELECT index_node_id FROM index_node_entities
+          WHERE entity_id IN ($placeholders)
+          UNION
+          SELECT node_id FROM node_preview_override_items
+          WHERE entity_id IN ($placeholders)
+        ), dependencies(source_id, dependent_id) AS (
+          SELECT id, parent_id FROM index_nodes WHERE parent_id IS NOT NULL
+          UNION
+          SELECT target_node_id, node_id FROM node_preview_override_items
+          WHERE target_node_id IS NOT NULL
+        ), affected(id) AS (
+          SELECT id FROM entity_nodes
+          UNION
+          SELECT dependency.dependent_id
+          FROM dependencies dependency JOIN affected
+            ON dependency.source_id = affected.id
+        )
+        SELECT DISTINCT id FROM affected
+        WHERE id IN (SELECT id FROM index_nodes)
+      ''', [...ids, ...ids]);
+      final version = database.db.prepare('''
+        INSERT INTO node_preview_versions(node_id, revision) VALUES (?, 1)
+        ON CONFLICT(node_id) DO UPDATE SET revision = revision + 1
+      ''');
+      final dirty = database.db.prepare('''
+        INSERT INTO node_preview_dirty(node_id, revision, reason, updated_at)
+        SELECT node_id, revision, ?, ? FROM node_preview_versions
+        WHERE node_id = ?
+        ON CONFLICT(node_id) DO UPDATE SET revision = excluded.revision,
+          reason = excluded.reason, updated_at = excluded.updated_at
+      ''');
+      try {
+        final timestamp = nowMillis();
+        for (final row in rows) {
+          final nodeId = row['id'] as String;
+          version.execute([nodeId]);
+          dirty.execute([reason, timestamp, nodeId]);
+        }
+      } finally {
+        version.dispose();
+        dirty.dispose();
+      }
+    });
+  }
+
   void clearIndexNodePreviewDirty(
     String nodeId, {
     IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node,

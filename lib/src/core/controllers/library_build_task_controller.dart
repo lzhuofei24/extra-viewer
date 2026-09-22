@@ -932,6 +932,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
       final entityIds = attempts.keys.toList(growable: false);
       if (entityIds.isEmpty) break;
       final entities = (await library.getEntitiesByIds(entityIds));
+      await builds.setCurrentItem(
+          job.id, entities[entityIds.first]?.name ?? entityIds.first);
       final results =
           <String, ({LibraryBuildWorkState state, String? error})>{};
       final imageConcurrency = _thumbnails.recommendedImageConcurrency;
@@ -944,6 +946,13 @@ class LibraryBuildTaskController extends ChangeNotifier {
         recorded.addAll(pending.keys);
         await builds.completeEntityPreviewWork(job.id, pending,
             attempts: attempts);
+        final completedIds = pending.entries
+            .where(
+                (entry) => entry.value.state == LibraryBuildWorkState.completed)
+            .map((entry) => entry.key)
+            .toList(growable: false);
+        await library.markIndexNodePreviewDirtyForEntities(completedIds,
+            reason: 'entity_preview_published');
         await _reportPreviewProgress(job.id);
       });
       try {
@@ -1002,8 +1011,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
   ) async {
     try {
       _control!.check();
-      await builds.setCurrentItem(jobId, entity.name);
       await _thumbnails.ensureThumbnail(entity,
+          markNodePreviewDirty: false,
           cancellationToken: _control!.thumbnailCancellation);
       final refreshed = (await library.getEntity(id));
       if (refreshed?.thumbnailStatus == ThumbnailStatus.success) {

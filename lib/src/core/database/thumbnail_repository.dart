@@ -30,7 +30,7 @@ mixin ThumbnailRepositoryMixin on LibraryRepositoryBase {
 
   bool commitEntityPreview(
           EntityPreviewTicket ticket, ThumbnailDatabaseUpdate update,
-          {int byteSize = 0}) =>
+          {int byteSize = 0, bool markNodePreviewDirty = true}) =>
       writeTransaction(() {
         if (update.entityId != ticket.entityId ||
             update.type == ThumbnailUpdateType.pending) {
@@ -100,12 +100,14 @@ mixin ThumbnailRepositoryMixin on LibraryRepositoryBase {
         if (oldKey != null && oldFormat != null && oldKey != ticket.assetKey) {
           _retirePreviewAsset('entity', oldKey, oldFormat);
         }
-        for (final row in database.db.select(
-            '''SELECT index_node_id FROM index_node_entities WHERE entity_id = ?
-            UNION SELECT node_id FROM node_preview_override_items WHERE entity_id = ?''',
-            [ticket.entityId, ticket.entityId])) {
-          markIndexNodePreviewDirty(row['index_node_id'] as String,
-              reason: 'entity_preview_published');
+        if (markNodePreviewDirty) {
+          for (final row in database.db.select(
+              '''SELECT index_node_id FROM index_node_entities WHERE entity_id = ?
+              UNION SELECT node_id FROM node_preview_override_items WHERE entity_id = ?''',
+              [ticket.entityId, ticket.entityId])) {
+            markIndexNodePreviewDirty(row['index_node_id'] as String,
+                reason: 'entity_preview_published');
+          }
         }
         return true;
       });

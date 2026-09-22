@@ -149,6 +149,7 @@ class _BlockingThumbnailService extends ThumbnailService {
   Future<bool> ensureThumbnail(
     Entity entity, {
     bool force = false,
+    bool markNodePreviewDirty = true,
     ThumbnailCancellationToken? cancellationToken,
   }) async {
     startedCount++;

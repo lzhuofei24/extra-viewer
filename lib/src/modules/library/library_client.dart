@@ -609,6 +609,15 @@ class LibraryClient implements LibraryAccess {
   }
 
   @override
+  Future<void> markIndexNodePreviewDirtyForEntities(Iterable<String> entityIds,
+      {String? reason}) async {
+    await host.call('library', 'markIndexNodePreviewDirtyForEntities', {
+      'entityIds': entityIds.toList(growable: false),
+      'reason': reason,
+    });
+  }
+
+  @override
   Future<void> clearIndexNodePreviewDirty(String nodeId,
       {IndexPreviewRebuildScope scope = IndexPreviewRebuildScope.node}) async {
     await host.call('library', 'clearIndexNodePreviewDirty',
@@ -783,8 +792,12 @@ class LibraryClient implements LibraryAccess {
   @override
   Future<bool> commitEntityPreview(
       EntityPreviewTicket ticket, ThumbnailDatabaseUpdate update,
-      {int byteSize = 0}) async {
-    return (await host.call('library', 'commitEntityPreview',
-        {'ticket': ticket, 'update': update, 'byteSize': byteSize})) as bool;
+      {int byteSize = 0, bool markNodePreviewDirty = true}) async {
+    return (await host.call('library', 'commitEntityPreview', {
+      'ticket': ticket,
+      'update': update,
+      'byteSize': byteSize,
+      'markNodePreviewDirty': markNodePreviewDirty,
+    })) as bool;
   }
 }
