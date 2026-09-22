@@ -802,10 +802,11 @@ class LibraryBuildRepository implements BuildAccess {
     final rows = hasChangeSet ? db.select('''
             SELECT entity.id
             FROM library_task_changes change_item
-            JOIN entities entity ON entity.path = change_item.source_path
+            JOIN entities entity ON entity.id = change_item.entity_id
             LEFT JOIN entity_previews preview ON preview.entity_id = entity.id
             WHERE change_item.job_id = ?
               AND change_item.change_kind IN ('added', 'changed')
+              AND change_item.entity_id IS NOT NULL
               AND entity.id > ?
               AND entity.archived = 0
               AND entity.media_type IN ('image', 'video')
@@ -815,7 +816,7 @@ class LibraryBuildRepository implements BuildAccess {
                 (preview.thumbnail_key NOT LIKE 'v6_%' AND
                  preview.thumbnail_key NOT LIKE 'v7_%')
               )
-            ORDER BY entity.id
+            ORDER BY change_item.entity_id
             LIMIT ?
           ''', [jobId, cursor, batchSize + 1]) : db.select('''
             WITH RECURSIVE subtree(id) AS (
@@ -878,6 +879,24 @@ class LibraryBuildRepository implements BuildAccess {
       complete: complete,
       queued: _count('library_entity_preview_work', jobId),
     );
+  }
+
+  @override
+  void resolveTaskChangeEntityIds(String jobId) {
+    library.writeTransaction(() {
+      library.database.db.execute('''
+        UPDATE library_task_changes
+        SET entity_id = (
+          SELECT entity.id FROM entities entity
+          WHERE entity.path = library_task_changes.source_path
+        ),
+        source_revision = COALESCE(source_revision, (
+          SELECT entity.source_revision FROM entities entity
+          WHERE entity.path = library_task_changes.source_path
+        ))
+        WHERE job_id = ? AND entity_id IS NULL
+      ''', [jobId]);
+    });
   }
 
   @override

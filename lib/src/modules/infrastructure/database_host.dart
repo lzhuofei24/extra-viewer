@@ -10,6 +10,7 @@ import '../../core/database/local_statistics.dart';
 import '../../core/database/statement_cache.dart';
 import '../../core/database/library_repository.dart';
 import '../../core/database/library_build_repository.dart';
+import '../../core/diagnostics/app_diagnostic_log.dart';
 import '../library/library_dispatch.dart';
 import '../build/build_dispatch.dart';
 import 'database_operations.dart';
@@ -128,11 +129,16 @@ class DatabaseHost {
 
   Future<Object?> _requestWithOutcome(
       Map<String, Object?> message, String? commandId) async {
+    final stopwatch = Stopwatch()..start();
     try {
-      return await _request(message);
+      final value = await _request(message);
+      _recordRequestTiming(message, stopwatch.elapsed, null);
+      return value;
     } on DatabaseCommandException {
+      _recordRequestTiming(message, stopwatch.elapsed, 'database_command');
       rethrow;
     } catch (error) {
+      _recordRequestTiming(message, stopwatch.elapsed, '$error');
       if (commandId == null) rethrow;
       var outcome = DatabaseCommandOutcome.unknown;
       try {
@@ -144,6 +150,22 @@ class DatabaseHost {
       }
       throw DatabaseCommandException(commandId, outcome, '$error');
     }
+  }
+
+  void _recordRequestTiming(
+      Map<String, Object?> message, Duration elapsed, String? error) {
+    if (elapsed < const Duration(milliseconds: 500) && error == null) return;
+    final args = message['args'];
+    final jobId = args is Map ? args['jobId'] : null;
+    final fields = <String, Object?>{
+      'domain': message['domain'],
+      'method': message['method'],
+      'jobId': jobId,
+      'commandId': message['commandId'],
+      'elapsedMs': elapsed.inMilliseconds,
+      if (error != null) 'error': error,
+    };
+    AppDiagnosticLog.instance.warning('database_command_slow', fields: fields);
   }
 
   Future<Object?> _request(Map<String, Object?> message,

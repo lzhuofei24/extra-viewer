@@ -214,4 +214,7 @@ abstract interface class LibraryAccess {
   FutureOr<bool> commitEntityPreview(
       EntityPreviewTicket ticket, ThumbnailDatabaseUpdate update,
       {int byteSize = 0, bool markNodePreviewDirty = true});
+  FutureOr<Map<String, bool>> commitEntityPreviewBatch(
+      Iterable<PreparedEntityPreview> previews,
+      {bool markNodePreviewDirty = false});
 }

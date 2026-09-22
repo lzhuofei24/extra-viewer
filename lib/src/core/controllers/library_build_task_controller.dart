@@ -106,6 +106,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
   bool _disposed = false;
   bool _closing = false;
   Future<LibraryBuildJob?>? _activeRun;
+  Future<void> Function(bool paused)? _statisticsMaintenanceHandler;
   DateTime _lastProgressNotification = DateTime.fromMillisecondsSinceEpoch(0);
 
   static const _progressNotificationInterval = Duration(milliseconds: 150);
@@ -116,6 +117,11 @@ class LibraryBuildTaskController extends ChangeNotifier {
   List<LibraryBuildJob> get recoverableJobs => _recoverable;
   List<LibraryBuildJob> get history => _history;
   String? get errorMessage => _error;
+
+  void setStatisticsMaintenanceHandler(
+      Future<void> Function(bool paused) handler) {
+    _statisticsMaintenanceHandler = handler;
+  }
 
   Future<void> refresh() async {
     _recoverable = (await builds.listRecoverable());
@@ -526,6 +532,12 @@ class LibraryBuildTaskController extends ChangeNotifier {
     var job = initial;
     _activeJob = initial;
     try {
+      await _statisticsMaintenanceHandler?.call(true);
+    } catch (error, stack) {
+      AppDiagnosticLog.instance.warning('statistics_maintenance_pause_failed',
+          fields: {'error': '$error', 'stackTrace': '$stack'});
+    }
+    try {
       job = await builds.setRunning(initial.id);
       _activeJob = job;
       _report(
@@ -614,6 +626,13 @@ class LibraryBuildTaskController extends ChangeNotifier {
       (await builds.fail(job.id, _error!));
       return null;
     } finally {
+      try {
+        await _statisticsMaintenanceHandler?.call(false);
+      } catch (error, stack) {
+        AppDiagnosticLog.instance.warning(
+            'statistics_maintenance_resume_failed',
+            fields: {'error': '$error', 'stackTrace': '$stack'});
+      }
       _progress = null;
       _activeJob = null;
       await refresh();
@@ -909,6 +928,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
     if (job.kind == LibraryBuildKind.scanScope) {
       final rootId = job.indexRootId;
       if (rootId == null) throw StateError('目录已不存在');
+      await builds.resolveTaskChangeEntityIds(job.id);
       while (true) {
         _control!.check();
         final preparation = await builds.prepareEntityPreviewWorkBatch(
@@ -936,14 +956,37 @@ class LibraryBuildTaskController extends ChangeNotifier {
           job.id, entities[entityIds.first]?.name ?? entityIds.first);
       final results =
           <String, ({LibraryBuildWorkState state, String? error})>{};
+      final publications = <String, PreparedEntityPreview>{};
       final imageConcurrency = _thumbnails.recommendedImageConcurrency;
       final videoConcurrency = _thumbnails.recommendedVideoConcurrency;
       final recorded = <String>{};
+      final dirtyEntityIds = <String>{};
+      Future<void> flushDirtyEntities() async {
+        if (dirtyEntityIds.isEmpty) return;
+        final ids = dirtyEntityIds.toList(growable: false);
+        dirtyEntityIds.clear();
+        await library.markIndexNodePreviewDirtyForEntities(ids,
+            reason: 'entity_preview_published');
+      }
+
       final checkpoint = PeriodicCheckpoint(() async {
         if (results.isEmpty) return;
         final pending = Map.of(results);
+        final pendingPublications = <String, PreparedEntityPreview>{};
+        for (final id in pending.keys) {
+          final publication = publications.remove(id);
+          if (publication != null) pendingPublications[id] = publication;
+        }
         results.clear();
         recorded.addAll(pending.keys);
+        final published =
+            await library.commitEntityPreviewBatch(pendingPublications.values);
+        for (final entry in pendingPublications.entries) {
+          if (published[entry.key] == false) {
+            pending[entry.key] =
+                (state: LibraryBuildWorkState.failed, error: '预览已改变，请重试');
+          }
+        }
         await builds.completeEntityPreviewWork(job.id, pending,
             attempts: attempts);
         final completedIds = pending.entries
@@ -951,8 +994,8 @@ class LibraryBuildTaskController extends ChangeNotifier {
                 (entry) => entry.value.state == LibraryBuildWorkState.completed)
             .map((entry) => entry.key)
             .toList(growable: false);
-        await library.markIndexNodePreviewDirtyForEntities(completedIds,
-            reason: 'entity_preview_published');
+        dirtyEntityIds.addAll(completedIds);
+        if (dirtyEntityIds.length >= 1000) await flushDirtyEntities();
         await _reportPreviewProgress(job.id);
       });
       try {
@@ -960,12 +1003,14 @@ class LibraryBuildTaskController extends ChangeNotifier {
           _forEachConcurrent(entityIds, imageConcurrency, (id) async {
             final entity = entities[id];
             if (entity?.entityType != EntityType.image) return;
-            await _buildOneEntityPreview(job.id, id, entity!, results);
+            await _buildOneEntityPreview(
+                job.id, id, entity!, results, publications);
           }),
           _forEachConcurrent(entityIds, videoConcurrency, (id) async {
             final entity = entities[id];
             if (entity?.entityType != EntityType.video) return;
-            await _buildOneEntityPreview(job.id, id, entity!, results);
+            await _buildOneEntityPreview(
+                job.id, id, entity!, results, publications);
           }),
         ]);
         for (final id in entityIds) {
@@ -977,6 +1022,7 @@ class LibraryBuildTaskController extends ChangeNotifier {
         }
       } finally {
         await checkpoint.close();
+        await flushDirtyEntities();
       }
       final current = (await builds.get(job.id))!;
       _report(
@@ -1008,20 +1054,28 @@ class LibraryBuildTaskController extends ChangeNotifier {
     String id,
     Entity entity,
     Map<String, ({LibraryBuildWorkState state, String? error})> results,
+    Map<String, PreparedEntityPreview> publications,
   ) async {
     try {
       _control!.check();
-      await _thumbnails.ensureThumbnail(entity,
-          markNodePreviewDirty: false,
+      final prepared = await _thumbnails.prepareThumbnail(entity,
           cancellationToken: _control!.thumbnailCancellation);
-      final refreshed = (await library.getEntity(id));
-      if (refreshed?.thumbnailStatus == ThumbnailStatus.success) {
-        results[id] = (state: LibraryBuildWorkState.completed, error: null);
+      if (prepared == null) {
+        results[id] = (state: LibraryBuildWorkState.skipped, error: null);
         return;
       }
-      final message = refreshed?.thumbnailError ?? '缩略图生成失败';
-      results[id] = (state: LibraryBuildWorkState.failed, error: message);
-      _logThumbnailFailure(jobId, entity, message, StackTrace.current);
+      publications[id] = prepared;
+      final failed = prepared.update.type == ThumbnailUpdateType.failed;
+      final message = prepared.update.error ?? '缩略图生成失败';
+      results[id] = (
+        state: failed
+            ? LibraryBuildWorkState.failed
+            : LibraryBuildWorkState.completed,
+        error: failed ? message : null
+      );
+      if (failed) {
+        _logThumbnailFailure(jobId, entity, message, StackTrace.current);
+      }
     } on LibraryBuildPausedException {
       rethrow;
     } on LibraryBuildAbandonedException {

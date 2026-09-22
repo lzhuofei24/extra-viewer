@@ -147,6 +147,9 @@ Future<Object?> dispatchBuild(LibraryBuildRepository repository, String method,
       return repository.prepareEntityPreviewWorkBatch(
           args['jobId'] as String, args['scopeNodeId'] as String,
           limit: (args['limit'] as int?) ?? 500);
+    case 'resolveTaskChangeEntityIds':
+      repository.resolveTaskChangeEntityIds(args['jobId'] as String);
+      return null;
     case 'handoffLegacyArchivePreviewWork':
       return repository
           .handoffLegacyArchivePreviewWork(args['jobId'] as String);

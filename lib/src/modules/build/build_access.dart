@@ -72,6 +72,7 @@ abstract interface class BuildAccess {
   FutureOr<({bool complete, int queued})> prepareEntityPreviewWorkBatch(
       String jobId, String scopeNodeId,
       {int limit = 500});
+  FutureOr<void> resolveTaskChangeEntityIds(String jobId);
   FutureOr<bool> handoffLegacyArchivePreviewWork(String jobId);
   FutureOr<void> prepareDocumentPreviewWork(String jobId, String scopeNodeId);
   FutureOr<void> prepareNodePreviewWork(String jobId,

@@ -379,6 +379,11 @@ Future<Object?> dispatchLibrary(LibraryRepository repository, String method,
           byteSize: (args['byteSize'] as int?) ?? 0,
           markNodePreviewDirty:
               (args['markNodePreviewDirty'] as bool?) ?? true);
+    case 'commitEntityPreviewBatch':
+      return repository.commitEntityPreviewBatch(
+          (args['previews'] as List).cast<PreparedEntityPreview>(),
+          markNodePreviewDirty:
+              (args['markNodePreviewDirty'] as bool?) ?? false);
     default:
       throw ArgumentError.value(method, 'method', 'Unknown library operation');
   }

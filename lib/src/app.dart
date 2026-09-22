@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 
 import 'core/database/app_database.dart';
 import 'modules/infrastructure/database_runtime.dart';
+import 'modules/infrastructure/database_host.dart';
 import 'modules/infrastructure/app_runtime.dart';
 import 'modules/viewer/viewer_sessions.dart';
 import 'modules/previews/dirty_preview_scheduler.dart';
@@ -365,6 +366,8 @@ class _AppShellState extends State<AppShell> {
           onError: (error, stack) => AppDiagnosticLog.instance.warning(
               'statistics_refresh_failed',
               fields: {'error': '$error'}));
+      final tasks = _buildTasks;
+      if (tasks != null) _bindStatisticsMaintenance(tasks, worker, writer);
       return worker;
     }).whenComplete(() {
       if (identical(_readWorkerStart, start)) _readWorkerStart = null;
@@ -381,6 +384,20 @@ class _AppShellState extends State<AppShell> {
     } catch (_) {
       // The worker may already have terminated after a native/database error.
     }
+  }
+
+  void _bindStatisticsMaintenance(LibraryBuildTaskController tasks,
+      LibraryReadWorker worker, DatabaseHost writer) {
+    tasks.setStatisticsMaintenanceHandler((paused) async {
+      if (paused) {
+        worker.stopStatisticsMaintenance();
+      } else {
+        worker.startStatisticsMaintenance(writer.publishStatisticsBatch,
+            onError: (error, stack) => AppDiagnosticLog.instance.warning(
+                'statistics_refresh_failed',
+                fields: {'error': '$error'}));
+      }
+    });
   }
 
   Future<T> _read<T>(
@@ -620,6 +637,9 @@ class _AppShellState extends State<AppShell> {
       _autoSync = autoSync;
       _loading = false;
     });
+    if (readWorker != null) {
+      _bindStatisticsMaintenance(buildTasks, readWorker, writeWorker);
+    }
     _dirtyPreviews = DirtyPreviewScheduler(
       isBusy: () => !mounted || _runtime.isClosing || buildTasks.isRunning,
       load: () async => repository.listDirtyPreviewRoots(),

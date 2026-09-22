@@ -75,10 +75,35 @@ class ThumbnailService {
     ThumbnailCancellationToken? cancellationToken,
     File? sourceFileOverride,
   }) async {
+    final prepared = await prepareThumbnail(
+      entity,
+      force: force,
+      cancellationToken: cancellationToken,
+      sourceFileOverride: sourceFileOverride,
+    );
+    if (prepared == null) return false;
+    await repository.commitEntityPreview(
+      prepared.ticket,
+      prepared.update,
+      byteSize: prepared.byteSize,
+      markNodePreviewDirty: markNodePreviewDirty,
+    );
+    return true;
+  }
+
+  /// Generates and durably writes a preview file, but leaves database
+  /// publication to the caller. Build tasks use this to publish a batch in a
+  /// single database transaction.
+  Future<PreparedEntityPreview?> prepareThumbnail(
+    Entity entity, {
+    bool force = false,
+    ThumbnailCancellationToken? cancellationToken,
+    File? sourceFileOverride,
+  }) async {
     final stopwatch = Stopwatch()..start();
     cancellationToken?.throwIfCancelled();
     final handler = FileFormatRegistry.resolveFormat(entity.format);
-    if (handler == null || !handler.supportsGeneratedThumbnail) return false;
+    if (handler == null || !handler.supportsGeneratedThumbnail) return null;
     if (!force &&
         entity.thumbnailStatus == ThumbnailStatus.success &&
         entity.thumbnailKey != null &&
@@ -86,7 +111,7 @@ class ThumbnailService {
         await store
             .fileFor(entity.thumbnailKey!, entity.thumbnailFormat!)
             .exists()) {
-      return false;
+      return null;
     }
 
     final ticket = await repository.beginEntityPreview(entity);
@@ -169,9 +194,8 @@ class ThumbnailService {
         }
       }
       if (artifact == null) {
-        await repository.commitEntityPreview(
+        return PreparedEntityPreview(
             ticket, ThumbnailDatabaseUpdate.none(entity.id));
-        return true;
       }
       cancellationToken?.throwIfCancelled();
       if (artifact.persistedPath == null) {
@@ -184,29 +208,27 @@ class ThumbnailService {
         throw FileSystemException(
             'Native thumbnail output was missing', artifact.persistedPath);
       }
-      await repository.commitEntityPreview(
-          ticket,
-          ThumbnailDatabaseUpdate.success(
-            entityId: entity.id,
-            key: expectedKey,
-            format: 'webp',
-            width: artifact.width,
-            height: artifact.height,
-            durationMs: artifact.durationMs,
-          ),
-          byteSize: artifact.persistedPath == null
-              ? artifact.bytes.length
-              : await File(artifact.persistedPath!).length(),
-          markNodePreviewDirty: markNodePreviewDirty);
-      return true;
+      return PreparedEntityPreview(
+        ticket,
+        ThumbnailDatabaseUpdate.success(
+          entityId: entity.id,
+          key: expectedKey,
+          format: 'webp',
+          width: artifact.width,
+          height: artifact.height,
+          durationMs: artifact.durationMs,
+        ),
+        byteSize: artifact.persistedPath == null
+            ? artifact.bytes.length
+            : await File(artifact.persistedPath!).length(),
+      );
     } on ThumbnailTaskPausedException {
       rethrow;
     } on ThumbnailTaskCanceledException {
       rethrow;
     } catch (error) {
-      await repository.commitEntityPreview(
+      return PreparedEntityPreview(
           ticket, ThumbnailDatabaseUpdate.failed(entity.id, '$error'));
-      return true;
     } finally {
       stopwatch.stop();
       timings.record(entity.entityType, stopwatch.elapsed, artifact);
@@ -304,12 +326,8 @@ class ThumbnailConcurrencyAdvisor {
 
   int get recommendedImageConcurrency {
     if (!Platform.isAndroid) return 8;
-    if (_imageAverageMs == 0) return 4;
-    return _imageAverageMs < 280
-        ? 6
-        : _imageAverageMs < 700
-            ? 5
-            : 4;
+    if (_imageAverageMs == 0) return 2;
+    return _imageAverageMs < 700 ? 3 : 2;
   }
 
   int get recommendedVideoConcurrency {

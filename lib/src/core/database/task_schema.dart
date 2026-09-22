@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS library_task_changes (
   change_kind TEXT NOT NULL,
   PRIMARY KEY(job_id,source_path)
 );
+CREATE INDEX IF NOT EXISTS idx_task_changes_job_kind_entity
+  ON library_task_changes(job_id,change_kind,entity_id);
+CREATE INDEX IF NOT EXISTS idx_task_changes_job_kind_path
+  ON library_task_changes(job_id,change_kind,source_path);
 CREATE TABLE IF NOT EXISTS library_task_dirty (
   job_id TEXT NOT NULL REFERENCES library_build_jobs(id),
   node_id TEXT NOT NULL, revision INTEGER NOT NULL,

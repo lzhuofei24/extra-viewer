@@ -307,6 +307,11 @@ class BuildClient implements BuildAccess {
   }
 
   @override
+  Future<void> resolveTaskChangeEntityIds(String jobId) async {
+    await host.call('build', 'resolveTaskChangeEntityIds', {'jobId': jobId});
+  }
+
+  @override
   Future<bool> handoffLegacyArchivePreviewWork(String jobId) async {
     return (await host.call(
         'build', 'handoffLegacyArchivePreviewWork', {'jobId': jobId})) as bool;

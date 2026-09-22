@@ -53,7 +53,7 @@ class MainActivity : AudioServiceActivity() {
     private var pendingDirectoryResult: MethodChannel.Result? = null
     // SAF providers are IPC-bound. A small pool overlaps reads without
     // allowing a large directory scan to flood the provider or disk cache.
-    private val sourceExecutor = Executors.newFixedThreadPool(8)
+    private val sourceExecutor = Executors.newFixedThreadPool(4)
     private val documentTaskExecutor = Executors.newFixedThreadPool(2)
     private val scanExecutor = Executors.newSingleThreadExecutor()
     private val thumbnailJobs = ConcurrentHashMap<String, ThumbnailJob>()
@@ -649,7 +649,6 @@ class MainActivity : AudioServiceActivity() {
                 bitmap.compress(Bitmap.CompressFormat.WEBP, quality.coerceIn(1, 100), stream)
             }
             if (!compressed) throw IllegalStateException("WebP compression failed")
-            stream.fd.sync()
         }
         job?.checkActive()
         if (output.exists()) {

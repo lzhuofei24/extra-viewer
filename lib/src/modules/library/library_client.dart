@@ -800,4 +800,15 @@ class LibraryClient implements LibraryAccess {
       'markNodePreviewDirty': markNodePreviewDirty,
     })) as bool;
   }
+
+  @override
+  Future<Map<String, bool>> commitEntityPreviewBatch(
+      Iterable<PreparedEntityPreview> previews,
+      {bool markNodePreviewDirty = false}) async {
+    return (await host.call('library', 'commitEntityPreviewBatch', {
+      'previews': previews.toList(growable: false),
+      'markNodePreviewDirty': markNodePreviewDirty,
+    }) as Map<Object?, Object?>)
+        .cast<String, bool>();
+  }
 }
